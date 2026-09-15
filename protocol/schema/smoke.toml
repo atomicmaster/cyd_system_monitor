@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Generation-tooling smoke fixture, parsed with Python's stdlib tomllib so
+# generation has no third-party dependency. This is not the product
+# snapshot contract; C01 defines the first real USB message and its own
+# schema/golden vectors.
+
+[[messages]]
+name = "Smoke"
+
+[[messages.fields]]
+name = "sequence"
+type = "u32"
+
+[[messages.fields]]
+name = "message"
+type = "string"
+
+[[messages.fields]]
+name = "ok"
+type = "bool"

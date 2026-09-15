@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
+.DS_Store
+
+# Build outputs
+build/
+firmware/build/
+simulator/build/
+target/
+host/target/
+protocol/generated/rust/target/
+protocol/generated/rust/Cargo.lock
+.build/
+macos/setup-app/.build/
+
+# ESP-IDF
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+firmware/dependencies.lock
+
+# Editors
+.vscode/
+.idea/

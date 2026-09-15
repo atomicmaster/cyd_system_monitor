@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Root developer dispatcher. Delegates to target scripts under tools/dev/.
+# This file stays a thin router: target owners add scripts, not branches here.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEV_DIR="$ROOT_DIR/tools/dev"
+
+# Recognized targets and the script that implements them. Adding a target
+# means adding its script under tools/dev/, not editing this list's callers.
+TARGETS=(firmware simulator host macos protocol all)
+
+usage() {
+  cat <<'EOF'
+Usage: ./dev <command> [target] [-- arguments]
+
+Commands:
+  help              Show this message.
+  doctor            Report which prerequisites are installed per target.
+  build <target>    Build the target.
+  check <target>    Run formatting/lint/tests for the target.
+  run <target>      Run the target (arguments after -- are passed through).
+
+Targets: firmware, simulator, host, macos, protocol, all
+
+Examples:
+  ./dev doctor
+  ./dev build simulator
+  ./dev run simulator -- smoke
+  ./dev check all
+EOF
+}
+
+is_known_target() {
+  local candidate="$1"
+  for t in "${TARGETS[@]}"; do
+    [[ "$t" == "$candidate" ]] && return 0
+  done
+  return 1
+}
+
+run_doctor() {
+  echo "cyd_system_monitor toolchain report"
+  echo "-----------------------------------"
+  for script in "$DEV_DIR"/*.sh; do
+    [[ -e "$script" ]] || continue
+    name="$(basename "$script" .sh)"
+    if grep -q '^doctor()' "$script" 2>/dev/null; then
+      echo "[$name]"
+      # shellcheck source=/dev/null
+      (source "$script" && doctor)
+    fi
+  done
+}
+
+dispatch() {
+  local command="$1"; shift
+  local target="$1"; shift || true
+
+  if ! is_known_target "$target"; then
+    echo "error: unknown target '$target'" >&2
+    echo "known targets: ${TARGETS[*]}" >&2
+    exit 1
+  fi
+
+  local script="$DEV_DIR/$target.sh"
+  if [[ ! -f "$script" ]]; then
+    echo "error: target '$target' has no dispatch script yet ($script)" >&2
+    exit 1
+  fi
+
+  # shellcheck source=/dev/null
+  source "$script"
+
+  if ! declare -f "$command" >/dev/null; then
+    echo "error: target '$target' does not implement '$command'" >&2
+    exit 1
+  fi
+
+  "$command" "$@"
+}
+
+main() {
+  local command="${1:-help}"
+  case "$command" in
+    help|-h|--help)
+      usage
+      ;;
+    doctor)
+      run_doctor
+      ;;
+    build|check|run)
+      shift
+      if [[ $# -lt 1 ]]; then
+        echo "error: '$command' requires a target" >&2
+        usage >&2
+        exit 1
+      fi
+      dispatch "$command" "$@"
+      ;;
+    *)
+      echo "error: unknown command '$command'" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

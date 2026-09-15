@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: GPL-3.0-only
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  protocol:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cmake and ninja
+        run: brew install cmake ninja
+      - name: Install Rust
+        run: rustup show
+      - run: ./dev check protocol
+
+  simulator:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cmake and ninja
+        run: brew install cmake ninja
+      - run: ./dev check simulator
+
+  host:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup show
+      - run: ./dev check host
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./dev check macos
+
+  firmware-native-domain:
+    # Verifies firmware/domain independently of ESP-IDF (F02's native-test
+    # acceptance): no runner here needs the ESP-IDF toolchain for this job.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cmake and ninja
+        run: brew install cmake ninja
+      - run: ./dev check firmware
+
+  firmware-image:
+    # Builds the actual ESP32 image via the pinned ESP-IDF container.
+    # Unverified locally (no Docker/ESP-IDF in the authoring environment);
+    # this is the missing evidence recorded for the M0 exit criteria in
+    # docs/development.md until a real run confirms it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build firmware image
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.3
+          target: esp32
+          path: firmware
