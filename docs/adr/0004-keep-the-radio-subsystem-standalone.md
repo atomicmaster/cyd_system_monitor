@@ -1,0 +1,5 @@
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+
+# Keep the radio subsystem standalone
+
+The Monitor Device will capture radio traffic, derive evidence, evaluate alert rules, own its configuration, and retain Radio History in firmware. It will continue those functions when the Monitored Host or its daemon is unavailable while power remains available; only Host Metrics and Agent Activity will become unavailable. Removing the sole USB power supply stops monitoring; restart preserves committed records and marks prior active episodes interrupted without claiming observed recovery. Touch settings edit a safe subset of device configuration, while versioned USB commands expose the full supported set. V1 radio graphs keep short high-resolution windows in RAM and bounded multiresolution aggregates in flash rather than stream observations to the host. This makes ambient radio awareness independent of the host, at the cost of constrained history, firmware-managed persistence, and firmware updates for evolving rules.

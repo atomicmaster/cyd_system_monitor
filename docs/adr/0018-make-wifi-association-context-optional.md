@@ -1,0 +1,7 @@
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+
+# Make WiFi association context optional
+
+macOS treats current SSID/BSSID as location-sensitive, so a minimal signed SwiftUI setup application using CoreLocation and CoreWLAN may request Location Services only after explaining that the permission enables connected-WiFi identity and stronger Alert correlation. It also displays daemon and permission status, with privileged-helper status added in V2, but is not another monitoring dashboard. The permission is optional: denial, restricted access, or an authorized API returning no identity never disables monitoring. The product does not collect coordinates, track movement, or attach location to Radio History.
+
+Without permission, the daemon still supplies the active interface's current `AF_LINK` Host Station Identity and link state, and the Monitor Device may infer its Host-associated BSS from fresh passively received frames. Direct radio evidence targeting that station may support High without BSSID permission; BSSID context extends correlation to AP-wide events when those frames are observable. The board cannot observe 5/6 GHz traffic, and optional permission does not remove that limitation. MVP may retain Host-impact evidence but never emits Extreme; that severity awaits relevant detections and sufficient validation data in an unassigned later release. Platform adapters expose Association Context Availability explicitly and never make monitoring depend on identity access. Optional GPS support in a later release is a separate capability.

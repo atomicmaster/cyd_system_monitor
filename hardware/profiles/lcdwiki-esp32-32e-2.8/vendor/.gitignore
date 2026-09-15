@@ -1,0 +1,8 @@
+# Preserve vendor downloads locally without publishing material that has no stated
+# redistribution license. Track only provenance, integrity, and cache policy.
+/*
+!/.gitignore
+!/README.md
+!/sources.tsv
+!/SHA256SUMS
+!/download-failures.txt

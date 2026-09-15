@@ -1,0 +1,5 @@
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+
+# Use a recoverable flash journal for Radio History
+
+Settings and touch calibration will use ESP-IDF NVS, while Alerts and Transmitter Baselines use a dedicated checksummed append journal and high-rate counters remain in RAM. Sudden power loss may discard the one in-progress record, but boot recovery must retain committed records, skip torn or corrupt entries, and report the damage. Initial targets are 32 detailed active Alerts, 128 ended/interrupted Alerts, and 512 Transmitter Baselines, subject to safe byte and RAM capacities established during M1a and validated in M6. The budget includes maximum record sizes, journal reclamation space, checkpoint/write rates, endurance assumptions, and reserved Operational and Capacity-pressure Alert storage. Excess matches are coalesced by rule into Capacity-pressure Alerts so hostile identifier churn remains bounded. Reboot preserves committed evidence and marks previously active episodes interrupted without inventing a recovery time; fresh qualifying evidence starts new episodes. Persistent ordering across boot identities is specified in M2.

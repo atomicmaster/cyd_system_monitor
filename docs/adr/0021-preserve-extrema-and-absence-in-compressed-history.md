@@ -1,0 +1,5 @@
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+
+# Preserve extrema and absence in compressed history
+
+V1 historical graphs will use explicit labeled resolution tiers, with older data represented by progressively coarser aggregates rather than squeezed raw points or an unlabeled logarithmic axis. Host History retains one-second samples for 15 minutes, 10-second buckets through four hours, one-minute buckets through seven days, and five-minute buckets through 30 days. The Monitor Device retains five-second radio aggregates for 15 minutes in RAM, one-minute aggregates through six hours in flash, and 15-minute aggregates through seven days in flash; graph storage cannot consume the separate Alert-evidence reservation. Each aggregate retains minimum, maximum, mean, last value, sample count, and unavailable/stale duration, while counters retain appropriate totals and rates. This spends more storage than mean-only buckets but prevents spikes and missing data from disappearing or becoming false zeros as history is compressed.
