@@ -5,7 +5,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 _firmware_dir() { echo "$(dev_root)/firmware"; }
 
 doctor() {
-  report_tool idf.py "install ESP-IDF and 'source \$IDF_PATH/export.sh' (https://docs.espressif.com/projects/esp-idf)"
+  report_tool idf.py "$(idf_missing_hint)"
   report_tool cmake "brew install cmake"
   report_tool ninja "brew install ninja"
   report_tool python3 "install Python 3 (used by profile-to-header generation)"
@@ -27,7 +27,7 @@ _check_format() {
 }
 
 build() {
-  require_tool idf.py "ESP-IDF is not installed or not sourced; see ./dev doctor" || return 1
+  require_tool idf.py "$(idf_missing_hint)" || return 1
   (cd "$(_firmware_dir)" && idf.py build && idf.py size)
 }
 
@@ -49,6 +49,6 @@ check() {
 
 run() {
   if [[ "${1:-}" == "--" ]]; then shift; fi
-  require_tool idf.py "ESP-IDF is not installed or not sourced; see ./dev doctor" || return 1
+  require_tool idf.py "$(idf_missing_hint)" || return 1
   (cd "$(_firmware_dir)" && idf.py "$@")
 }

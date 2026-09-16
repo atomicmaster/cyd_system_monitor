@@ -42,6 +42,20 @@ falling back to another target.
 | Swift / Xcode | macos | Swift 6.4 (Xcode 16+) | Xcode from the App Store or developer.apple.com; accept its license once |
 | LVGL | firmware, simulator | v9.2.2 | ESP32: managed component `lvgl/lvgl` via `firmware/platform/esp32/idf_component.yml` (ESP Component Registry); simulator: CMake `FetchContent` from `https://github.com/lvgl/lvgl.git` tag `v9.2.2`, built headless as a static library (no SDL/X11) |
 
+**ESP-IDF is commonly already installed but not sourced:** unlike
+cmake/ninja/python3, ESP-IDF is never on `PATH` by default -- every shell
+that runs `idf.py` must `source $IDF_PATH/export.sh` first. Before assuming
+ESP-IDF needs installing because `./dev doctor firmware` reports `idf.py`
+missing, check for an existing checkout (the Espressif installer's default
+location is `~/esp/esp-idf`; `./dev doctor firmware`'s failure message
+checks that path and `$IDF_PATH/export.sh` automatically and prints the
+exact `source ...` command if it finds one). This matters especially for an
+agent whose tool calls each start a fresh subshell: sourcing `export.sh` in
+one command does not carry over to the next, so `source` and the
+`idf.py`/`./dev build firmware` call that needs it must run in the *same*
+shell invocation (e.g. `source ~/esp/esp-idf/export.sh && ./dev build
+firmware`), not two separate commands.
+
 **ESP-IDF + system CMake:** a CMake newer than ESP-IDF v5.3.2's tested range
 (observed with system CMake 4.4.3, and it does not depend on that major
 version specifically) fails `idf.py set-target`/`build` with `CMake Error ...

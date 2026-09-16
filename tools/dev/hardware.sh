@@ -8,7 +8,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 _firmware_script() { echo "$(dirname "${BASH_SOURCE[0]}")/firmware.sh"; }
 
 doctor() {
-  report_tool idf.py "install ESP-IDF and 'source \$IDF_PATH/export.sh' (https://docs.espressif.com/projects/esp-idf)"
+  report_tool idf.py "$(idf_missing_hint)"
   echo "  [note] 'run' additionally requires a connected E32R28T board and a confirmed serial port (--port)."
   echo "  [note] flashing, port use, and diagnostic registration are serialized across F05/F06/F07; see docs/tickets/README.md#dispatch-and-completion."
 }
@@ -80,7 +80,7 @@ run() {
     return 1
   fi
 
-  require_tool idf.py "ESP-IDF is not installed or not sourced; see ./dev doctor" || return 1
+  require_tool idf.py "$(idf_missing_hint)" || return 1
 
   echo "Flashing and monitoring the diagnostic image on port '$port', session case '$case_name'."
   echo "This requires an exclusively claimed, physically connected E32R28T board."
