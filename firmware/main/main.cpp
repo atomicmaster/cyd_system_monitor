@@ -12,6 +12,7 @@
 
 #include "board_init.hpp"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "firmware/domain/calibration/calibration.hpp"
 #include "firmware/domain/generated/profile.hpp"
 #include "firmware/domain/profile_check.hpp"
@@ -116,6 +117,14 @@ void PumpTouch() {
   }
 }
 
+// firmware/ui/lv_conf.h sets LV_TICK_CUSTOM 0, which means LVGL supplies no
+// tick source of its own: the app must give it one via lv_tick_set_cb(),
+// or lv_timer_handler()'s internal refresh-period timer never sees real
+// elapsed time and the display stalls after its first draw (this is the
+// exact ESP32 wrapper LVGL's own porting docs recommend: see
+// docs/porting/tick.rst in the vendored lvgl source).
+uint32_t TickGetMs() { return static_cast<uint32_t>(esp_timer_get_time() / 1000); }
+
 }  // namespace
 
 extern "C" void app_main(void) {
@@ -126,6 +135,7 @@ extern "C" void app_main(void) {
   }
 
   lv_init();
+  lv_tick_set_cb(TickGetMs);
 
   g_app.diagnostic_state = board::InitBoard(g_app.board);
 
