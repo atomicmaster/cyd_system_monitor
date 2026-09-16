@@ -99,14 +99,10 @@ measurements and a provisional partition/write/endurance budget are present.
 capacity slice (live status, a maximum-size Alert list, Alert detail, and
 Settings navigation), the LVGL pool/heap/task-stack capacity probe
 (`DEV:CAPACITY_STATUS`), and simulator coverage of the declared row/string
-bounds under repeated navigation
-(`./dev run simulator -- capacity`). **No physical E32R28T session was
-available to produce this entry**: the agent implementing this ticket had no
-connected board. Everything below is build-time-only evidence against the
-existing F05-F07 diagnostic image (no radio), not the physical touch/display
-responsiveness or measured heap/stack low-water marks Work items 5-6
-require. The board session, its operator actions, and the resulting
-peak/low-water values remain outstanding.
+bounds under repeated navigation (`./dev run simulator -- capacity`). This
+section is the build-time-only result recorded before a board became
+available; see "F08a physical board result" below for the real E32R28T
+session and why it still leaves Work item 5 incomplete.
 
 Building the ordinary (non-probe) diagnostic image plus this ticket's
 instrumentation and capacity-slice UI, unmodified from the profile's default
@@ -148,3 +144,65 @@ capacity-slice screen advances Live status -> Alert list -> Alert detail ->
 Settings -> back to the diagnostic screen. `./dev run hardware -- capacity
 --port <path>` is the intended session entrypoint once a board is
 available.
+
+## F08a physical board result
+
+A connected E32R28T became available after the above was recorded. This
+session flashed and exercised commit `88899f08e1e56aa2d34f6ea4492eec165823f202`
+on port `/dev/cu.usbserial-140` at 115200 baud, using
+`idf.py -p /dev/cu.usbserial-140 flash` followed by a pyserial script
+(DTR/RTS reset, then line-based `DEV:` commands) rather than an interactive
+`idf.py monitor` session, since the operator here is an agent without a
+terminal to type into.
+
+**Boot and diagnostic-screen baseline (real hardware):**
+
+- Boots reliably from power-on reset, reaches `boot: showing diagnostic
+  screen (touch_ready=1 have_valid_calibration=1)` -- a prior calibration
+  record from an earlier F06 session was still valid in NVS.
+- `DEV:PERIPHERAL_STATUS`: microsd mounted, battery 2129-2130mV, boot
+  button released, expansion floating -- matches F07's prior evidence.
+- `DEV:CAPACITY_STATUS`, sampled twice a few seconds apart while idle on
+  the diagnostic screen (not the capacity slice -- see blocker below):
+
+  | Reading | Value |
+  | --- | ---: |
+  | LVGL pool total | 63,424 bytes |
+  | LVGL pool peak used | 10,348 bytes |
+  | LVGL pool available | 53,704 bytes |
+  | Free heap | 178,416 bytes |
+  | Minimum free heap | 162,192 bytes |
+  | `main` task stack low-water mark | 12,792 bytes |
+  | `dev_console` task stack low-water mark | 1,328 bytes |
+
+  Both samples were identical, confirming the probe is stable and
+  `DEV:CAPACITY_STATUS` is safe to re-issue live. This is real measured
+  evidence, but it is the **diagnostic-screen lower bound** F08a's Outcome
+  explicitly distinguishes from "the MVP's realistic worst normal UI
+  state" -- the capacity slice itself was never built during this session,
+  so its own LVGL pool/heap peak is not yet known.
+
+**Not yet reached: the capacity slice itself.** This session was driven
+entirely over the UART/dev-console channel (a pyserial script sending
+`DEV:` lines), with no human present at the board to physically press the
+touchscreen -- the continuous `touch-diagnostic` log correctly showed
+`irq_asserted=0` throughout, since nothing was touching the panel, not
+because of any driver fault (F06's evidence already confirms real taps
+assert IRQ and read correctly on this same touch driver). There is
+deliberately no UART/dev-console path to open the capacity slice as a
+substitute for a real tap, since Work item 5 asks for an *active-touch*
+exercise, not a workaround around touch. Reaching the "Capacity slice"
+button and exercising the slice's own tap-to-advance navigation therefore
+still needs a session with an operator physically present to tap the
+screen; only then can `DEV:CAPACITY_STATUS` capture the slice's own peak
+LVGL pool/heap usage and its touch responsiveness be observed.
+
+**Consequence for F08a's status:** Work items 1-4 and 6 are complete and now
+partially confirmed live (the probe and its bounds run correctly on real
+hardware). Work item 5 remains incomplete: this session supplies a real
+diagnostic-screen-only baseline, not the capacity slice's own measured
+peak/low-water values under active touch, serial traffic, and flash
+activity. A future session with an operator physically present should tap
+through the diagnostic screen's "Capacity slice" button and the slice's
+own tap-to-advance navigation, then repeat `DEV:CAPACITY_STATUS` while it
+is showing.
