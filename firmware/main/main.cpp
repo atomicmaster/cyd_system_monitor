@@ -266,6 +266,15 @@ extern "C" void app_main(void) {
            g_app.diagnostic_state.build_identity.c_str(),
            firmware::domain::ToString(g_app.diagnostic_state.reset_reason));
 
+  // F07 evidence: board_init.cpp's DiagnosticState.peripherals is normally
+  // only ever seen on the diagnostic screen itself; logging it too means
+  // LED/audio/microSD/battery/button results from the boot-time probe are
+  // captured in UART evidence without needing a photo of that screen.
+  for (const auto& peripheral : g_app.diagnostic_state.peripherals) {
+    ESP_LOGI(kTag, "peripheral: %s present=%d detail=\"%s\"", peripheral.name.c_str(),
+             peripheral.present, peripheral.detail.c_str());
+  }
+
   if (g_app.board.display == nullptr) {
     ESP_LOGE(kTag, "display init failed; running headless (UART diagnostics and dev console only)");
   } else {

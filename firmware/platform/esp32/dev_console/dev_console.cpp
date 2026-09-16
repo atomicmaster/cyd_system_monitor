@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Development-only recovery path; TB02 replaces this with the negotiated
-// product command. See dev_console.hpp.
+// product command. See dev_console.hpp. F07 additionally uses this console
+// to trigger on-demand hardware exercises (LED, audio, peripheral status)
+// during physical bring-up, since it is the only channel available before
+// TB02's real product protocol exists.
 #include "dev_console/dev_console.hpp"
 
 #include <cstdio>
 #include <cstring>
 
+#include "audio/audio.hpp"
+#include "battery/battery.hpp"
+#include "button/button.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "led/led.hpp"
+#include "microsd/microsd.hpp"
 #include "nvs/calibration_store.hpp"
 
 namespace firmware::platform::esp32::dev_console {
@@ -17,8 +25,68 @@ namespace firmware::platform::esp32::dev_console {
 namespace {
 
 constexpr const char* kTag = "fw.dev_console";
-constexpr const char* kClearCalibrationCommand = "DEV:CLEAR_CALIBRATION";
 constexpr size_t kLineBufferSize = 128;
+
+// Cycles red, green, blue for 800ms each, then off. F07's acceptance line
+// "LEDs ... are visible and reproducible" needs an actual driven sequence
+// to observe -- board_init only configures the PWM channels, it never
+// sets a color, so without this the LED never lights at all.
+void RunLedTest() {
+  ESP_LOGI(kTag, "DEV:LED_TEST: red");
+  led::SetColor(255, 0, 0);
+  vTaskDelay(pdMS_TO_TICKS(800));
+  ESP_LOGI(kTag, "DEV:LED_TEST: green");
+  led::SetColor(0, 255, 0);
+  vTaskDelay(pdMS_TO_TICKS(800));
+  ESP_LOGI(kTag, "DEV:LED_TEST: blue");
+  led::SetColor(0, 0, 255);
+  vTaskDelay(pdMS_TO_TICKS(800));
+  ESP_LOGI(kTag, "DEV:LED_TEST: off");
+  led::SetColor(0, 0, 0);
+}
+
+// Deliberately enables the amplifier and plays a short tone, then disables
+// it again -- optional sound defaults off per the profile, so this is the
+// only way to exercise it. Matches F07's Work item 2 ("exercise optional
+// sound deliberately").
+void RunAudioTest() {
+  ESP_LOGI(kTag, "DEV:AUDIO_TEST: enabling amplifier, playing 1kHz tone for 500ms");
+  audio::SetAmplifierEnabled(true);
+  audio::PlayTestTone(1000, 500);
+  audio::SetAmplifierEnabled(false);
+  ESP_LOGI(kTag, "DEV:AUDIO_TEST: amplifier disabled");
+}
+
+// Re-probes MicroSD/battery/BOOT-button live (unlike board_init.cpp's
+// once-at-boot probe) so an operator can insert/remove a card or
+// press/release BOOT between runs and see the result change -- the
+// concrete meaning of F07's "visible and reproducible" for these three.
+void RunPeripheralStatus() {
+  const auto sd = microsd::Probe();
+  const int battery_mv = battery::ReadMillivolts();
+  const bool button_pressed = button::IsPressed();
+  ESP_LOGI(kTag, "DEV:PERIPHERAL_STATUS: microsd_present=%d microsd_detail=\"%s\"", sd.present,
+           sd.detail.c_str());
+  ESP_LOGI(kTag, "DEV:PERIPHERAL_STATUS: battery_mv=%d", battery_mv);
+  ESP_LOGI(kTag, "DEV:PERIPHERAL_STATUS: boot_button_pressed=%d", button_pressed);
+}
+
+struct Command {
+  const char* line;
+  void (*run)();
+};
+
+void RunClearCalibration() {
+  ESP_LOGI(kTag, "received DEV:CLEAR_CALIBRATION: clearing calibration record");
+  firmware::platform::esp32::nvs::ClearCalibrationRecord();
+}
+
+constexpr Command kCommands[] = {
+    {"DEV:CLEAR_CALIBRATION", RunClearCalibration},
+    {"DEV:LED_TEST", RunLedTest},
+    {"DEV:AUDIO_TEST", RunAudioTest},
+    {"DEV:PERIPHERAL_STATUS", RunPeripheralStatus},
+};
 
 // UART0 is already owned by ESP-IDF's console/log VFS layer (ESP_LOGI,
 // idf.py monitor): it reads/writes UART0 through esp_vfs_console's own
@@ -48,9 +116,16 @@ void DevConsoleTask(void* /*arg*/) {
     if (byte == '\n' || byte == '\r') {
       if (line_len > 0) {
         line[line_len] = '\0';
-        if (std::strcmp(line, kClearCalibrationCommand) == 0) {
-          ESP_LOGI(kTag, "received %s: clearing calibration record", kClearCalibrationCommand);
-          firmware::platform::esp32::nvs::ClearCalibrationRecord();
+        bool matched = false;
+        for (const Command& command : kCommands) {
+          if (std::strcmp(line, command.line) == 0) {
+            command.run();
+            matched = true;
+            break;
+          }
+        }
+        if (!matched) {
+          ESP_LOGW(kTag, "unrecognized dev console line: \"%s\"", line);
         }
         line_len = 0;
       }
