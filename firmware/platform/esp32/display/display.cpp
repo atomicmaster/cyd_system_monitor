@@ -52,13 +52,26 @@ esp_err_t InitBacklight() {
   return ledc_channel_config(&channel_cfg);
 }
 
-// Bridges LVGL's flush request to esp_lcd_panel_draw_bitmap. This panel
-// draws over SPI in polling (blocking) mode with no color-trans-done
-// callback wired up, so the bitmap is fully on the wire by the time
-// draw_bitmap returns and flush_ready can be called immediately.
+// Bridges LVGL's flush request to esp_lcd_panel_draw_bitmap. The SPI panel
+// IO queues the pixel-data transaction asynchronously (io_cfg's
+// trans_queue_depth > 1 -- esp_lcd's SPI backend uses
+// spi_device_queue_trans, not a blocking polling transmit, for color
+// data), so draw_bitmap returns as soon as the transaction is queued, well
+// before the bytes are actually on the wire. Calling lv_display_flush_ready
+// here unconditionally would tell LVGL the single (non-double-buffered)
+// draw buffer is free while the DMA is still reading the old contents out
+// of it, racing the next partial render's overwrite against the in-flight
+// transfer -- this produced visibly sheared/garbled text on the real
+// board. flush_ready is instead called from OnColorTransDone, the SPI
+// driver's actual completion callback, registered below.
 void FlushCallback(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map) {
   esp_lcd_panel_draw_bitmap(g_panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, px_map);
-  lv_display_flush_ready(disp);
+}
+
+bool OnColorTransDone(esp_lcd_panel_io_handle_t /*io*/, esp_lcd_panel_io_event_data_t* /*edata*/,
+                      void* user_ctx) {
+  lv_display_flush_ready(static_cast<lv_display_t*>(user_ctx));
+  return false;  // no higher-priority task woken by this ISR-context callback
 }
 
 }  // namespace
@@ -116,8 +129,17 @@ lv_display_t* InitDisplay() {
   // Landscape 320x240: the panel is physically 240 wide x 320 tall
   // (profile.toml display.width/height), so swap_xy rotates into the
   // logical landscape layout firmware/domain/geometry.hpp validates.
+  // esp_lcd_ili9341 maps mirror_x/mirror_y directly to the MADCTL MX/MY
+  // bits (independent of swap_xy/MV) -- see esp_lcd_ili9341.c's
+  // panel_ili9341_mirror(). mirror(true, true) is the combination verified
+  // correct (non-mirrored, USB connector on the operator's preferred side)
+  // on the physical E32R28T; mirror(false, true) and mirror(true, false)
+  // (MX XOR MY) were both observed mirrored/backwards. mirror(false, false)
+  // is this orientation's 180-degree-rotated counterpart (also
+  // non-mirrored) -- see docs/roadmap.md's V1 Settings-configurable flip,
+  // which will toggle between this pair.
   esp_lcd_panel_swap_xy(g_panel, true);
-  esp_lcd_panel_mirror(g_panel, false, true);
+  esp_lcd_panel_mirror(g_panel, true, true);
   esp_lcd_panel_disp_on_off(g_panel, true);
 
   if (InitBacklight() != ESP_OK) {
@@ -132,6 +154,14 @@ lv_display_t* InitDisplay() {
       draw_buf[firmware::domain::profile::kLogicalWidth * 40 * 2];  // 40-row partial buffer
   lv_display_set_buffers(lv_disp, draw_buf, nullptr, sizeof(draw_buf),
                          LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+  esp_lcd_panel_io_callbacks_t io_cbs = {};
+  io_cbs.on_color_trans_done = OnColorTransDone;
+  err = esp_lcd_panel_io_register_event_callbacks(g_panel_io, &io_cbs, lv_disp);
+  if (err != ESP_OK) {
+    ESP_LOGE(kTag, "esp_lcd_panel_io_register_event_callbacks failed: %s", esp_err_to_name(err));
+    return nullptr;
+  }
 
   return lv_disp;
 }

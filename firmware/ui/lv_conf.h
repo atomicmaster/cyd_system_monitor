@@ -13,6 +13,14 @@
 #define LV_CONF_H
 
 #define LV_COLOR_DEPTH 16
+/* The ILI9341 panel expects big-endian RGB565 over SPI; LVGL's internal
+ * buffer is little-endian (native MCU byte order). Without this, blended/
+ * anti-aliased pixel values (font edges) land on scrambled byte pairs,
+ * which showed up on real hardware as green-tinted fringing around text.
+ * lv_refr.c calls lv_draw_sw_rgb565_swap() automatically before flush_cb
+ * when this is set (v8-compat path, still supported in v9). Harmless for
+ * the simulator, which never inspects pixel color values. */
+#define LV_COLOR_16_SWAP 1
 
 #define LV_USE_LOG 0
 #define LV_USE_ASSERT_NULL 1
