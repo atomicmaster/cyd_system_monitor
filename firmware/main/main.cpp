@@ -23,6 +23,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs/calibration_store.hpp"
+#include "radio/controller_probe.hpp"
 
 namespace {
 
@@ -322,6 +323,7 @@ extern "C" void app_main(void) {
   firmware::platform::esp32::capacity::RegisterTask("main", xTaskGetCurrentTaskHandle());
 
   g_app.diagnostic_state = board::InitBoard(g_app.board);
+  firmware::platform::esp32::radio::StartControllerOnlyProbe();
 
   // lv_indev_create() binds the new device to lv_display_get_default() at
   // the moment it's called -- created before InitBoard() (which is where

@@ -25,6 +25,7 @@ idf_component_register(
     "../nvs/calibration_store.cpp"
     "../dev_console/dev_console.cpp"
     "../capacity/capacity_probe.cpp"
+    "../radio/controller_probe.cpp"
   INCLUDE_DIRS ".."
-  REQUIRES domain driver esp_lcd esp_adc sdmmc fatfs esp_timer nvs_flash lvgl esp_lcd_ili9341
+  REQUIRES domain driver esp_lcd esp_adc sdmmc fatfs esp_timer nvs_flash lvgl esp_lcd_ili9341 bt esp_wifi esp_event esp_netif
 )

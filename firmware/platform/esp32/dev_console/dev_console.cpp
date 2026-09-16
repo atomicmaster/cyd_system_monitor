@@ -22,6 +22,7 @@
 #include "led/led.hpp"
 #include "microsd/microsd.hpp"
 #include "nvs/calibration_store.hpp"
+#include "radio/controller_probe.hpp"
 
 namespace firmware::platform::esp32::dev_console {
 
@@ -102,6 +103,18 @@ void RunCapacityStatus() {
   }
 }
 
+void RunControllerProbeStatus() {
+  const auto status = firmware::platform::esp32::radio::ReadControllerProbeStatus();
+  ESP_LOGI(kTag,
+           "DEV:HCI_STATUS: enabled=%d scan_enabled=%d commands_sent=%lu command_failures=%lu "
+           "advertising_reports=%lu malformed_events=%lu dropped_events=%lu",
+           status.enabled, status.scan_enabled, static_cast<unsigned long>(status.commands_sent),
+           static_cast<unsigned long>(status.command_failures),
+           static_cast<unsigned long>(status.advertising_reports),
+           static_cast<unsigned long>(status.malformed_events),
+           static_cast<unsigned long>(status.dropped_events));
+}
+
 struct Command {
   const char* line;
   void (*run)();
@@ -118,6 +131,7 @@ constexpr Command kCommands[] = {
     {"DEV:AUDIO_TEST", RunAudioTest},
     {"DEV:PERIPHERAL_STATUS", RunPeripheralStatus},
     {"DEV:CAPACITY_STATUS", RunCapacityStatus},
+    {"DEV:HCI_STATUS", RunControllerProbeStatus},
 };
 
 // UART0 is already owned by ESP-IDF's console/log VFS layer (ESP_LOGI,

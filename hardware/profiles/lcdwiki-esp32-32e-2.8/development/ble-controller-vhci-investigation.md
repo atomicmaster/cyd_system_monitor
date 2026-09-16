@@ -2,8 +2,8 @@
 
 # F08 investigation: controller-only passive BLE reception
 
-**Status: viable build-time experiment; not yet a capacity or physical-radio
-result.**
+**Status: rejected for the current E32R28T UI/Wi-Fi baseline — a reproducible
+controller-only build still overflows internal DRAM and IRAM.**
 
 This note investigates the narrow alternative to the failed Wi-Fi + NimBLE
 probe: keep Espressif's BLE controller, but replace the NimBLE host with a
@@ -153,3 +153,43 @@ command failures, scan enable/disable timestamps, Wi-Fi intervals, actual
 Advertising Reports, and UI/touch/serial/flash behavior. This test can prove
 or reject the lower-level path without prematurely making it the product
 implementation.
+
+## Experiment result (2026-09-16)
+
+The reversible probe was implemented in
+`firmware/platform/esp32/radio/controller_probe.cpp`. It starts the real
+capacity-slice/diagnostic UI, initializes Wi-Fi in STA mode on one core, and
+initializes the BLE-only controller on the other core. Its bounded four-event
+static HCI queue separates the VHCI callback from a parser that issues Reset,
+the HCI/LE event masks, passive scan parameters (50 ms interval, 30 ms
+window), and Scan Enable. It retains no advertising payload; queue drops,
+malformed events, command failures, and Advertising Report counts would be
+reported through `DEV:HCI_STATUS` if the image linked.
+
+The isolated build used the tracked
+`firmware/sdkconfig.controller_only_probe.defaults` overlay, so the normal
+diagnostic `sdkconfig` and image were not changed:
+
+```sh
+source "$HOME/esp/esp-idf/export.sh"
+cd firmware
+idf.py -B build-controller-only \
+  -D SDKCONFIG=build-controller-only/sdkconfig \
+  -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.controller_only_probe.defaults' \
+  build
+```
+
+The ESP-IDF v5.3.2 linker rejected the resulting image:
+
+| Probe | DRAM overflow | IRAM overflow |
+| --- | ---: | ---: |
+| Wi-Fi + minimized NimBLE host | 13,296 B | 2,008 B |
+| Wi-Fi + controller-only VHCI, four-event parser queue | 13,008 B | 2,140 B |
+
+The controller-only path recovers only 288 B of DRAM and adds 132 B of IRAM
+pressure relative to the prior NimBLE experiment. Reducing the bounded queue
+further cannot plausibly recover the required 13 KB-plus DRAM deficit and
+would invalidate the parser's burst-handling evidence. The image was not
+flashed: a physical radio/UI test cannot be performed without a linkable
+image. This rejects controller-only VHCI as the near-term capacity change for
+this board/profile, not VHCI as a supported ESP-IDF interface.

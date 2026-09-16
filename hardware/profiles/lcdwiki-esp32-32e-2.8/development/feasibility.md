@@ -66,6 +66,14 @@ receiver that does not pull in a full host, or a supported profile with more
 memory. That decision must preserve the product requirement for passive BLE
 observation and cannot silently defer it to M5.
 
+### Controller-only BLE result
+
+The F08 controller-only VHCI experiment is also rejected as a capacity path:
+the real UI plus Wi-Fi and the bounded passive HCI scanner still overflowed
+DRAM by 13,008 B and IRAM by 2,140 B. It was not flashed. The exact
+configuration, command, and comparison with the NimBLE attempt are recorded
+in [the controller-only investigation](ble-controller-vhci-investigation.md).
+
 ## Accounting rules already fixed
 
 The portable feasibility assessment tests enforce the two claims that later
