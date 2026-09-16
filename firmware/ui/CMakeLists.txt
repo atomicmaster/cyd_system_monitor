@@ -12,6 +12,11 @@ set(_fu_sources
     "src/capacity/capacity_slice.cpp")
 
 if(ESP_PLATFORM)
+  # Keep the production LVGL allocation pool at 64 KiB, but make an
+  # isolated capacity build able to override it without changing the source
+  # configuration shared with the desktop simulator.
+  set(FIRMWARE_LV_MEM_SIZE_KIB "64" CACHE STRING "LVGL internal allocation pool in KiB")
+
   # Building as an ESP-IDF component under idf.py. `lvgl` is the managed
   # component pinned in idf_component.yml (v9.2.2).
   idf_component_register(
@@ -26,6 +31,8 @@ if(ESP_PLATFORM)
   # depend on firmware/ui, also see the same minimal config.
   idf_build_set_property(COMPILE_DEFINITIONS
     "LV_CONF_PATH=${CMAKE_CURRENT_SOURCE_DIR}/lv_conf.h" APPEND)
+  idf_build_set_property(COMPILE_DEFINITIONS
+    "FIRMWARE_LV_MEM_SIZE_KIB=${FIRMWARE_LV_MEM_SIZE_KIB}" APPEND)
 else()
   # Building standalone: desktop simulator. Depends on a target named
   # `lvgl`, provided by simulator/CMakeLists.txt via FetchContent, which

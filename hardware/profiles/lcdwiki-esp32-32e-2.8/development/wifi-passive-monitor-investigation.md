@@ -177,3 +177,18 @@ passive Wi-Fi configuration recovered 376 B of link-time DRAM and at least
 2,140 B of IRAM. It did not create a flashable image, so no board capture,
 receive-loss, coexistence, or UI-latency claim was made. Wi-Fi trimming alone
 cannot close the remaining DRAM gap.
+
+## Follow-up: LVGL pool capacity probe
+
+The UI's normal 64 KiB LVGL pool was made a build-time parameter whose
+production default remains 64 KiB. A radio-only capacity build selected
+32 KiB with `-D FIRMWARE_LV_MEM_SIZE_KIB=32` alongside this Wi-Fi overlay and
+the controller-only BLE overlay. It linked with 20,140 B of static DRAM and
+23,693 B of IRAM remaining. The 32 KiB choice is a capacity candidate based
+on F08a's measured 10,908 B LVGL peak; it is not acceptance of the complete
+future UI or combined runtime load.
+
+The binary then exceeded the current 1 MiB factory-app partition by 95,216 B,
+so it was not flashed. The next experiment must establish a suitable
+partition layout (the profile has 2 MiB flash) or reduce image flash before
+on-board radio and UI measurements can begin.

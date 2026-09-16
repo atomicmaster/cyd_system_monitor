@@ -87,6 +87,21 @@ not enough DRAM to flash or validate on the board, and it is not product
 policy. The passive API path, exact overlay, resolved configuration, and
 build command are recorded in [the passive Wi-Fi investigation](wifi-passive-monitor-investigation.md).
 
+### 32 KiB LVGL-pool radio result
+
+The physical F08a UI exercise recorded a 10,908 B LVGL peak across its
+capacity slice, so the same radio probe was rebuilt with only the LVGL
+allocation pool changed from 64 KiB to 32 KiB. It **linked** with 20,140 B
+of static DRAM and 23,693 B of IRAM remaining. This confirms that the pool,
+not Wi-Fi trimming, was the practical link-time DRAM lever.
+
+The build was not flashed: its binary was 1,143,792 B (`0x1173f0`), while the
+current 2 MiB-flash profile uses ESP-IDF's 1 MiB single-app factory partition.
+It consequently failed the partition-size check by 95,216 B (`0x173f0`). A
+partition-layout decision or a separate flash-size reduction is now required
+before runtime radio/heap/capture measurement; a linker-successful ELF alone
+is not sufficient evidence that the combined workload fits.
+
 ## Accounting rules already fixed
 
 The portable feasibility assessment tests enforce the two claims that later
