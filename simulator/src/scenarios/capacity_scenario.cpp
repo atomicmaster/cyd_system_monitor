@@ -34,6 +34,10 @@ int RunCapacity() {
   result.Expect(controller.root() != nullptr, "the live status screen has a root object");
   result.Expect(controller.live_status_label() != nullptr,
                 "the live status screen exposes its label through a named handle");
+  result.Expect(
+      controller.next_button() != nullptr,
+      "every capacity-slice screen exposes a dedicated Next button, not just a whole-root "
+      "tap zone (physical testing found scrollable list children swallow root-level taps)");
 
   // Work item 3's declared refresh-cadence bound: a second update inside
   // the minimum interval must not redraw the label, but the very first
@@ -78,6 +82,9 @@ int RunCapacity() {
     const char* text = lv_label_get_text(first_row);
     result.Expect(std::strlen(text) <= bounds::kMaxAlertLabelLength + 16,
                   "an oversized alert title is truncated rather than rendered in full");
+    result.Expect(
+        controller.next_button() != nullptr,
+        "the alert list screen exposes a dedicated Next button outside the scrollable list");
   }
 
   controller.ShowAlertDetail(0);
@@ -91,6 +98,8 @@ int RunCapacity() {
     const char* text = lv_label_get_text(controller.alert_detail_body());
     result.Expect(std::strlen(text) <= bounds::kMaxAlertDetailLength,
                   "the alert detail text is truncated to the declared maximum length");
+    result.Expect(controller.next_button() != nullptr,
+                  "the alert detail screen exposes a dedicated Next button");
   }
 
   // Out-of-range detail request (the oversized fixture's extra row was
@@ -113,6 +122,9 @@ int RunCapacity() {
     result.Expect(row_count == bounds::kMaxSettingsRows,
                   "the settings screen renders at most the declared maximum row count despite the "
                   "oversized fixture");
+    result.Expect(
+        controller.next_button() != nullptr,
+        "the settings screen exposes a dedicated Next button outside the scrollable list");
   }
 
   // Repeated navigation across every screen must keep leaving exactly one

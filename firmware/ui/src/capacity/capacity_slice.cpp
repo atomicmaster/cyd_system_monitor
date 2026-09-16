@@ -41,6 +41,13 @@ lv_obj_t* MakeScrollableList(lv_obj_t* parent) {
   return list;
 }
 
+lv_obj_t* MakeNextButton(lv_obj_t* parent) {
+  lv_obj_t* button = lv_button_create(parent);
+  lv_obj_t* label = lv_label_create(button);
+  lv_label_set_text(label, "Next");
+  return button;
+}
+
 }  // namespace
 
 CapacitySliceController::CapacitySliceController(lv_obj_t* parent, CapacitySliceState state)
@@ -60,7 +67,10 @@ void CapacitySliceController::DestroyCurrent() {
   alert_detail_title_ = nullptr;
   alert_detail_body_ = nullptr;
   settings_list_ = nullptr;
+  next_button_ = nullptr;
 }
+
+void CapacitySliceController::AddNextButton() { next_button_ = MakeNextButton(root_); }
 
 void CapacitySliceController::ShowLiveStatus() {
   DestroyCurrent();
@@ -68,6 +78,7 @@ void CapacitySliceController::ShowLiveStatus() {
   live_status_label_ = MakeLabel(root_);
   lv_label_set_text(live_status_label_,
                     Truncate(state_.live_status_text, bounds::kMaxLiveStatusTextLength).c_str());
+  AddNextButton();
   current_screen_ = CapacityScreen::kLiveStatus;
   live_status_refreshed_once_ = false;
 }
@@ -102,6 +113,7 @@ void CapacitySliceController::ShowAlertList() {
     const std::string title = Truncate(alert.title, bounds::kMaxAlertLabelLength);
     lv_label_set_text_fmt(row, "[%s] %s", alert.severity.c_str(), title.c_str());
   }
+  AddNextButton();
   current_screen_ = CapacityScreen::kAlertList;
 }
 
@@ -123,6 +135,7 @@ void CapacitySliceController::ShowAlertDetail(size_t alert_index) {
   alert_detail_body_ = MakeLabel(root_);
   lv_label_set_text(alert_detail_body_,
                     Truncate(alert.detail, bounds::kMaxAlertDetailLength).c_str());
+  AddNextButton();
 
   current_screen_ = CapacityScreen::kAlertDetail;
 }
@@ -163,6 +176,7 @@ void CapacitySliceController::ShowSettings() {
     const std::string value = Truncate(setting.value, bounds::kMaxSettingValueLength);
     lv_label_set_text_fmt(row, "%s: %s", label.c_str(), value.c_str());
   }
+  AddNextButton();
   current_screen_ = CapacityScreen::kSettings;
 }
 

@@ -168,12 +168,21 @@ void ShowDiagnosticScreen() {
   }
 }
 
-// Tapping the live capacity-slice screen advances it (F08a Work item 5:
-// "exercise ... the capacity slice with active touch"); tapping past the
-// last screen (Settings) exits back to the diagnostic screen instead of
-// looping forever, since a real board session needs a way out. Registered
-// fresh on every screen because CapacitySliceController::DestroyCurrent()
-// deletes the previous root -- any LVGL event callback on it goes with it.
+// Tapping the capacity-slice screen's "Next" button advances it (F08a Work
+// item 5: "exercise ... the capacity slice with active touch"); tapping it
+// past the last screen (Settings) exits back to the diagnostic screen
+// instead of looping forever, since a real board session needs a way out.
+// Registered fresh on every screen because
+// CapacitySliceController::DestroyCurrent() deletes the previous root
+// (and the button under it) -- any LVGL event callback on it goes with it.
+//
+// PHYSICAL EVIDENCE: an earlier version of this wired LV_EVENT_CLICKED to
+// the whole screen root instead of a dedicated button. On a real board
+// that never advanced past the Alert list/Settings screens: their
+// scrollable list child covers nearly the whole root, and LVGL delivers
+// the press/release to the list (which consumes it for its own
+// scroll-gesture detection) rather than bubbling it to root. A real
+// always-on-top button avoids that ambiguity.
 void AdvanceCapacitySlice() {
   if (!g_app.capacity_slice.has_value()) {
     return;
@@ -189,12 +198,12 @@ void AdvanceCapacitySlice() {
 }
 
 void AttachCapacityAdvanceHandler() {
-  if (!g_app.capacity_slice.has_value() || g_app.capacity_slice->root() == nullptr) {
+  if (!g_app.capacity_slice.has_value() || g_app.capacity_slice->next_button() == nullptr) {
     return;
   }
-  lv_obj_t* root = g_app.capacity_slice->root();
-  lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(root, [](lv_event_t*) { AdvanceCapacitySlice(); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(
+      g_app.capacity_slice->next_button(), [](lv_event_t*) { AdvanceCapacitySlice(); },
+      LV_EVENT_CLICKED, nullptr);
 }
 
 void PersistAndShowDiagnostic(const calibration::AffineTransform& transform) {

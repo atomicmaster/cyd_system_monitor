@@ -109,8 +109,19 @@ class CapacitySliceController {
   // rendered (bounded) settings row.
   lv_obj_t* settings_list() const { return settings_list_; }
 
+  // A dedicated "Next" button present on every screen, positioned outside
+  // and after the scrollable list containers (alert_list_/settings_list_).
+  // Physical testing found that a whole-root LV_EVENT_CLICKED handler
+  // never fires on kAlertList/kSettings: those screens' scrollable list
+  // covers nearly the whole root, and LVGL delivers the press/release to
+  // the list (which consumes it for its own scroll-gesture detection)
+  // rather than bubbling it up to root. A real, always-on-top button
+  // avoids that ambiguity entirely. Never null once a screen is built.
+  lv_obj_t* next_button() const { return next_button_; }
+
  private:
   void DestroyCurrent();
+  void AddNextButton();
 
   lv_obj_t* parent_;
   CapacitySliceState state_;
@@ -122,6 +133,7 @@ class CapacitySliceController {
   lv_obj_t* alert_detail_title_ = nullptr;
   lv_obj_t* alert_detail_body_ = nullptr;
   lv_obj_t* settings_list_ = nullptr;
+  lv_obj_t* next_button_ = nullptr;
 
   // 0 means "never refreshed yet"; the first UpdateLiveStatus() call after
   // construction always redraws regardless of now_ms.
