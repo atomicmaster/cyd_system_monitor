@@ -182,27 +182,64 @@ terminal to type into.
   state" -- the capacity slice itself was never built during this session,
   so its own LVGL pool/heap peak is not yet known.
 
-**Not yet reached: the capacity slice itself.** This session was driven
-entirely over the UART/dev-console channel (a pyserial script sending
-`DEV:` lines), with no human present at the board to physically press the
-touchscreen -- the continuous `touch-diagnostic` log correctly showed
-`irq_asserted=0` throughout, since nothing was touching the panel, not
-because of any driver fault (F06's evidence already confirms real taps
-assert IRQ and read correctly on this same touch driver). There is
+**First attempt: driven over UART only, no tap reached the slice.** The
+session above was driven entirely over the UART/dev-console channel (a
+pyserial script sending `DEV:` lines), with no human present at the board
+to physically press the touchscreen -- the continuous `touch-diagnostic`
+log correctly showed `irq_asserted=0` throughout, since nothing was
+touching the panel (not a driver fault: F06's evidence already confirms
+real taps assert IRQ correctly on this same touch driver). There is
 deliberately no UART/dev-console path to open the capacity slice as a
 substitute for a real tap, since Work item 5 asks for an *active-touch*
-exercise, not a workaround around touch. Reaching the "Capacity slice"
-button and exercising the slice's own tap-to-advance navigation therefore
-still needs a session with an operator physically present to tap the
-screen; only then can `DEV:CAPACITY_STATUS` capture the slice's own peak
-LVGL pool/heap usage and its touch responsiveness be observed.
+exercise.
 
-**Consequence for F08a's status:** Work items 1-4 and 6 are complete and now
-partially confirmed live (the probe and its bounds run correctly on real
-hardware). Work item 5 remains incomplete: this session supplies a real
-diagnostic-screen-only baseline, not the capacity slice's own measured
-peak/low-water values under active touch, serial traffic, and flash
-activity. A future session with an operator physically present should tap
-through the diagnostic screen's "Capacity slice" button and the slice's
-own tap-to-advance navigation, then repeat `DEV:CAPACITY_STATUS` while it
-is showing.
+**Second attempt: an operator present at the board, real taps registered,
+but navigation never advanced past the Alert list/Settings screens.**
+With the operator physically tapping, `indev press:` log lines confirmed
+LVGL was receiving real touch coordinates and
+`capacity_slice_button: LV_EVENT_CLICKED` fired correctly, entering the
+capacity slice. But taps on the Alert list and Settings screens (both
+built as a near-full-screen scrollable list, wired for
+`LV_EVENT_CLICKED` on the screen *root*) never advanced: LVGL delivers
+press/release to the list object (which consumes it for its own
+scroll-gesture detection) rather than bubbling the click to root. This
+was a real bug in the exercise wiring, not a touch-hardware limitation.
+
+**Fix and third attempt: dedicated "Next" button, confirmed working.**
+Added a real button (`CapacitySliceController::next_button()`) present on
+every capacity-slice screen, outside the scrollable list, and wired
+`main.cpp`'s advance handler to it instead of the root
+(commit `cdfefb6019bfe8bb997378f920f96b842f53b253`, see its message for
+the full fix). Reflashed and
+rerun with the same operator: `capacity_slice_button: LV_EVENT_CLICKED`
+entered the slice, and four paced taps on "Next" cycled Live status ->
+Alert list -> Alert detail -> Settings, each confirmed by a distinct
+`DEV:CAPACITY_STATUS` reading polled every ~4s during the sequence:
+
+| Screen | LVGL pool total | LVGL pool available |
+| --- | ---: | ---: |
+| Diagnostic (baseline) | 63,424 bytes | 53,704 bytes |
+| Live status | 63,728 bytes | 56,760 bytes |
+| Alert list (8 rows, clamped) | 63,536 bytes | 54,968 bytes |
+| Alert detail | 63,704 bytes | 56,504 bytes |
+| Settings (8 rows, clamped) | 63,536 bytes | 55,016 bytes |
+
+LVGL pool peak used stayed flat at 10,908 bytes across every reading in
+this window (the pool's own running high-water mark had already been set
+by earlier screen builds and was never exceeded again), free heap stayed
+at 176,424 bytes throughout the capacity slice (178,416 bytes on the
+diagnostic screen) with minimum free heap unchanged at 167,808 bytes, and
+`main`/`dev_console` task stack low-water marks stayed flat at
+12,744/1,952 bytes. No crash, no watchdog trip, no visible slowdown; the
+board remained fully responsive to touch throughout, and normal reset
+afterward returned it to the diagnostic screen cleanly (board recoverable).
+
+**Consequence for F08a's status:** Work items 1-6 are now confirmed live
+on real hardware: the probe, its declared bounds, and the capacity
+slice's own tap-driven navigation and per-screen LVGL pool/heap readings
+all match the simulator's coverage and the code's declared behavior.
+Remaining gaps are measurement breadth, not a missing capability: this
+session did not exercise the slice under concurrent one-second serial
+traffic or flash-write activity (F08's combined-load scope), and used
+placeholder Alert/Settings content (`MakeMaxRepresentativeState`) rather
+than real Host data, since no real Alert/Settings source exists yet.
