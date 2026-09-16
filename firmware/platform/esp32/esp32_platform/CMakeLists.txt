@@ -20,6 +20,7 @@ idf_component_register(
     "../microsd/microsd.cpp"
     "../battery/battery.cpp"
     "../button/button.cpp"
+    "../expansion/expansion.cpp"
     "../reset_reason/reset_reason.cpp"
     "../nvs/calibration_store.cpp"
     "../dev_console/dev_console.cpp"

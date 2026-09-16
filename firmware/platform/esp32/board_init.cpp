@@ -25,6 +25,7 @@
 #include "dev_console/dev_console.hpp"
 #include "display/display.hpp"
 #include "esp_log.h"
+#include "expansion/expansion.hpp"
 #include "firmware/domain/generated/profile.hpp"
 #include "led/led.hpp"
 #include "microsd/microsd.hpp"
@@ -93,6 +94,15 @@ firmware::domain::DiagnosticState InitBoard(BoardHandles& out_handles) {
       {"boot_button", button_ok,
        button_ok ? (firmware::platform::esp32::button::IsPressed() ? "held" : "released")
                  : "init failed"});
+
+  // Unconnected by default: a floating reading here isn't a pass/fail
+  // result, just the pin's configured/idle state. F07 exercises this
+  // properly by jumpering it to GND/3V3 and re-reading live via
+  // DEV:PERIPHERAL_STATUS, not from this one-shot boot-time value.
+  const bool expansion_ok = firmware::platform::esp32::expansion::Init();
+  state.peripherals.push_back(
+      {"expansion", expansion_ok,
+       expansion_ok ? "configured, floating (jumper to GND/3V3 to test)" : "init failed"});
 
   firmware::platform::esp32::dev_console::StartDevConsole();
 

@@ -14,6 +14,7 @@
 #include "battery/battery.hpp"
 #include "button/button.hpp"
 #include "esp_log.h"
+#include "expansion/expansion.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "led/led.hpp"
@@ -57,18 +58,21 @@ void RunAudioTest() {
   ESP_LOGI(kTag, "DEV:AUDIO_TEST: amplifier disabled");
 }
 
-// Re-probes MicroSD/battery/BOOT-button live (unlike board_init.cpp's
-// once-at-boot probe) so an operator can insert/remove a card or
-// press/release BOOT between runs and see the result change -- the
-// concrete meaning of F07's "visible and reproducible" for these three.
+// Re-probes MicroSD/battery/BOOT-button/expansion live (unlike
+// board_init.cpp's once-at-boot probe) so an operator can insert/remove a
+// card, press/release BOOT, or jumper the expansion pin between runs and
+// see the result change -- the concrete meaning of F07's "visible and
+// reproducible" for these.
 void RunPeripheralStatus() {
   const auto sd = microsd::Probe();
   const int battery_mv = battery::ReadMillivolts();
   const bool button_pressed = button::IsPressed();
+  const bool expansion_high = expansion::IsHigh();
   ESP_LOGI(kTag, "DEV:PERIPHERAL_STATUS: microsd_present=%d microsd_detail=\"%s\"", sd.present,
            sd.detail.c_str());
   ESP_LOGI(kTag, "DEV:PERIPHERAL_STATUS: battery_mv=%d", battery_mv);
   ESP_LOGI(kTag, "DEV:PERIPHERAL_STATUS: boot_button_pressed=%d", button_pressed);
+  ESP_LOGI(kTag, "DEV:PERIPHERAL_STATUS: expansion_high=%d", expansion_high);
 }
 
 struct Command {
