@@ -42,6 +42,7 @@ add_executable(simulator
   src/scenarios/display_smoke.cpp
   src/scenarios/calibration_scenario.cpp
   src/scenarios/peripherals_scenario.cpp
+  src/scenarios/capacity_scenario.cpp
   src/fixtures.cpp)
 target_link_libraries(simulator PRIVATE firmware_domain firmware_ui lvgl)
 target_compile_features(simulator PRIVATE cxx_std_20)

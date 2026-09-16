@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 
 #include "firmware/domain/generated/profile.hpp"
@@ -30,11 +30,10 @@ int RunSmoke() {
   SimClock clock(0);
   clock.AdvanceMs(1000);
 
-  std::printf(
-      "simulator smoke: profile=%s geometry=%dx%d clock_ms=%llu\n",
-      firmware::domain::profile::kProfileId, firmware::domain::profile::kLogicalWidth,
-      firmware::domain::profile::kLogicalHeight,
-      static_cast<unsigned long long>(clock.NowMs()));
+  std::printf("simulator smoke: profile=%s geometry=%dx%d clock_ms=%llu\n",
+              firmware::domain::profile::kProfileId, firmware::domain::profile::kLogicalWidth,
+              firmware::domain::profile::kLogicalHeight,
+              static_cast<unsigned long long>(clock.NowMs()));
   return 0;
 }
 
@@ -54,8 +53,11 @@ int main(int argc, char** argv) {
   if (scenario == "peripherals") {
     return simulator::scenarios::RunPeripherals();
   }
+  if (scenario == "capacity") {
+    return simulator::scenarios::RunCapacity();
+  }
   std::fprintf(stderr,
                "usage: simulator <scenario>\n"
-               "  scenario: smoke | display-smoke | calibration | peripherals\n");
+               "  scenario: smoke | display-smoke | calibration | peripherals | capacity\n");
   return 2;
 }

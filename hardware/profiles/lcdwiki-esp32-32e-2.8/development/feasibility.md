@@ -92,3 +92,50 @@ RAM, firmware image size, channel revisit timing, and packet loss. Compare
 the current software-touch/SPI2-display/SPI3-MicroSD arrangement with an
 alternative under that same load. This document remains blocked until those
 measurements and a provisional partition/write/endurance budget are present.
+
+## F08a UI capacity slice: build-time result (no physical board)
+
+[F08a](../../../../docs/tickets/F08a.md) adds the bounded operational UI
+capacity slice (live status, a maximum-size Alert list, Alert detail, and
+Settings navigation), the LVGL pool/heap/task-stack capacity probe
+(`DEV:CAPACITY_STATUS`), and simulator coverage of the declared row/string
+bounds under repeated navigation
+(`./dev run simulator -- capacity`). **No physical E32R28T session was
+available to produce this entry**: the agent implementing this ticket had no
+connected board. Everything below is build-time-only evidence against the
+existing F05-F07 diagnostic image (no radio), not the physical touch/display
+responsiveness or measured heap/stack low-water marks Work items 5-6
+require. The board session, its operator actions, and the resulting
+peak/low-water values remain outstanding.
+
+Building the ordinary (non-probe) diagnostic image plus this ticket's
+instrumentation and capacity-slice UI, unmodified from the profile's default
+`sdkconfig.defaults`, with:
+
+```sh
+source "$HOME/esp/esp-idf/export.sh"
+cd firmware
+idf.py build
+idf.py size
+```
+
+produced a linking image (no WiFi/BLE) with:
+
+| Region | Used | Used % | Remaining |
+| --- | ---: | ---: | ---: |
+| DRAM | 109,560 bytes | 87.94% | 15,020 bytes |
+| IRAM | 65,378 bytes | 49.88% | 65,694 bytes |
+| Flash (.bin) | 617,904 bytes | — | 0x691e0 bytes (41%) free of the 1 MiB app partition |
+
+This is UI/runtime-only headroom with no radio host linked at all, so it
+cannot be read as combined-load capacity, and DRAM headroom (15,020 bytes)
+is already well below the ~13,296+22,576 byte DRAM overflow the WiFi+NimBLE
+and WiFi+Bluedroid build-time probes recorded above. A capacity change
+(smaller UI/runtime footprint, a lower-level BLE receiver, or a
+higher-memory profile) therefore remains necessary regardless of which
+radio approach M1a eventually selects; the UI slice this ticket adds is not,
+by itself, evidence that any radio approach will now fit. The declared
+row/string bounds in `firmware/domain/include/firmware/domain/capacity.hpp`
+and the `DEV:CAPACITY_STATUS` UART command exist so a future physical
+session can produce the actual peak-usage and low-water-mark numbers this
+entry is missing.

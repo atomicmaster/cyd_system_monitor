@@ -12,7 +12,9 @@
 
 #include "audio/audio.hpp"
 #include "battery/battery.hpp"
+#include "build_identity.hpp"
 #include "button/button.hpp"
+#include "capacity/capacity_probe.hpp"
 #include "esp_log.h"
 #include "expansion/expansion.hpp"
 #include "freertos/FreeRTOS.h"
@@ -75,6 +77,31 @@ void RunPeripheralStatus() {
   ESP_LOGI(kTag, "DEV:PERIPHERAL_STATUS: expansion_high=%d", expansion_high);
 }
 
+// F08a Work item 1: surfaces LVGL pool peak/available, minimum free heap,
+// and every registered task's stack low-water mark over UART, since this
+// board has no other channel to report them before TB02's real product
+// protocol exists. Re-probes live like RunPeripheralStatus, so an operator
+// can request a fresh reading after exercising the capacity slice/radio
+// load rather than only ever seeing a one-shot boot value.
+void RunCapacityStatus() {
+  const auto sample =
+      firmware::platform::esp32::capacity::Sample(firmware::platform::esp32::kBuildIdentity);
+  ESP_LOGI(kTag, "DEV:CAPACITY_STATUS: build=%s", sample.build_identity.c_str());
+  ESP_LOGI(kTag,
+           "DEV:CAPACITY_STATUS: lvgl_pool_total_bytes=%lu lvgl_pool_peak_used_bytes=%lu "
+           "lvgl_pool_available_bytes=%lu",
+           static_cast<unsigned long>(sample.lvgl_pool_total_bytes),
+           static_cast<unsigned long>(sample.lvgl_pool_peak_used_bytes),
+           static_cast<unsigned long>(sample.lvgl_pool_available_bytes));
+  ESP_LOGI(kTag, "DEV:CAPACITY_STATUS: free_heap_bytes=%lu minimum_free_heap_bytes=%lu",
+           static_cast<unsigned long>(sample.free_heap_bytes),
+           static_cast<unsigned long>(sample.minimum_free_heap_bytes));
+  for (const auto& task : sample.task_stacks) {
+    ESP_LOGI(kTag, "DEV:CAPACITY_STATUS: task=%s stack_low_water_mark_bytes=%lu",
+             task.task_name.c_str(), static_cast<unsigned long>(task.stack_low_water_mark_bytes));
+  }
+}
+
 struct Command {
   const char* line;
   void (*run)();
@@ -90,6 +117,7 @@ constexpr Command kCommands[] = {
     {"DEV:LED_TEST", RunLedTest},
     {"DEV:AUDIO_TEST", RunAudioTest},
     {"DEV:PERIPHERAL_STATUS", RunPeripheralStatus},
+    {"DEV:CAPACITY_STATUS", RunCapacityStatus},
 };
 
 // UART0 is already owned by ESP-IDF's console/log VFS layer (ESP_LOGI,
@@ -149,7 +177,9 @@ void DevConsoleTask(void* /*arg*/) {
 }  // namespace
 
 void StartDevConsole() {
-  xTaskCreate(DevConsoleTask, "dev_console", 4096, nullptr, tskIDLE_PRIORITY + 1, nullptr);
+  TaskHandle_t handle = nullptr;
+  xTaskCreate(DevConsoleTask, "dev_console", 4096, nullptr, tskIDLE_PRIORITY + 1, &handle);
+  firmware::platform::esp32::capacity::RegisterTask("dev_console", handle);
 }
 
 }  // namespace firmware::platform::esp32::dev_console

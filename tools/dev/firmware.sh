@@ -46,6 +46,7 @@ check() {
   "$test_dir/build/firmware_domain_calibration_tests"
   "$test_dir/build/firmware_domain_diagnostic_tests"
   "$test_dir/build/firmware_domain_feasibility_tests"
+  "$test_dir/build/firmware_domain_capacity_tests"
 }
 
 run() {

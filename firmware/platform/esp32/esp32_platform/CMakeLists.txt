@@ -24,6 +24,7 @@ idf_component_register(
     "../reset_reason/reset_reason.cpp"
     "../nvs/calibration_store.cpp"
     "../dev_console/dev_console.cpp"
+    "../capacity/capacity_probe.cpp"
   INCLUDE_DIRS ".."
   REQUIRES domain driver esp_lcd esp_adc sdmmc fatfs esp_timer nvs_flash lvgl esp_lcd_ili9341
 )

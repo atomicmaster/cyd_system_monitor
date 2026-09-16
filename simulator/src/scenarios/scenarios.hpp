@@ -18,4 +18,12 @@ int RunCalibration();
 // Matches F07's `./dev run simulator -- peripherals`.
 int RunPeripherals();
 
+// Builds the bounded operational capacity slice (live status, Alert list,
+// Alert detail, Settings) from a deliberately oversized fixture, asserting
+// that every screen clamps to firmware::domain::capacity's declared row
+// and string-length bounds, and that repeated navigation across all four
+// screens always leaves exactly one live screen root behind. Matches
+// F08a's `./dev run simulator -- capacity`.
+int RunCapacity();
+
 }  // namespace simulator::scenarios

@@ -31,7 +31,7 @@ check() {
 
 # Runs a diagnostic case on a connected board:
 #   ./dev run hardware -- <case> --port <path>
-#     case: display-smoke | calibration | peripherals
+#     case: display-smoke | calibration | peripherals | capacity
 #
 # Unlike the simulator (which builds a separate scenario binary per case
 # because it has no operator to drive it interactively), the real board
@@ -44,9 +44,12 @@ check() {
 # (display-smoke: F05: readable landscape diagnostics, reset/build
 # identity over UART; calibration: F06: guided 5-point calibration,
 # validation, persistence across reset, USB recovery command; peripherals:
-# F07: LED/audio/SD/battery/button rows) -- it is not passed to idf.py.
-# This requires a physically connected board and a real serial port -- it
-# is not attempted or simulated here.
+# F07: LED/audio/SD/battery/button rows; capacity: F08a: send
+# DEV:CAPACITY_STATUS over the dev console while exercising touch, display
+# refresh, and representative serial traffic, and record the reported LVGL
+# pool/heap/task-stack peak and low-water values) -- it is not passed to
+# idf.py. This requires a physically connected board and a real serial
+# port -- it is not attempted or simulated here.
 run() {
   if [[ "${1:-}" == "--" ]]; then shift; fi
 
@@ -68,7 +71,7 @@ run() {
   done
 
   if [[ -z "$case_name" ]]; then
-    echo "error: 'run hardware' requires a case: display-smoke | calibration | peripherals" >&2
+    echo "error: 'run hardware' requires a case: display-smoke | calibration | peripherals | capacity" >&2
     return 1
   fi
   if [[ -z "$port" ]]; then

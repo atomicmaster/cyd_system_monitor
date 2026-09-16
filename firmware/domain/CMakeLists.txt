@@ -37,6 +37,7 @@ set(_fd_sources
     "src/reset_reason.cpp"
     "src/diagnostic.cpp"
     "src/feasibility.cpp"
+    "src/capacity.cpp"
     "${FIRMWARE_DOMAIN_CALIBRATION_SOURCES}")
 
 if(ESP_PLATFORM)

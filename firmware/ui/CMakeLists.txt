@@ -8,7 +8,8 @@
 
 set(_fu_sources
     "src/diagnostic/diagnostic_screen.cpp"
-    "src/calibration/calibration_flow.cpp")
+    "src/calibration/calibration_flow.cpp"
+    "src/capacity/capacity_slice.cpp")
 
 if(ESP_PLATFORM)
   # Building as an ESP-IDF component under idf.py. `lvgl` is the managed

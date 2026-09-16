@@ -11,6 +11,7 @@
 #include <optional>
 
 #include "board_init.hpp"
+#include "capacity/capacity_probe.hpp"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "firmware/domain/calibration/calibration.hpp"
@@ -246,6 +247,12 @@ extern "C" void app_main(void) {
 
   lv_init();
   lv_tick_set_cb(TickGetMs);
+
+  // F08a's capacity probe reports this task's stack low-water mark under
+  // "main" -- there is no separate display/UI task to register: LVGL's
+  // timer handler and all touch polling run inline in this same app_main
+  // loop (see the for(;;) loop below), not on a dedicated FreeRTOS task.
+  firmware::platform::esp32::capacity::RegisterTask("main", xTaskGetCurrentTaskHandle());
 
   g_app.diagnostic_state = board::InitBoard(g_app.board);
 

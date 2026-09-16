@@ -21,6 +21,7 @@
 
 #include "audio/audio.hpp"
 #include "battery/battery.hpp"
+#include "build_identity.hpp"
 #include "button/button.hpp"
 #include "dev_console/dev_console.hpp"
 #include "display/display.hpp"
@@ -39,17 +40,12 @@ namespace {
 
 constexpr const char* kTag = "fw.board_init";
 
-// Not a measured build-provenance string yet; C01/TB02 own a real build
-// identity format. This is a placeholder that at least distinguishes an
-// ESP32 image from the simulator's fixture "simulator-dev-build" string.
-constexpr const char* kBuildIdentity = "esp32-dev-build";
-
 }  // namespace
 
 firmware::domain::DiagnosticState InitBoard(BoardHandles& out_handles) {
   firmware::domain::DiagnosticState state;
   state.profile_id = firmware::domain::profile::kProfileId;
-  state.build_identity = kBuildIdentity;
+  state.build_identity = firmware::platform::esp32::kBuildIdentity;
 
   esp_err_t nvs_err = nvs_flash_init();
   if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
