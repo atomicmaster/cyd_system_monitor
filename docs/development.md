@@ -111,11 +111,12 @@ without depending on ignored vendor downloads.
   header from `hardware/profiles/lcdwiki-esp32-32e-2.8/profile.toml` and
   asserts the supported 320x240 landscape geometry, using no files under
   `hardware/profiles/*/vendor/`.
-- **Open gap:** the `firmware-image` CI job (`.github/workflows/ci.yml`)
-  itself has not yet been observed passing on a GitHub-hosted runner — the
-  local run above used a manually installed ESP-IDF, not that job's
-  `espressif/esp-idf-ci-action` container. This gate stays open until that
-  job (or an equivalent clean-machine run) is recorded as passing.
+- **Closed:** the `firmware-image` CI job (`.github/workflows/ci.yml`) has
+  passed on a GitHub-hosted runner via `espressif/esp-idf-ci-action`
+  ([run](https://github.com/atomicmaster/cyd_system_monitor/actions/runs/35040675697/job/104619596404)),
+  confirming the fix for ESP-IDF's container-venv Python (3.10, predates
+  `tomllib`) in commit `de9217d`. This closes the M0 exit-criteria gap that
+  was previously open here.
 - **CI runner version:** `.github/workflows/ci.yml` pins `macos-15`, the
   newest Apple Silicon macOS image GitHub-hosted runners currently offer.
   This is a known gap against "macOS 26": no such runner exists yet. Update
