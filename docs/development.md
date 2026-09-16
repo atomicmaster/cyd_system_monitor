@@ -26,13 +26,24 @@ falling back to another target.
 
 | Tool | Used by | Pin | Acquire |
 | --- | --- | --- | --- |
-| ESP-IDF | firmware | v5.3 | `git clone` + `install.sh`; `source $IDF_PATH/export.sh` before `./dev build firmware` ([docs](https://docs.espressif.com/projects/esp-idf)) |
-| CMake | firmware (native test), simulator, protocol | >= 3.20 | `brew install cmake` |
+| ESP-IDF | firmware | v5.3.2 | `git clone -b v5.3.2 --recursive` + `install.sh esp32`; `source $IDF_PATH/export.sh` before `./dev build firmware` ([docs](https://docs.espressif.com/projects/esp-idf)) |
+| CMake | firmware (native test), simulator, protocol | >= 3.20 (firmware/ESP-IDF: let `install.sh` fetch its own pinned 3.30.2 rather than relying on a newer system CMake — see below) | `brew install cmake` |
 | Ninja | firmware (native test), simulator, protocol | latest | `brew install ninja` |
-| Python 3 | firmware, protocol (generation) | >= 3.11 (stdlib `tomllib`) | `brew install python3` or Xcode Command Line Tools |
+| Python 3 | firmware, protocol (generation) | >= 3.11 (stdlib `tomllib`) | `brew install python3` or Xcode Command Line Tools; after `source $IDF_PATH/export.sh`, confirm `python3 --version` still resolves to this one, not an older CommandLineTools Python ahead of it on `PATH` |
 | Rust | host, protocol (generated crate) | 1.97.1, pinned in [`rust-toolchain.toml`](../rust-toolchain.toml) | `rustup` auto-installs the pinned toolchain on first use |
 | Swift / Xcode | macos | Swift 6.4 (Xcode 16+) | Xcode from the App Store or developer.apple.com; accept its license once |
 | LVGL | firmware, simulator | pinned by F05, not M0 | `firmware/ui/` is empty until F05 implements the first screen; F05 pins LVGL alongside that work rather than this ticket choosing a version for an empty tree |
+
+**ESP-IDF + system CMake:** a CMake newer than ESP-IDF v5.3.2's tested range
+(observed with system CMake 4.4.3, and it does not depend on that major
+version specifically) fails `idf.py set-target`/`build` with `CMake Error ...
+define_property command is not scriptable`, thrown from `kconfig.cmake` deep
+inside ESP-IDF's own early component-requirements scan. Run
+`python $IDF_PATH/tools/idf_tools.py install cmake` once (installs ESP-IDF's
+pinned 3.30.2 under `~/.espressif/tools/cmake/`) and re-source
+`export.sh`; it then takes priority on `PATH` ahead of a newer system CMake
+for any `idf.py` invocation, while `cmake`/`ninja` outside an ESP-IDF shell
+(simulator, protocol, the native domain test) keep using the system one.
 
 Developer dependency fetching (crates.io, ESP-IDF's own component registry,
 Homebrew) is unrelated to the installed product's outbound-traffic
@@ -74,8 +85,10 @@ empty runnable targets, run formatting/tests, and verify the E32R28T profile
 without depending on ignored vendor downloads.
 
 - **Bootstrap + empty runnable targets:** `./dev doctor` and `./dev build
-  {simulator,host,macos,protocol}` succeed locally; `./dev build firmware`
-  requires ESP-IDF, not installed in the authoring environment (see below).
+  {firmware,simulator,host,macos,protocol}` all succeed locally, including a
+  real ESP-IDF v5.3.2 `idf.py build` producing a flashable
+  `cyd_system_monitor_firmware.bin` (199588 bytes; 81% of the smallest app
+  partition free) and a passing `idf.py size` report.
 - **Formatting/tests:** `./dev check {firmware,simulator,host,macos,protocol}`
   pass locally, including `cargo fmt --check`, `cargo clippy -D warnings`, and
   `cargo test` for host and the generated protocol crate, plus a
@@ -87,12 +100,11 @@ without depending on ignored vendor downloads.
   header from `hardware/profiles/lcdwiki-esp32-32e-2.8/profile.toml` and
   asserts the supported 320x240 landscape geometry, using no files under
   `hardware/profiles/*/vendor/`.
-- **Open gap:** the actual `idf.py build` (ESP-IDF component build of
-  `firmware/`) has not been run against real ESP-IDF; no Docker/ESP-IDF
-  toolchain was available while authoring this milestone. The `firmware-image`
-  CI job (`.github/workflows/ci.yml`) is configured to run it on a clean
-  runner; this gate stays open until that job (or an equivalent local run)
-  is recorded as passing.
+- **Open gap:** the `firmware-image` CI job (`.github/workflows/ci.yml`)
+  itself has not yet been observed passing on a GitHub-hosted runner — the
+  local run above used a manually installed ESP-IDF, not that job's
+  `espressif/esp-idf-ci-action` container. This gate stays open until that
+  job (or an equivalent clean-machine run) is recorded as passing.
 - **CI runner version:** `.github/workflows/ci.yml` pins `macos-15`, the
   newest Apple Silicon macOS image GitHub-hosted runners currently offer.
   This is a known gap against "macOS 26": no such runner exists yet. Update

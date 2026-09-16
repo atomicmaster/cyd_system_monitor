@@ -9,7 +9,12 @@ endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
-# domain/ registers itself as a component when ESP_PLATFORM is set.
-set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}")
+# List each component's own directory, never CMAKE_CURRENT_LIST_DIR itself:
+# that directory holds this project's own CMakeLists.txt, and ESP-IDF's
+# component scanner treats a listed directory that already contains a
+# CMakeLists.txt as one component, re-including this file during its early
+# requirements scan. platform/esp32/ and ui/ join this list once F05 gives
+# them their own CMakeLists.txt.
+set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/domain")
 
 project(cyd_system_monitor_firmware)
