@@ -23,6 +23,7 @@ namespace firmware::platform::esp32::radio {
 namespace {
 
 constexpr const char* kTag = "fw.radio_probe";
+constexpr uint8_t kWifiMonitorChannel = 1;
 constexpr size_t kHciPacketBytes = 260;
 // Four complete H4 events are enough to separate the VHCI callback from the
 // parser while keeping this feasibility probe's static reservation explicit.
@@ -126,14 +127,26 @@ void EventTask(void*) {
   }
 }
 
+void OnWifiPacket(void*, wifi_promiscuous_pkt_type_t type) {
+  if (type == WIFI_PKT_MGMT) {
+    ++g_status.wifi_management_frames;
+  }
+}
+
 void StartWifi() {
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   esp_netif_create_default_wifi_sta();
   wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&config));
-  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+  ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+  ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_NULL));
   ESP_ERROR_CHECK(esp_wifi_start());
+  wifi_promiscuous_filter_t filter = {.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT};
+  ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&filter));
+  ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(OnWifiPacket));
+  ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
+  ESP_ERROR_CHECK(esp_wifi_set_channel(kWifiMonitorChannel, WIFI_SECOND_CHAN_NONE));
 }
 
 void StartBle() {
@@ -173,7 +186,7 @@ void StartControllerOnlyProbe() {
   StartWifi();
   StartBle();
   g_status.enabled = true;
-  ESP_LOGI(kTag, "controller-only passive BLE scan enabled beside Wi-Fi");
+  ESP_LOGI(kTag, "controller-only passive BLE scan and Wi-Fi monitor enabled");
 }
 
 ControllerProbeStatus ReadControllerProbeStatus() { return g_status; }

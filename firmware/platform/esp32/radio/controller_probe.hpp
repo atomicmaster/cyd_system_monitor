@@ -16,6 +16,7 @@ struct ControllerProbeStatus {
   uint32_t commands_sent = 0;
   uint32_t command_failures = 0;
   uint32_t advertising_reports = 0;
+  uint32_t wifi_management_frames = 0;
   uint32_t malformed_events = 0;
   uint32_t dropped_events = 0;
 };

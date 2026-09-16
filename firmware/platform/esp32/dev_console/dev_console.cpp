@@ -107,10 +107,12 @@ void RunControllerProbeStatus() {
   const auto status = firmware::platform::esp32::radio::ReadControllerProbeStatus();
   ESP_LOGI(kTag,
            "DEV:HCI_STATUS: enabled=%d scan_enabled=%d commands_sent=%lu command_failures=%lu "
-           "advertising_reports=%lu malformed_events=%lu dropped_events=%lu",
+           "advertising_reports=%lu wifi_management_frames=%lu malformed_events=%lu "
+           "dropped_events=%lu",
            status.enabled, status.scan_enabled, static_cast<unsigned long>(status.commands_sent),
            static_cast<unsigned long>(status.command_failures),
            static_cast<unsigned long>(status.advertising_reports),
+           static_cast<unsigned long>(status.wifi_management_frames),
            static_cast<unsigned long>(status.malformed_events),
            static_cast<unsigned long>(status.dropped_events));
 }

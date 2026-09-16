@@ -74,6 +74,19 @@ DRAM by 13,008 B and IRAM by 2,140 B. It was not flashed. The exact
 configuration, command, and comparison with the NimBLE attempt are recorded
 in [the controller-only investigation](ble-controller-vhci-investigation.md).
 
+### Passive Wi-Fi monitor result
+
+The next capacity experiment replaced station Wi-Fi with a `WIFI_MODE_NULL`,
+management-frame-only promiscuous monitor. It uses the smallest documented
+receive pools, retains AMPDU RX, removes connection/security/SoftAP features,
+and disables the Wi-Fi IRAM speed optimizations. The combined controller-only
+BLE image **still did not link**: DRAM overflow was **12,632 B**, a recovery
+of only **376 B** from the controller-only result. IRAM did fit, eliminating
+the former 2,140 B overflow. This is a meaningful IRAM recovery, but it is
+not enough DRAM to flash or validate on the board, and it is not product
+policy. The passive API path, exact overlay, resolved configuration, and
+build command are recorded in [the passive Wi-Fi investigation](wifi-passive-monitor-investigation.md).
+
 ## Accounting rules already fixed
 
 The portable feasibility assessment tests enforce the two claims that later
