@@ -98,6 +98,7 @@ The dependency column repeats each ticket's prerequisite links for navigation. E
 | [R01](R01.md) | Install and remove a signed macOS appliance package | Outline | [TB08](TB08.md), [TB17](TB17.md), [TB18](TB18.md) |
 | [R02](R02.md) | Fetch a verified release and recover USB firmware updates | Outline | [TB08](TB08.md), [TB16](TB16.md) |
 | [R03](R03.md) | Qualify the integrated MVP and publish release evidence | Outline | [R01](R01.md), [R02](R02.md) |
+| [FR01](FR01.md) | Add and verify optional speaker alerts | Outline (deferred) | Alert lifecycle and Settings interfaces |
 
 ## Milestone coverage
 
@@ -119,4 +120,4 @@ The final [validation gate](../mvp-validation.md) remains authoritative. Per-rul
 
 ## Deferred scope
 
-V1 history/graphs, V2 GPU/ANE/helper/platform/agent/survey features, and unassigned advanced detections/Extreme Severity are outside this MVP backlog. See the [roadmap](../roadmap.md). Unsupported optional capability data stays explicitly unavailable; future features are not filled with fabricated values or silently pulled into foundation tickets.
+V1 history/graphs, V2 GPU/ANE/helper/platform/agent/survey features, optional speaker alerts ([FR01](FR01.md)), and unassigned advanced detections/Extreme Severity are outside this MVP backlog. See the [roadmap](../roadmap.md). Unsupported optional capability data stays explicitly unavailable; future features are not filled with fabricated values or silently pulled into foundation tickets.

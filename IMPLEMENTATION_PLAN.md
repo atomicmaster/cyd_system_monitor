@@ -26,11 +26,11 @@ Create the planned `firmware/`, `host/`, `macos/setup-app/`, `protocol/`, and `s
 
 ## M1 — E32R28T bring-up
 
-Implement profile-driven display, backlight, XPT2046 touch, RGB LED, audio enable, MicroSD probe, battery-ADC diagnostic, UART, and reset-reason drivers. Build the five-point calibration and independent validation flow, NVS schema, landscape coordinate mapping, settings recovery, and USB calibration reset.
+Implement profile-driven display, backlight, XPT2046 touch, RGB LED, MicroSD probe, battery-ADC diagnostic, UART, and reset-reason drivers. Build the five-point calibration and independent validation flow, NVS schema, landscape coordinate mapping, settings recovery, and USB calibration reset. The dormant audio driver may remain present, but physical speaker and Alert-sound support are deferred to [FR01](docs/tickets/FR01.md).
 
-Exercise every vendor-claimed pin on the connected board and record measured exceptions in the hardware profile. Verify that GPIO4 low enables the fitted audio-amplifier behavior without assuming undocumented electrical equivalence.
+Exercise every in-scope vendor-claimed pin on the connected board and record measured exceptions in the hardware profile. Record the unverified audio amplifier as a deferred profile capability without assuming undocumented electrical equivalence.
 
-**Exit criteria:** the real board boots reliably, validates its profile, renders a diagnostic screen, passes touch calibration and validation after power loss, exercises LEDs and optional sound, reports storage and reset state, and can be recovered with BOOT/RESET.
+**Exit criteria:** the real board boots reliably, validates its profile, renders a diagnostic screen, passes touch calibration and validation after power loss, exercises LEDs, reports storage and reset state, records deferred capabilities explicitly, and can be recovered with BOOT/RESET.
 
 ## M1a — Combined hardware feasibility gate
 

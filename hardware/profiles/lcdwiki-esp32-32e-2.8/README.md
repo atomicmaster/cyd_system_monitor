@@ -56,7 +56,7 @@ The board schematic labels the audio amplifier `SC8002B`. LCDWiki separately lin
 - Calibrate against five guided targets, validate against separate targets, reject excessive error, and checksum the stored transform together with its profile, orientation, and schema identity.
 - Use a 320×240 landscape layout.
 - Expose board supply/battery voltage only as a diagnostic value; do not claim calibrated state of charge, battery health, or portable runtime in the MVP.
-- Default optional speaker alerts to off. Keep the screen and RGB severity indication active until acknowledgment or episode end according to alert state.
+- Treat the audio amplifier and speaker as an unverified, deferred capability tracked by [`FR01`](../../../docs/tickets/FR01.md). Keep the dormant driver disabled by default. Screen and RGB severity indication remain the complete MVP Alert cues.
 
 ## Files
 

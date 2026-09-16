@@ -43,6 +43,8 @@ Advanced radio rules may enter V1 individually only after satisfying their resea
 
 V2 adds optional Apple GPU and Neural Engine Activity Diagnostics and the restricted privileged helper, including its installation, removal, status UI, and separate overhead validation. These are not MVP or V1 delivery requirements.
 
+V2 or a later release may add optional speaker Alert sounds through [FR01](tickets/FR01.md). The request requires fitted-amplifier and speaker/load verification, defaults sound off, and preserves complete visual Alert cues when sound is disabled or unavailable.
+
 V2 adds a portrait screen layout alongside landscape, plus the ability to select any of the four physical orientations (the two landscape directions V1's 180-degree flip already covers, and the two portrait directions this adds) from Settings. Unlike V1's flip, this requires a genuinely new screen layout -- portrait reflows the six-card Overview, status bar, and every other screen rather than just inverting an existing one -- so it waits for the accepted MVP/V1 UI to exist first. It reuses the same calibration-invalidation mechanism V1 establishes (the calibration record's `orientation` identity field), extended to all four orientation values instead of just the two landscape ones.
 
 V2 adds Linux Host support first, followed by Windows after the platform-adapter boundary has been exercised by macOS and Linux. It also adds deeper, explicitly enabled agent-specific activity and usage adapters and optional GPS-assisted wardriving/network mapping. Agent adapters use documented local APIs, structured logs, or agent-provided hooks and declare the fields they read and retain. They do not inspect conversation files, prompts, source contents, command arguments, or credentials.

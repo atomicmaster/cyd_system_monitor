@@ -53,7 +53,7 @@ Record for each session, per `docs/tickets/README.md#dispatch-and-completion`: c
 - [ ] Backlight is on and steady; note any observed flicker or dimming behavior against the vendor claim.
 - [ ] Touch: guided 5-point calibration completes on an uncalibrated panel; the validation pass accepts accurate taps and rejects deliberately inaccurate ones; a calibrated panel's calibration survives a power cycle; the `DEV:CLEAR_CALIBRATION` UART command (see `firmware/platform/esp32/dev_console/`) clears it and returns to the guided flow.
 - [ ] RGB LED: each of red/green/blue is independently visible at the expected polarity (active-low, common anode).
-- [ ] Audio: amplifier enable pin and DAC tone are verified deliberately (optional sound stays off by default); note the SC8002B vs FM8002E electrical-limit discrepancy from `audio-amplifier-comparison.md` if relevant to the fitted board.
+- [ ] Deferred feature request: verify the amplifier enable pin, DAC tone, fitted part, and compatible speaker when implementing [`FR01`](../../../../docs/tickets/FR01.md). This is not an MVP smoke-test requirement.
 - [ ] MicroSD: both an inserted, formatted card (mounts) and no card (ordinary idle status, not a failure) are exercised.
 - [ ] Battery/supply voltage ADC reads a plausible millivolt value with the board on USB power; this is diagnostic-only, not a calibrated state of charge.
 - [ ] BOOT button reads pressed/released correctly as a diagnostic input (not driven as an output).
