@@ -2,7 +2,6 @@
 #include "button/button.hpp"
 
 #include "driver/gpio.h"
-
 #include "firmware/domain/generated/profile.hpp"
 
 namespace firmware::platform::esp32::button {

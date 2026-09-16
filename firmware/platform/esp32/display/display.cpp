@@ -9,7 +9,6 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_log.h"
-
 #include "firmware/domain/generated/profile.hpp"
 
 namespace firmware::platform::esp32::display {
@@ -73,8 +72,8 @@ lv_display_t* InitDisplay() {
   bus_cfg.quadhd_io_num = -1;
   // One full 320x240x16bpp frame's worth of transfer headroom; LVGL flushes
   // partial areas, so this is comfortably above any single flush's size.
-  bus_cfg.max_transfer_sz = firmware::domain::profile::kDisplayWidth *
-                             firmware::domain::profile::kDisplayHeight * 2;
+  bus_cfg.max_transfer_sz =
+      firmware::domain::profile::kDisplayWidth * firmware::domain::profile::kDisplayHeight * 2;
   esp_err_t err = spi_bus_initialize(kDisplaySpiHost, &bus_cfg, SPI_DMA_CH_AUTO);
   if (err != ESP_OK) {
     ESP_LOGE(kTag, "spi_bus_initialize failed: %s", esp_err_to_name(err));
@@ -89,8 +88,8 @@ lv_display_t* InitDisplay() {
   io_cfg.trans_queue_depth = 10;
   io_cfg.lcd_cmd_bits = 8;
   io_cfg.lcd_param_bits = 8;
-  err = esp_lcd_new_panel_io_spi(reinterpret_cast<esp_lcd_spi_bus_handle_t>(kDisplaySpiHost), &io_cfg,
-                                  &g_panel_io);
+  err = esp_lcd_new_panel_io_spi(reinterpret_cast<esp_lcd_spi_bus_handle_t>(kDisplaySpiHost),
+                                 &io_cfg, &g_panel_io);
   if (err != ESP_OK) {
     ESP_LOGE(kTag, "esp_lcd_new_panel_io_spi failed: %s", esp_err_to_name(err));
     return nullptr;
@@ -120,14 +119,17 @@ lv_display_t* InitDisplay() {
   esp_lcd_panel_disp_on_off(g_panel, true);
 
   if (InitBacklight() != ESP_OK) {
-    ESP_LOGW(kTag, "backlight PWM init failed; panel remains initialized without backlight control");
+    ESP_LOGW(kTag,
+             "backlight PWM init failed; panel remains initialized without backlight control");
   }
 
   lv_display_t* lv_disp = lv_display_create(firmware::domain::profile::kLogicalWidth,
-                                             firmware::domain::profile::kLogicalHeight);
+                                            firmware::domain::profile::kLogicalHeight);
   lv_display_set_flush_cb(lv_disp, FlushCallback);
-  static uint8_t draw_buf[firmware::domain::profile::kLogicalWidth * 40 * 2];  // 40-row partial buffer
-  lv_display_set_buffers(lv_disp, draw_buf, nullptr, sizeof(draw_buf), LV_DISPLAY_RENDER_MODE_PARTIAL);
+  static uint8_t
+      draw_buf[firmware::domain::profile::kLogicalWidth * 40 * 2];  // 40-row partial buffer
+  lv_display_set_buffers(lv_disp, draw_buf, nullptr, sizeof(draw_buf),
+                         LV_DISPLAY_RENDER_MODE_PARTIAL);
 
   return lv_disp;
 }

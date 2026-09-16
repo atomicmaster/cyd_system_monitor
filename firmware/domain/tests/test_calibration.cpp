@@ -79,14 +79,17 @@ void TestValidationAcceptRejectAtBoundary() {
   const AffineTransform identity{1, 0, 0, 0, 1, 0};
   const ScreenPoint expected{100, 100};
 
-  const auto at_boundary = ValidateTap(identity, RawTouchSample{115, 100}, expected, /*max_error_px=*/15.0);
+  const auto at_boundary =
+      ValidateTap(identity, RawTouchSample{115, 100}, expected, /*max_error_px=*/15.0);
   Expect(at_boundary.accepted, "error exactly at the limit is accepted");
   Expect(NearlyEqual(at_boundary.error_px, 15.0), "boundary error_px reports 15.0");
 
-  const auto past_boundary = ValidateTap(identity, RawTouchSample{116, 100}, expected, /*max_error_px=*/15.0);
+  const auto past_boundary =
+      ValidateTap(identity, RawTouchSample{116, 100}, expected, /*max_error_px=*/15.0);
   Expect(!past_boundary.accepted, "error one pixel past the limit is rejected");
 
-  const auto exact = ValidateTap(identity, RawTouchSample{100, 100}, expected, /*max_error_px=*/15.0);
+  const auto exact =
+      ValidateTap(identity, RawTouchSample{100, 100}, expected, /*max_error_px=*/15.0);
   Expect(exact.accepted, "a zero-error tap is accepted");
   Expect(NearlyEqual(exact.error_px, 0.0), "zero-error tap reports error_px == 0");
 }
@@ -120,7 +123,7 @@ CalibrationRecord MakeValidRecord() {
 void TestChecksumRoundTrips() {
   const auto record = MakeValidRecord();
   Expect(IsRecordValid(record, "lcdwiki-esp32-32e-2.8", "landscape",
-                        firmware::domain::calibration::kCalibrationSchemaVersion),
+                       firmware::domain::calibration::kCalibrationSchemaVersion),
          "a freshly checksummed record validates");
 }
 
@@ -134,7 +137,7 @@ void TestChecksumDetectsTransformBitCorruption() {
   std::memcpy(&record.transform.a, &bits, sizeof(bits));
 
   Expect(!IsRecordValid(record, "lcdwiki-esp32-32e-2.8", "landscape",
-                         firmware::domain::calibration::kCalibrationSchemaVersion),
+                        firmware::domain::calibration::kCalibrationSchemaVersion),
          "single-bit transform corruption is detected by checksum mismatch");
 }
 
@@ -142,15 +145,16 @@ void TestChecksumDetectsProfileIdCorruption() {
   auto record = MakeValidRecord();
   record.profile_id = "lcdwiki-esp32-32e-2.9";  // one character changed, checksum stale
   Expect(!IsRecordValid(record, "lcdwiki-esp32-32e-2.8", "landscape",
-                         firmware::domain::calibration::kCalibrationSchemaVersion),
+                        firmware::domain::calibration::kCalibrationSchemaVersion),
          "profile_id corruption is detected (identity mismatch and stale checksum)");
 }
 
 void TestChecksumDetectsSchemaVersionCorruption() {
   auto record = MakeValidRecord();
-  record.schema_version = firmware::domain::calibration::kCalibrationSchemaVersion + 1;  // stale checksum
+  record.schema_version =
+      firmware::domain::calibration::kCalibrationSchemaVersion + 1;  // stale checksum
   Expect(!IsRecordValid(record, "lcdwiki-esp32-32e-2.8", "landscape",
-                         firmware::domain::calibration::kCalibrationSchemaVersion + 1),
+                        firmware::domain::calibration::kCalibrationSchemaVersion + 1),
          "schema_version corruption is detected even when the caller expects the new version, "
          "because the stored checksum still covers the old one");
 }
@@ -158,7 +162,7 @@ void TestChecksumDetectsSchemaVersionCorruption() {
 void TestIncompatibleOrientationRejected() {
   const auto record = MakeValidRecord();
   Expect(!IsRecordValid(record, "lcdwiki-esp32-32e-2.8", "portrait",
-                         firmware::domain::calibration::kCalibrationSchemaVersion),
+                        firmware::domain::calibration::kCalibrationSchemaVersion),
          "a record for a different orientation is rejected outright");
 }
 

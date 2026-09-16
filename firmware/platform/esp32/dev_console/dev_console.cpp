@@ -10,7 +10,6 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
 #include "nvs/calibration_store.hpp"
 
 namespace firmware::platform::esp32::dev_console {
@@ -18,7 +17,8 @@ namespace firmware::platform::esp32::dev_console {
 namespace {
 
 constexpr const char* kTag = "fw.dev_console";
-constexpr uart_port_t kUartPort = UART_NUM_0;  // shared with ESP_LOGI output over the USB-serial bridge
+constexpr uart_port_t kUartPort =
+    UART_NUM_0;  // shared with ESP_LOGI output over the USB-serial bridge
 constexpr const char* kClearCalibrationCommand = "DEV:CLEAR_CALIBRATION";
 constexpr size_t kLineBufferSize = 128;
 

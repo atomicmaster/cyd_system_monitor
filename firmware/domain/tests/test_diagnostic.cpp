@@ -34,7 +34,8 @@ int main() {
   const auto* touch = FindPeripheral(state, "touch");
   Expect(touch != nullptr, "FindPeripheral finds an existing row by name");
   Expect(touch != nullptr && touch->present, "found row reports its actual present value");
-  Expect(touch != nullptr && touch->detail == "calibrated", "found row reports its actual detail text");
+  Expect(touch != nullptr && touch->detail == "calibrated",
+         "found row reports its actual detail text");
 
   const auto* sd = FindPeripheral(state, "microsd");
   Expect(sd != nullptr, "FindPeripheral finds a present==false row");
@@ -47,13 +48,14 @@ int main() {
   // Every ResetReason must have a distinct, non-empty string -- the UART
   // report and diagnostic screen both depend on this.
   const ResetReason all_reasons[] = {
-      ResetReason::PowerOn,      ResetReason::ExternalReset, ResetReason::Watchdog,
-      ResetReason::Brownout,     ResetReason::DeepSleepWake, ResetReason::Software,
+      ResetReason::PowerOn,  ResetReason::ExternalReset, ResetReason::Watchdog,
+      ResetReason::Brownout, ResetReason::DeepSleepWake, ResetReason::Software,
       ResetReason::Unknown,
   };
   for (size_t i = 0; i < sizeof(all_reasons) / sizeof(all_reasons[0]); ++i) {
     const char* text = ToString(all_reasons[i]);
-    Expect(text != nullptr && std::strlen(text) > 0, "ToString returns non-empty text for every reason");
+    Expect(text != nullptr && std::strlen(text) > 0,
+           "ToString returns non-empty text for every reason");
     for (size_t j = 0; j < i; ++j) {
       Expect(std::strcmp(text, ToString(all_reasons[j])) != 0,
              "ToString returns a distinct string per reason");

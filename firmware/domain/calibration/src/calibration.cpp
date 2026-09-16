@@ -20,16 +20,20 @@ namespace {
 bool SolveAxis(double sxx, double sxy, double sx, double syy, double sy, double n, double b0,
                double b1, double b2, double& out0, double& out1, double& out2) {
   // 3x3 determinant.
-  const double det = sxx * (syy * n - sy * sy) - sxy * (sxy * n - sy * sx) + sx * (sxy * sy - syy * sx);
+  const double det =
+      sxx * (syy * n - sy * sy) - sxy * (sxy * n - sy * sx) + sx * (sxy * sy - syy * sx);
   constexpr double kMinDeterminant = 1e-6;
   if (std::fabs(det) < kMinDeterminant) {
     return false;
   }
 
   // Cramer's rule: replace each column with the right-hand side in turn.
-  const double det0 = b0 * (syy * n - sy * sy) - sxy * (b1 * n - sy * b2) + sx * (b1 * sy - syy * b2);
-  const double det1 = sxx * (b1 * n - b2 * sy) - b0 * (sxy * n - sy * sx) + sx * (sxy * b2 - b1 * sx);
-  const double det2 = sxx * (syy * b2 - b1 * sy) - sxy * (sxy * b2 - b1 * sx) + b0 * (sxy * sy - syy * sx);
+  const double det0 =
+      b0 * (syy * n - sy * sy) - sxy * (b1 * n - sy * b2) + sx * (b1 * sy - syy * b2);
+  const double det1 =
+      sxx * (b1 * n - b2 * sy) - b0 * (sxy * n - sy * sx) + sx * (sxy * b2 - b1 * sx);
+  const double det2 =
+      sxx * (syy * b2 - b1 * sy) - sxy * (sxy * b2 - b1 * sx) + b0 * (sxy * sy - syy * sx);
 
   out0 = det0 / det;
   out1 = det1 / det;
@@ -60,7 +64,7 @@ uint32_t Crc32(const std::vector<uint8_t>& data) {
 }  // namespace
 
 std::optional<AffineTransform> ComputeAffineTransform(const std::array<RawTouchSample, 5>& raw,
-                                                        const std::array<ScreenPoint, 5>& targets) {
+                                                      const std::array<ScreenPoint, 5>& targets) {
   double sxx = 0, sxy = 0, sx = 0, syy = 0, sy = 0;
   double sxX = 0, syX = 0, sX = 0;
   double sxY = 0, syY = 0, sY = 0;
@@ -107,7 +111,7 @@ ScreenPoint ApplyTransform(const AffineTransform& transform, RawTouchSample raw)
 }
 
 ValidationResult ValidateTap(const AffineTransform& transform, RawTouchSample observed,
-                              ScreenPoint expected, double max_error_px) {
+                             ScreenPoint expected, double max_error_px) {
   const ScreenPoint mapped = ApplyTransform(transform, observed);
   const double dx = static_cast<double>(mapped.x - expected.x);
   const double dy = static_cast<double>(mapped.y - expected.y);
@@ -121,7 +125,7 @@ uint32_t ComputeChecksum(const CalibrationRecord& record) {
   AppendBytes(buffer, record.orientation.data(), record.orientation.size());
   AppendBytes(buffer, &record.schema_version, sizeof(record.schema_version));
   const double components[6] = {record.transform.a, record.transform.b, record.transform.c,
-                                 record.transform.d, record.transform.e, record.transform.f};
+                                record.transform.d, record.transform.e, record.transform.f};
   for (double component : components) {
     AppendBytes(buffer, &component, sizeof(component));
   }
@@ -129,7 +133,7 @@ uint32_t ComputeChecksum(const CalibrationRecord& record) {
 }
 
 bool IsRecordValid(const CalibrationRecord& record, std::string_view expected_profile_id,
-                    std::string_view expected_orientation, uint32_t expected_schema_version) {
+                   std::string_view expected_orientation, uint32_t expected_schema_version) {
   if (record.profile_id != expected_profile_id) return false;
   if (record.orientation != expected_orientation) return false;
   if (record.schema_version != expected_schema_version) return false;

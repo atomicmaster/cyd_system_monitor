@@ -35,6 +35,6 @@ struct DiagnosticScreenHandles {
 // firmware::domain -- no ESP-IDF headers, so the simulator can build and
 // inspect this with a fixture DiagnosticState and no hardware.
 DiagnosticScreenHandles BuildDiagnosticScreen(lv_obj_t* parent,
-                                               const firmware::domain::DiagnosticState& state);
+                                              const firmware::domain::DiagnosticState& state);
 
 }  // namespace firmware::ui::diagnostic

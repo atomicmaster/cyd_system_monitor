@@ -59,7 +59,7 @@ struct AffineTransform {
 // (e.g. collinear, or otherwise producing a near-singular normal-equations
 // matrix) rather than producing a garbage transform.
 std::optional<AffineTransform> ComputeAffineTransform(const std::array<RawTouchSample, 5>& raw,
-                                                        const std::array<ScreenPoint, 5>& targets);
+                                                      const std::array<ScreenPoint, 5>& targets);
 
 // Applies a computed transform to a raw sample, producing a screen point.
 ScreenPoint ApplyTransform(const AffineTransform& transform, RawTouchSample raw);
@@ -80,7 +80,8 @@ inline constexpr double kDefaultMaxValidationErrorPx = 15.0;
 // Applies `transform` to `observed`, then checks its Euclidean distance to
 // `expected` against `max_error_px`.
 ValidationResult ValidateTap(const AffineTransform& transform, RawTouchSample observed,
-                              ScreenPoint expected, double max_error_px = kDefaultMaxValidationErrorPx);
+                             ScreenPoint expected,
+                             double max_error_px = kDefaultMaxValidationErrorPx);
 
 // The current on-device calibration record schema. Bump this whenever the
 // record's field layout or the landscape coordinate model changes; loaders
@@ -112,6 +113,6 @@ uint32_t ComputeChecksum(const CalibrationRecord& record);
 // corrupt-transform records must all return the caller to calibration
 // rather than accepting bad coordinates.
 bool IsRecordValid(const CalibrationRecord& record, std::string_view expected_profile_id,
-                    std::string_view expected_orientation, uint32_t expected_schema_version);
+                   std::string_view expected_orientation, uint32_t expected_schema_version);
 
 }  // namespace firmware::domain::calibration

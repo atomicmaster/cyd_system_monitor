@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <lvgl.h>
+
 #include <array>
 #include <optional>
-
-#include <lvgl.h>
 
 #include "firmware/domain/calibration/calibration.hpp"
 
@@ -39,8 +39,9 @@ class CalibrationFlow {
   // Builds the calibration screen (a target-position label plus a status
   // label) under `parent`. `max_error_px` is forwarded to ValidateTap for
   // every validation target.
-  explicit CalibrationFlow(lv_obj_t* parent,
-                            double max_error_px = firmware::domain::calibration::kDefaultMaxValidationErrorPx);
+  explicit CalibrationFlow(
+      lv_obj_t* parent,
+      double max_error_px = firmware::domain::calibration::kDefaultMaxValidationErrorPx);
 
   Stage stage() const { return stage_; }
   // Index into kCalibrationTargets (kGuiding) or kValidationTargets

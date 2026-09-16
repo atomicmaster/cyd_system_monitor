@@ -19,20 +19,18 @@
 
 #include <string>
 
-#include "esp_log.h"
-#include "nvs_flash.h"
-
 #include "audio/audio.hpp"
 #include "battery/battery.hpp"
 #include "button/button.hpp"
 #include "dev_console/dev_console.hpp"
 #include "display/display.hpp"
+#include "esp_log.h"
+#include "firmware/domain/generated/profile.hpp"
 #include "led/led.hpp"
 #include "microsd/microsd.hpp"
+#include "nvs_flash.h"
 #include "reset_reason/reset_reason.hpp"
 #include "touch/touch.hpp"
-
-#include "firmware/domain/generated/profile.hpp"
 
 namespace firmware::platform::esp32::board {
 
@@ -63,12 +61,13 @@ firmware::domain::DiagnosticState InitBoard(BoardHandles& out_handles) {
 
   out_handles.display = firmware::platform::esp32::display::InitDisplay();
   state.peripherals.push_back({"display", out_handles.display != nullptr,
-                                out_handles.display != nullptr ? "initialized" : "init failed"});
+                               out_handles.display != nullptr ? "initialized" : "init failed"});
 
   out_handles.touch_ready = out_handles.touch.Init();
   state.peripherals.push_back({"touch", out_handles.touch_ready,
-                                out_handles.touch_ready ? "bit-banged SPI ready (PROVISIONAL bus, see F08)"
-                                                         : "init failed"});
+                               out_handles.touch_ready
+                                   ? "bit-banged SPI ready (PROVISIONAL bus, see F08)"
+                                   : "init failed"});
 
   const auto sd_result = firmware::platform::esp32::microsd::Probe();
   state.peripherals.push_back({"microsd", sd_result.present, sd_result.detail});
@@ -78,7 +77,8 @@ firmware::domain::DiagnosticState InitBoard(BoardHandles& out_handles) {
 
   const bool audio_ok = firmware::platform::esp32::audio::Init();
   state.peripherals.push_back(
-      {"audio", audio_ok, audio_ok ? "enabled pin ready, amplifier off (alert default off)" : "init failed"});
+      {"audio", audio_ok,
+       audio_ok ? "enabled pin ready, amplifier off (alert default off)" : "init failed"});
 
   const bool battery_ok = firmware::platform::esp32::battery::Init();
   std::string battery_detail = "init failed";
@@ -91,12 +91,14 @@ firmware::domain::DiagnosticState InitBoard(BoardHandles& out_handles) {
   const bool button_ok = firmware::platform::esp32::button::Init();
   state.peripherals.push_back(
       {"boot_button", button_ok,
-       button_ok ? (firmware::platform::esp32::button::IsPressed() ? "held" : "released") : "init failed"});
+       button_ok ? (firmware::platform::esp32::button::IsPressed() ? "held" : "released")
+                 : "init failed"});
 
   firmware::platform::esp32::dev_console::StartDevConsole();
 
-  ESP_LOGI(kTag, "board init complete: profile=%s build=%s reset_reason=%s", state.profile_id.c_str(),
-           state.build_identity.c_str(), firmware::domain::ToString(state.reset_reason));
+  ESP_LOGI(kTag, "board init complete: profile=%s build=%s reset_reason=%s",
+           state.profile_id.c_str(), state.build_identity.c_str(),
+           firmware::domain::ToString(state.reset_reason));
 
   return state;
 }

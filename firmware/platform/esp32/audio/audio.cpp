@@ -4,10 +4,9 @@
 #include "driver/dac_oneshot.h"
 #include "driver/gpio.h"
 #include "esp_rom_sys.h"
+#include "firmware/domain/generated/profile.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-#include "firmware/domain/generated/profile.hpp"
 
 namespace firmware::platform::esp32::audio {
 

@@ -20,8 +20,8 @@ constexpr bool IsSupportedGeometry(Geometry geometry) {
 // dimensions must be the same pair, in either order (0/180, or swapped for
 // 90/270). Anything else means the profile's rotation and logical geometry
 // disagree with each other.
-constexpr bool IsConsistentRotation(int physical_width, int physical_height,
-                                     int logical_width, int logical_height) {
+constexpr bool IsConsistentRotation(int physical_width, int physical_height, int logical_width,
+                                    int logical_height) {
   return (physical_width == logical_width && physical_height == logical_height) ||
          (physical_width == logical_height && physical_height == logical_width);
 }

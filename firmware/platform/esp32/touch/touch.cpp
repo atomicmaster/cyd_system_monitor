@@ -8,7 +8,6 @@
 
 #include "driver/gpio.h"
 #include "esp_rom_sys.h"
-
 #include "firmware/domain/generated/profile.hpp"
 
 namespace firmware::platform::esp32::touch {
@@ -20,15 +19,24 @@ namespace {
 constexpr uint8_t kCommandReadY = 0x90;
 constexpr uint8_t kCommandReadX = 0xD0;
 
-constexpr int kBitBangDelayUs = 2;   // conservative clock half-period for bit-banged SPI
-constexpr int kSampleCount = 4;      // averaged reads per axis, per touch.hpp's documented noise reduction
+constexpr int kBitBangDelayUs = 2;  // conservative clock half-period for bit-banged SPI
+constexpr int kSampleCount =
+    4;  // averaged reads per axis, per touch.hpp's documented noise reduction
 
 void ClockDelay() { esp_rom_delay_us(kBitBangDelayUs); }
 
-void SetSclk(bool level) { gpio_set_level(static_cast<gpio_num_t>(firmware::domain::profile::kTouchSclk), level); }
-void SetMosi(bool level) { gpio_set_level(static_cast<gpio_num_t>(firmware::domain::profile::kTouchMosi), level); }
-void SetCs(bool level) { gpio_set_level(static_cast<gpio_num_t>(firmware::domain::profile::kTouchCs), level); }
-int ReadMiso() { return gpio_get_level(static_cast<gpio_num_t>(firmware::domain::profile::kTouchMiso)); }
+void SetSclk(bool level) {
+  gpio_set_level(static_cast<gpio_num_t>(firmware::domain::profile::kTouchSclk), level);
+}
+void SetMosi(bool level) {
+  gpio_set_level(static_cast<gpio_num_t>(firmware::domain::profile::kTouchMosi), level);
+}
+void SetCs(bool level) {
+  gpio_set_level(static_cast<gpio_num_t>(firmware::domain::profile::kTouchCs), level);
+}
+int ReadMiso() {
+  return gpio_get_level(static_cast<gpio_num_t>(firmware::domain::profile::kTouchMiso));
+}
 
 // Bit-bangs one 8-bit command out and 12 clocked-in result bits back
 // (XPT2046 returns a 12-bit sample left-justified in the first 12 clocks

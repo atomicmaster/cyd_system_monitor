@@ -19,7 +19,7 @@ lv_obj_t* MakeInfoLabel(lv_obj_t* parent) {
 }  // namespace
 
 DiagnosticScreenHandles BuildDiagnosticScreen(lv_obj_t* parent,
-                                               const firmware::domain::DiagnosticState& state) {
+                                              const firmware::domain::DiagnosticState& state) {
   DiagnosticScreenHandles handles;
 
   handles.root = lv_obj_create(parent);
@@ -36,7 +36,7 @@ DiagnosticScreenHandles BuildDiagnosticScreen(lv_obj_t* parent,
 
   handles.reset_reason_label = MakeInfoLabel(handles.root);
   lv_label_set_text_fmt(handles.reset_reason_label, "reset: %s",
-                         firmware::domain::ToString(state.reset_reason));
+                        firmware::domain::ToString(state.reset_reason));
 
   handles.peripheral_list = lv_obj_create(handles.root);
   lv_obj_set_width(handles.peripheral_list, LV_PCT(100));
@@ -48,7 +48,7 @@ DiagnosticScreenHandles BuildDiagnosticScreen(lv_obj_t* parent,
   for (const auto& peripheral : state.peripherals) {
     lv_obj_t* row = MakeInfoLabel(handles.peripheral_list);
     lv_label_set_text_fmt(row, "%s: %s (%s)", peripheral.name.c_str(),
-                           peripheral.present ? "PRESENT" : "ABSENT", peripheral.detail.c_str());
+                          peripheral.present ? "PRESENT" : "ABSENT", peripheral.detail.c_str());
     if (peripheral.name == "touch" && peripheral.present) {
       touch_present = true;
     }

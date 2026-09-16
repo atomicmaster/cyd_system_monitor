@@ -10,18 +10,16 @@
 #include <cstdlib>
 #include <optional>
 
-#include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
 #include "board_init.hpp"
-#include "nvs/calibration_store.hpp"
-
+#include "esp_log.h"
 #include "firmware/domain/calibration/calibration.hpp"
 #include "firmware/domain/generated/profile.hpp"
 #include "firmware/domain/profile_check.hpp"
 #include "firmware/ui/calibration/calibration_flow.hpp"
 #include "firmware/ui/diagnostic/diagnostic_screen.hpp"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "nvs/calibration_store.hpp"
 
 namespace {
 
@@ -77,7 +75,9 @@ void PersistAndShowDiagnostic(const calibration::AffineTransform& transform) {
   record.transform = transform;
   record.checksum = calibration::ComputeChecksum(record);
   if (!nvs::SaveCalibrationRecord(record)) {
-    ESP_LOGE(kTag, "failed to persist calibration record; recalibration will be required again next boot");
+    ESP_LOGE(
+        kTag,
+        "failed to persist calibration record; recalibration will be required again next boot");
   }
 
   if (g_app.calibration.has_value()) {
@@ -142,7 +142,7 @@ extern "C" void app_main(void) {
     const bool have_valid_calibration =
         g_app.board.touch_ready &&
         nvs::LoadCalibrationRecord(stored, firmware::domain::profile::kProfileId, kOrientation,
-                                    calibration::kCalibrationSchemaVersion);
+                                   calibration::kCalibrationSchemaVersion);
 
     if (have_valid_calibration || !g_app.board.touch_ready) {
       // No usable touch means calibration is unreachable; go straight to

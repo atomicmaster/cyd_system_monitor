@@ -20,8 +20,8 @@ namespace firmware::platform::esp32::nvs {
 // `out` only if a record exists, its stored size matches the expected
 // blob layout, and IsRecordValid() accepts it.
 bool LoadCalibrationRecord(firmware::domain::calibration::CalibrationRecord& out,
-                            const char* expected_profile_id, const char* expected_orientation,
-                            uint32_t expected_schema_version);
+                           const char* expected_profile_id, const char* expected_orientation,
+                           uint32_t expected_schema_version);
 
 // Persists `record` as a blob. Returns false on any NVS error; the caller
 // must not assume calibration survived a failed save.

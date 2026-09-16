@@ -4,9 +4,8 @@
 #include "driver/sdmmc_host.h"
 #include "driver/spi_common.h"
 #include "esp_vfs_fat.h"
-#include "sdmmc_cmd.h"
-
 #include "firmware/domain/generated/profile.hpp"
+#include "sdmmc_cmd.h"
 
 namespace firmware::platform::esp32::microsd {
 
@@ -62,7 +61,7 @@ ProbeResult Probe() {
     // Missing/unreadable SD is an ordinary idle status, not a failure.
     result.present = false;
     result.detail = (err == ESP_ERR_TIMEOUT || err == ESP_ERR_NOT_FOUND) ? "not present (idle)"
-                                                                          : "present but unreadable";
+                                                                         : "present but unreadable";
     return result;
   }
 

@@ -4,7 +4,6 @@
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_adc/adc_oneshot.h"
-
 #include "firmware/domain/generated/profile.hpp"
 
 namespace firmware::platform::esp32::battery {
@@ -23,8 +22,9 @@ bool g_calibrated = false;
 }  // namespace
 
 bool Init() {
-  static_assert(firmware::domain::profile::kBatteryAdc == 34,
-                "battery ADC pin mapping to ADC_CHANNEL_6 assumes GPIO34; update if the profile changes");
+  static_assert(
+      firmware::domain::profile::kBatteryAdc == 34,
+      "battery ADC pin mapping to ADC_CHANNEL_6 assumes GPIO34; update if the profile changes");
 
   adc_oneshot_unit_init_cfg_t unit_cfg = {};
   unit_cfg.unit_id = kAdcUnit;

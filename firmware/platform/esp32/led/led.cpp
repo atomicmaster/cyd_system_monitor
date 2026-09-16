@@ -2,7 +2,6 @@
 #include "led/led.hpp"
 
 #include "driver/ledc.h"
-
 #include "firmware/domain/generated/profile.hpp"
 
 namespace firmware::platform::esp32::led {
@@ -27,7 +26,8 @@ const Channel kChannels[3] = {
 uint8_t ToDuty(uint8_t brightness) {
   // Common-anode active-low wiring: full brightness is duty 0 (pin held
   // low), off is duty 255 (pin held high).
-  return firmware::domain::profile::kRgbLedActiveLow ? static_cast<uint8_t>(255 - brightness) : brightness;
+  return firmware::domain::profile::kRgbLedActiveLow ? static_cast<uint8_t>(255 - brightness)
+                                                     : brightness;
 }
 
 }  // namespace

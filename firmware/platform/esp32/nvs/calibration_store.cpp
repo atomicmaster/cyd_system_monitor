@@ -48,11 +48,13 @@ firmware::domain::calibration::CalibrationRecord FromStored(const StoredRecord& 
   // profile_id/orientation are NUL-padded fixed buffers, not necessarily
   // NUL-terminated if a future field grows to fill the buffer exactly;
   // bound the string construction by the buffer size either way.
-  record.profile_id.assign(stored.profile_id, strnlen(stored.profile_id, sizeof(stored.profile_id)));
-  record.orientation.assign(stored.orientation, strnlen(stored.orientation, sizeof(stored.orientation)));
+  record.profile_id.assign(stored.profile_id,
+                           strnlen(stored.profile_id, sizeof(stored.profile_id)));
+  record.orientation.assign(stored.orientation,
+                            strnlen(stored.orientation, sizeof(stored.orientation)));
   record.schema_version = stored.schema_version;
   record.transform = {stored.transform[0], stored.transform[1], stored.transform[2],
-                       stored.transform[3], stored.transform[4], stored.transform[5]};
+                      stored.transform[3], stored.transform[4], stored.transform[5]};
   record.checksum = stored.checksum;
   return record;
 }
@@ -60,8 +62,8 @@ firmware::domain::calibration::CalibrationRecord FromStored(const StoredRecord& 
 }  // namespace
 
 bool LoadCalibrationRecord(firmware::domain::calibration::CalibrationRecord& out,
-                            const char* expected_profile_id, const char* expected_orientation,
-                            uint32_t expected_schema_version) {
+                           const char* expected_profile_id, const char* expected_orientation,
+                           uint32_t expected_schema_version) {
   nvs_handle_t handle;
   if (nvs_open(kNamespace, NVS_READONLY, &handle) != ESP_OK) {
     return false;  // no namespace yet: not calibrated, not an error
@@ -80,8 +82,8 @@ bool LoadCalibrationRecord(firmware::domain::calibration::CalibrationRecord& out
   }
 
   const auto candidate = FromStored(stored);
-  if (!firmware::domain::calibration::IsRecordValid(candidate, expected_profile_id, expected_orientation,
-                                                      expected_schema_version)) {
+  if (!firmware::domain::calibration::IsRecordValid(
+          candidate, expected_profile_id, expected_orientation, expected_schema_version)) {
     return false;  // corrupt or incompatible: return to calibration
   }
 

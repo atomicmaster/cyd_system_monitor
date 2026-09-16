@@ -7,7 +7,8 @@ using firmware::domain::calibration::ComputeAffineTransform;
 using firmware::domain::calibration::kCalibrationTargets;
 using firmware::domain::calibration::ValidateTap;
 
-CalibrationFlow::CalibrationFlow(lv_obj_t* parent, double max_error_px) : max_error_px_(max_error_px) {
+CalibrationFlow::CalibrationFlow(lv_obj_t* parent, double max_error_px)
+    : max_error_px_(max_error_px) {
   root_ = lv_obj_create(parent);
   lv_obj_set_size(root_, 320, 240);
 
@@ -20,11 +21,11 @@ void CalibrationFlow::UpdateStatusLabel() {
   switch (stage_) {
     case Stage::kGuiding:
       lv_label_set_text_fmt(status_label_, "Calibrate target %d of %d", current_target_index_ + 1,
-                             static_cast<int>(kCalibrationTargets.size()));
+                            static_cast<int>(kCalibrationTargets.size()));
       break;
     case Stage::kValidating:
       lv_label_set_text_fmt(status_label_, "Validate target %d of %d", current_target_index_ + 1,
-                             static_cast<int>(kValidationTargets.size()));
+                            static_cast<int>(kValidationTargets.size()));
       break;
     case Stage::kAccepted:
       lv_label_set_text(status_label_, "Calibration accepted");
@@ -65,8 +66,9 @@ void CalibrationFlow::SubmitRawSample(firmware::domain::calibration::RawTouchSam
   }
 
   // Stage::kValidating.
-  const auto result = ValidateTap(*transform_, raw, kValidationTargets[static_cast<size_t>(current_target_index_)],
-                                   max_error_px_);
+  const auto result =
+      ValidateTap(*transform_, raw, kValidationTargets[static_cast<size_t>(current_target_index_)],
+                  max_error_px_);
   last_validation_error_px_ = result.error_px;
   if (!result.accepted) {
     stage_ = Stage::kRejected;
