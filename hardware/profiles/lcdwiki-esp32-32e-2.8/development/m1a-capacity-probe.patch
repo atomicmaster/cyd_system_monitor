@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: CC-BY-SA-4.0
+# Apply at 6e43931f01f5d60c936d2d16c58c29d465625986 to force the combined
+# diagnostic image to link both ESP-IDF WiFi and the NimBLE host.
+--- a/firmware/main/CMakeLists.txt
++++ b/firmware/main/CMakeLists.txt
+@@ -2,5 +2,5 @@
+ idf_component_register(
+   SRCS "main.cpp"
+   INCLUDE_DIRS "."
+-  REQUIRES domain ui esp32_platform lvgl esp_timer
++  REQUIRES domain ui esp32_platform lvgl esp_timer bt esp_wifi
+ )
+--- a/firmware/main/main.cpp
++++ b/firmware/main/main.cpp
+@@ -11,6 +11,8 @@
+ #include <optional>
+ 
+ #include "board_init.hpp"
++#include "esp_wifi.h"
++#include "nimble/nimble_port.h"
+ #include "esp_log.h"
+ #include "esp_timer.h"
+ #include "firmware/domain/calibration/calibration.hpp"
+@@ -243,6 +245,10 @@
+   if (!firmware::domain::ValidateActiveProfile()) {
+     abort();
+   }
+ 
++  wifi_init_config_t wifi_config = WIFI_INIT_CONFIG_DEFAULT();
++  ESP_ERROR_CHECK(esp_wifi_init(&wifi_config));
++  ESP_ERROR_CHECK(nimble_port_init());
++
+   lv_init();
+   lv_tick_set_cb(TickGetMs);

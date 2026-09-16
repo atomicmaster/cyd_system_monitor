@@ -8,6 +8,10 @@ Relevant unmodified vendor guides are under [`../vendor/development/`](../vendor
 
 The M1a combined feasibility gate must resolve the three separately wired display/touch/MicroSD SPI buses against the ESP32's two general-purpose SPI controllers; software-driven touch SPI is a candidate, not a settled implementation. Record the chosen arrangement and measured touch/display behavior alongside radio capture, USB traffic, RAM/flash headroom, journal space, and write budgets. See [IMPLEMENTATION_PLAN.md](../../../../IMPLEMENTATION_PLAN.md).
 
+The current [M1a feasibility record](feasibility.md) is intentionally marked
+blocked: the first combined WiFi/BLE build did not fit internal memory. Do not
+advance the milestone until its required physical evidence is recorded.
+
 The hardware smoke-test workflow must verify the XPT2046 interrupt and SPI pins, display orientation, guided first-start calibration, calibration persistence, and the deliberate recalibration recovery path.
 
 ## Build, flash, and monitor
