@@ -5,6 +5,7 @@
 
 #include "firmware/domain/generated/profile.hpp"
 #include "firmware/domain/profile_check.hpp"
+#include "scenarios/scenarios.hpp"
 
 namespace {
 
@@ -44,6 +45,17 @@ int main(int argc, char** argv) {
   if (scenario == "smoke") {
     return RunSmoke();
   }
-  std::fprintf(stderr, "usage: simulator <scenario>\n  scenario: smoke\n");
+  if (scenario == "display-smoke") {
+    return simulator::scenarios::RunDisplaySmoke();
+  }
+  if (scenario == "calibration") {
+    return simulator::scenarios::RunCalibration();
+  }
+  if (scenario == "peripherals") {
+    return simulator::scenarios::RunPeripherals();
+  }
+  std::fprintf(stderr,
+               "usage: simulator <scenario>\n"
+               "  scenario: smoke | display-smoke | calibration | peripherals\n");
   return 2;
 }

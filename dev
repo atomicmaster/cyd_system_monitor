@@ -10,7 +10,7 @@ DEV_DIR="$ROOT_DIR/tools/dev"
 
 # Recognized targets and the script that implements them. Adding a target
 # means adding its script under tools/dev/, not editing this list's callers.
-TARGETS=(firmware simulator host macos protocol all)
+TARGETS=(firmware simulator host macos protocol hardware all)
 
 usage() {
   cat <<'EOF'

@@ -38,6 +38,8 @@ check() {
   cmake -S "$test_dir" -B "$test_dir/build" -G Ninja
   cmake --build "$test_dir/build"
   "$test_dir/build/firmware_domain_tests"
+  "$test_dir/build/firmware_domain_calibration_tests"
+  "$test_dir/build/firmware_domain_diagnostic_tests"
 }
 
 run() {

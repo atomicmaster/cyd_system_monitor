@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# Managed-component dependencies for firmware/platform/esp32, resolved by
+# the ESP-IDF component manager from the ESP Component Registry.
+dependencies:
+  idf: ">=5.3,<5.4"
+  lvgl/lvgl:
+    version: "9.2.2"
+  espressif/esp_lcd_ili9341:
+    version: "^1.0.4"

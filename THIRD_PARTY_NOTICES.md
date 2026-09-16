@@ -14,6 +14,7 @@ This notice will be expanded with exact dependency names, versions, copyright ho
 
 - **Rust 1.97.1** (pinned in [`rust-toolchain.toml`](rust-toolchain.toml)), Apache-2.0/MIT dual-licensed. `host/` and `protocol/generated/rust` have no external crate dependencies yet; concrete collectors and codecs will add crates with their own notices as they land.
 - **ESP-IDF v5.3** (target pin for `firmware/`; see [docs/development.md](docs/development.md)). Its bundled libraries and their licenses are covered above and in the release-time dependency inventory this file defers to.
-- **LVGL**: deliberately not pinned here. `firmware/ui/` is empty until F05 implements the first screen, and F05 pins LVGL alongside that work rather than this ticket choosing a version for an empty tree.
+- **LVGL v9.2.2** (MIT licensed), pinned by F05 alongside the first `firmware/ui/` screens. ESP32 image: the `lvgl/lvgl` managed component from the ESP Component Registry, pinned via `firmware/platform/esp32/idf_component.yml`. Desktop simulator: CMake `FetchContent` from `https://github.com/lvgl/lvgl.git` at tag `v9.2.2`, built headless as a static library with the software renderer only (no SDL, no windowing/X11 dependency). Both sides use a minimal `lv_conf.h` enabling only basic widgets (label, button, button matrix) needed by the diagnostic and calibration screens.
+- **`espressif/esp_lcd_ili9341`** managed component (ESP Component Registry), Apache-2.0 licensed, pinned via the same `idf_component.yml`, used by `firmware/platform/esp32/display/` to drive the ILI9341V panel controller.
 - **CMake (>= 3.20) and Ninja**: build-time only, not linked into any shipped artifact.
 - **Swift 6.4 / Xcode 16+** for `macos/setup-app/`, which has no external Swift package dependencies yet.

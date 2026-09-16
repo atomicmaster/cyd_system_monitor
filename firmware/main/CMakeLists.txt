@@ -2,5 +2,5 @@
 idf_component_register(
   SRCS "main.cpp"
   INCLUDE_DIRS "."
-  REQUIRES domain
+  REQUIRES domain ui esp32_platform lvgl
 )

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+# Managed-component dependency for firmware/ui: the LVGL screens link the
+# `lvgl/lvgl` managed component pinned to the version F05 chose (v9.2.2),
+# matching the tag simulator/CMakeLists.txt's FetchContent pulls.
+dependencies:
+  idf: ">=5.3,<5.4"
+  lvgl/lvgl:
+    version: "9.2.2"

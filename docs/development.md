@@ -14,7 +14,15 @@ adding or changing a target does not require editing `./dev` itself.
 ./dev run <target> [-- arguments]
 ```
 
-Targets: `firmware`, `simulator`, `host`, `macos`, `protocol`, `all`.
+Targets: `firmware`, `simulator`, `host`, `macos`, `protocol`, `hardware`, `all`.
+
+`hardware` (F05) is a separate explicit board runner alongside `firmware`:
+its `build`/`check` delegate to `firmware.sh`'s (no board needed), and its
+`run` flashes and monitors a physically connected, exclusively claimed
+E32R28T board on a confirmed serial port -- see
+`hardware/profiles/lcdwiki-esp32-32e-2.8/development/README.md`. It is
+intentionally not part of `./dev check all`/`./dev build all`'s lanes: `all`
+covers what a clean machine can verify without hardware in hand.
 
 `./dev doctor` reports which prerequisites are installed per target without
 installing anything itself. None of `build`/`check`/`run` install privileged
@@ -32,7 +40,7 @@ falling back to another target.
 | Python 3 | firmware, protocol (generation) | firmware: no floor (dependency-free parser, see below); protocol: >= 3.11 (stdlib `tomllib`) | `brew install python3` or Xcode Command Line Tools; after `source $IDF_PATH/export.sh`, confirm `python3 --version` still resolves to this one, not an older CommandLineTools Python ahead of it on `PATH` |
 | Rust | host, protocol (generated crate) | 1.97.1, pinned in [`rust-toolchain.toml`](../rust-toolchain.toml) | `rustup` auto-installs the pinned toolchain on first use |
 | Swift / Xcode | macos | Swift 6.4 (Xcode 16+) | Xcode from the App Store or developer.apple.com; accept its license once |
-| LVGL | firmware, simulator | pinned by F05, not M0 | `firmware/ui/` is empty until F05 implements the first screen; F05 pins LVGL alongside that work rather than this ticket choosing a version for an empty tree |
+| LVGL | firmware, simulator | v9.2.2 | ESP32: managed component `lvgl/lvgl` via `firmware/platform/esp32/idf_component.yml` (ESP Component Registry); simulator: CMake `FetchContent` from `https://github.com/lvgl/lvgl.git` tag `v9.2.2`, built headless as a static library (no SDL/X11) |
 
 **ESP-IDF + system CMake:** a CMake newer than ESP-IDF v5.3.2's tested range
 (observed with system CMake 4.4.3, and it does not depend on that major
@@ -77,6 +85,9 @@ if any lane fails, printing which one.
 | `firmware/`, `simulator/`, `tools/dev/{firmware,simulator}.sh` | F02 |
 | `host/`, `macos/setup-app/`, `tools/dev/{host,macos}.sh` | F03 |
 | `.github/workflows/`, `protocol/`, `tools/dev/{all,protocol}.sh` | F04 |
+| `firmware/platform/esp32/display/`, `firmware/ui/diagnostic/`, `tools/dev/hardware.sh` | F05 |
+| `firmware/platform/esp32/touch/`, `firmware/platform/esp32/nvs/`, `firmware/domain/calibration/`, `firmware/ui/calibration/` | F06 |
+| `firmware/platform/esp32/{led,audio,microsd,battery,button}/` | F07 |
 | `hardware/profiles/` | pin/capability source of truth for all runtimes |
 
 ## Generated-file convention

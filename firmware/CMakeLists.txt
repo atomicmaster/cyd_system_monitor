@@ -13,8 +13,10 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # that directory holds this project's own CMakeLists.txt, and ESP-IDF's
 # component scanner treats a listed directory that already contains a
 # CMakeLists.txt as one component, re-including this file during its early
-# requirements scan. platform/esp32/ and ui/ join this list once F05 gives
-# them their own CMakeLists.txt.
-set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/domain")
+# requirements scan. platform/esp32/ and ui/ joined this list in F05.
+set(EXTRA_COMPONENT_DIRS
+    "${CMAKE_CURRENT_LIST_DIR}/domain"
+    "${CMAKE_CURRENT_LIST_DIR}/ui"
+    "${CMAKE_CURRENT_LIST_DIR}/platform/esp32/esp32_platform")
 
 project(cyd_system_monitor_firmware)
