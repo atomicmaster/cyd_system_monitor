@@ -4,6 +4,7 @@
 #include <lvgl.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,12 @@ enum class CapacityScreen {
 // built screen before constructing the next one -- no two capacity-slice
 // screens are ever live at once, and repeated navigation never leaks
 // widgets.
+//
+// Exposes the current screen's widgets through named accessors (mirroring
+// firmware::ui::diagnostic::DiagnosticScreenHandles), not positional
+// lv_obj_get_child() indexing -- each accessor is only valid while
+// current_screen() reports the matching screen, and returns nullptr
+// otherwise.
 class CapacitySliceController {
  public:
   CapacitySliceController(lv_obj_t* parent, CapacitySliceState state);
@@ -66,10 +73,41 @@ class CapacitySliceController {
   void ShowAlertDetail(size_t alert_index);
   void ShowSettings();
 
+  // Updates the live status text without rebuilding the screen, rate
+  // limited to at most once per firmware::domain::capacity's declared
+  // kMinLiveStatusRefreshIntervalMs (Work item 3's "upper bound for ...
+  // refresh cadence"): a call inside that window updates the stored state
+  // (so the next allowed refresh reflects the latest value) but leaves the
+  // on-screen label untouched. Returns true if the label was actually
+  // redrawn. A no-op (but still rate-tracked) unless current_screen() is
+  // kLiveStatus.
+  bool UpdateLiveStatus(std::string live_status_text, uint32_t now_ms);
+
+  // Cycles kLiveStatus -> kAlertList -> kAlertDetail(0) -> kSettings ->
+  // kLiveStatus -> ... one step per call. This is the capacity slice's own
+  // exercise order (Work item 5: "exercise ... the capacity slice with
+  // active touch"); firmware/main/main.cpp wires one tap-to-advance
+  // handler to it rather than each screen owning separate navigation
+  // widgets, since TB17 (not this ticket) owns the MVP's real navigation.
+  void AdvanceScreen();
+
   CapacityScreen current_screen() const { return current_screen_; }
   // The currently live screen's root object, or nullptr if none has been
   // built yet.
   lv_obj_t* root() const { return root_; }
+
+  // Valid only while current_screen() == kLiveStatus.
+  lv_obj_t* live_status_label() const { return live_status_label_; }
+  // Valid only while current_screen() == kAlertList. One child label per
+  // rendered (bounded) alert row, in the same order as the clamped prefix
+  // of state.alerts.
+  lv_obj_t* alert_list() const { return alert_list_; }
+  // Valid only while current_screen() == kAlertDetail.
+  lv_obj_t* alert_detail_title() const { return alert_detail_title_; }
+  lv_obj_t* alert_detail_body() const { return alert_detail_body_; }
+  // Valid only while current_screen() == kSettings. One child label per
+  // rendered (bounded) settings row.
+  lv_obj_t* settings_list() const { return settings_list_; }
 
  private:
   void DestroyCurrent();
@@ -78,6 +116,27 @@ class CapacitySliceController {
   CapacitySliceState state_;
   CapacityScreen current_screen_ = CapacityScreen::kLiveStatus;
   lv_obj_t* root_ = nullptr;
+
+  lv_obj_t* live_status_label_ = nullptr;
+  lv_obj_t* alert_list_ = nullptr;
+  lv_obj_t* alert_detail_title_ = nullptr;
+  lv_obj_t* alert_detail_body_ = nullptr;
+  lv_obj_t* settings_list_ = nullptr;
+
+  // 0 means "never refreshed yet"; the first UpdateLiveStatus() call after
+  // construction always redraws regardless of now_ms.
+  uint32_t last_live_status_refresh_ms_ = 0;
+  bool live_status_refreshed_once_ = false;
 };
+
+// A bounded, representative maximum-size CapacitySliceState: exactly
+// firmware::domain::capacity's declared kMaxAlertListRows/kMaxSettingsRows
+// rows, each at its declared maximum label/detail length (F08a Work item
+// 2's "placeholders are permitted only when their object count, text
+// length, refresh behavior, and memory reservation are explicit"). Used by
+// firmware/main/main.cpp to drive the physical capacity slice exercise
+// until a real Alert/Settings source exists; the simulator's own fixture
+// (deliberately oversized, to test clamping) stays separate from this one.
+CapacitySliceState MakeMaxRepresentativeState();
 
 }  // namespace firmware::ui::capacity

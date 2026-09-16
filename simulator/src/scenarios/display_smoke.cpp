@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include <cstring>
 
-#include "firmware/ui/diagnostic/diagnostic_screen.hpp"
-#include "scenarios.hpp"
-
 #include "../expect.hpp"
 #include "../fixtures.hpp"
 #include "../lvgl_env.hpp"
+#include "firmware/ui/diagnostic/diagnostic_screen.hpp"
+#include "scenarios.hpp"
 
 namespace simulator::scenarios {
 
@@ -38,14 +37,21 @@ int RunDisplaySmoke() {
 
   result.Expect(handles.recalibrate_button != nullptr,
                 "recalibrate button is present when the fixture reports touch present");
+  result.Expect(handles.capacity_slice_button != nullptr,
+                "capacity slice button is present when the fixture reports touch present");
 
   // F06's recalibration entrypoint is meaningless without a working touch
-  // panel; a fixture with touch absent must not offer it.
+  // panel; a fixture with touch absent must not offer it. The capacity
+  // slice button shares that condition, since reaching it also requires
+  // touch.
   auto state_no_touch = state;
   state_no_touch.peripherals[0] = firmware::domain::PeripheralStatus{"touch", false, "init failed"};
-  const auto handles_no_touch = firmware::ui::diagnostic::BuildDiagnosticScreen(screen, state_no_touch);
+  const auto handles_no_touch =
+      firmware::ui::diagnostic::BuildDiagnosticScreen(screen, state_no_touch);
   result.Expect(handles_no_touch.recalibrate_button == nullptr,
                 "no recalibrate button is offered when touch is absent");
+  result.Expect(handles_no_touch.capacity_slice_button == nullptr,
+                "no capacity slice button is offered when touch is absent");
 
   return result.Finish("simulator display-smoke");
 }

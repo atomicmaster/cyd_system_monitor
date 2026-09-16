@@ -27,11 +27,16 @@ struct DiagnosticScreenHandles {
   // `state.peripherals` reports touch absent/failed, since recalibration is
   // meaningless without a working touch panel.
   lv_obj_t* recalibrate_button = nullptr;
+  // "Capacity slice" button, letting an operator reach the bounded F08a
+  // capacity-slice screens for physical exercise. Same caller-wires-the-
+  // handler convention as recalibrate_button; null under the same
+  // touch-absent condition.
+  lv_obj_t* capacity_slice_button = nullptr;
 };
 
 // Builds the 320x240 landscape diagnostic screen under `parent`: profile
 // id, build identity, reset reason, a scrollable list of peripheral status
-// rows, and (if touch is present) a recalibrate button. Pure LVGL +
+// rows, and (if touch is present) recalibrate and capacity-slice buttons. Pure LVGL +
 // firmware::domain -- no ESP-IDF headers, so the simulator can build and
 // inspect this with a fixture DiagnosticState and no hardware.
 DiagnosticScreenHandles BuildDiagnosticScreen(lv_obj_t* parent,

@@ -18,6 +18,7 @@
 #include "firmware/domain/generated/profile.hpp"
 #include "firmware/domain/profile_check.hpp"
 #include "firmware/ui/calibration/calibration_flow.hpp"
+#include "firmware/ui/capacity/capacity_slice.hpp"
 #include "firmware/ui/diagnostic/diagnostic_screen.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -30,6 +31,7 @@ namespace nvs = firmware::platform::esp32::nvs;
 namespace calibration = firmware::domain::calibration;
 namespace ui_calibration = firmware::ui::calibration;
 namespace ui_diagnostic = firmware::ui::diagnostic;
+namespace ui_capacity = firmware::ui::capacity;
 
 constexpr const char* kTag = "fw.main";
 // The single orientation the MVP supports; see firmware/domain/geometry.hpp
@@ -45,6 +47,11 @@ struct AppState {
 
   std::optional<ui_calibration::CalibrationFlow> calibration;
   ui_diagnostic::DiagnosticScreenHandles diagnostic;
+  // F08a's physical capacity-slice exercise (Work item 5): entered from the
+  // diagnostic screen's "Capacity slice" button, exited back to it. Mutually
+  // exclusive with `diagnostic` the same way `calibration` is -- exactly one
+  // of the three is populated at a time.
+  std::optional<ui_capacity::CapacitySliceController> capacity_slice;
   bool touch_was_pressed = false;
 
   // The transform LVGL's pointer indev (see TouchIndevReadCb) maps raw
@@ -100,6 +107,11 @@ void TouchIndevReadCb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
   s_was_pressed = true;
 }
 
+// Forward declared: ShowDiagnosticScreen's capacity_slice_button handler
+// below and AdvanceCapacitySlice (defined after ShowDiagnosticScreen, so it
+// can call back into it on exit) both need this before its own definition.
+void AttachCapacityAdvanceHandler();
+
 void ShowDiagnosticScreen() {
   lv_obj_t* screen = lv_display_get_screen_active(g_app.board.display);
   g_app.diagnostic = ui_diagnostic::BuildDiagnosticScreen(screen, g_app.diagnostic_state);
@@ -137,6 +149,52 @@ void ShowDiagnosticScreen() {
         },
         LV_EVENT_CLICKED, nullptr);
   }
+
+  if (g_app.diagnostic.capacity_slice_button != nullptr) {
+    lv_obj_add_event_cb(
+        g_app.diagnostic.capacity_slice_button,
+        [](lv_event_t*) {
+          ESP_LOGI(kTag, "capacity_slice_button: LV_EVENT_CLICKED");
+          if (g_app.diagnostic.root != nullptr) {
+            lv_obj_delete(g_app.diagnostic.root);
+            g_app.diagnostic = {};
+          }
+          lv_obj_t* screen = lv_display_get_screen_active(g_app.board.display);
+          g_app.capacity_slice.emplace(screen, ui_capacity::MakeMaxRepresentativeState());
+          AttachCapacityAdvanceHandler();
+          g_app.touch_was_pressed = false;
+        },
+        LV_EVENT_CLICKED, nullptr);
+  }
+}
+
+// Tapping the live capacity-slice screen advances it (F08a Work item 5:
+// "exercise ... the capacity slice with active touch"); tapping past the
+// last screen (Settings) exits back to the diagnostic screen instead of
+// looping forever, since a real board session needs a way out. Registered
+// fresh on every screen because CapacitySliceController::DestroyCurrent()
+// deletes the previous root -- any LVGL event callback on it goes with it.
+void AdvanceCapacitySlice() {
+  if (!g_app.capacity_slice.has_value()) {
+    return;
+  }
+  if (g_app.capacity_slice->current_screen() == ui_capacity::CapacityScreen::kSettings) {
+    g_app.capacity_slice.reset();
+    g_app.touch_was_pressed = false;
+    ShowDiagnosticScreen();
+    return;
+  }
+  g_app.capacity_slice->AdvanceScreen();
+  AttachCapacityAdvanceHandler();
+}
+
+void AttachCapacityAdvanceHandler() {
+  if (!g_app.capacity_slice.has_value() || g_app.capacity_slice->root() == nullptr) {
+    return;
+  }
+  lv_obj_t* root = g_app.capacity_slice->root();
+  lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(root, [](lv_event_t*) { AdvanceCapacitySlice(); }, LV_EVENT_CLICKED, nullptr);
 }
 
 void PersistAndShowDiagnostic(const calibration::AffineTransform& transform) {

@@ -2,6 +2,7 @@
 #include "firmware/ui/capacity/capacity_slice.hpp"
 
 #include <algorithm>
+#include <utility>
 
 #include "firmware/domain/capacity.hpp"
 
@@ -54,26 +55,50 @@ void CapacitySliceController::DestroyCurrent() {
     lv_obj_delete(root_);
     root_ = nullptr;
   }
+  live_status_label_ = nullptr;
+  alert_list_ = nullptr;
+  alert_detail_title_ = nullptr;
+  alert_detail_body_ = nullptr;
+  settings_list_ = nullptr;
 }
 
 void CapacitySliceController::ShowLiveStatus() {
   DestroyCurrent();
   root_ = MakeScreenRoot(parent_);
-  lv_obj_t* label = MakeLabel(root_);
-  lv_label_set_text(label,
+  live_status_label_ = MakeLabel(root_);
+  lv_label_set_text(live_status_label_,
                     Truncate(state_.live_status_text, bounds::kMaxLiveStatusTextLength).c_str());
   current_screen_ = CapacityScreen::kLiveStatus;
+  live_status_refreshed_once_ = false;
+}
+
+bool CapacitySliceController::UpdateLiveStatus(std::string live_status_text, uint32_t now_ms) {
+  state_.live_status_text = std::move(live_status_text);
+  if (current_screen_ != CapacityScreen::kLiveStatus || live_status_label_ == nullptr) {
+    return false;
+  }
+
+  const uint32_t elapsed_ms = now_ms - last_live_status_refresh_ms_;
+  if (live_status_refreshed_once_ && elapsed_ms < bounds::kMinLiveStatusRefreshIntervalMs) {
+    return false;
+  }
+
+  lv_label_set_text(live_status_label_,
+                    Truncate(state_.live_status_text, bounds::kMaxLiveStatusTextLength).c_str());
+  last_live_status_refresh_ms_ = now_ms;
+  live_status_refreshed_once_ = true;
+  return true;
 }
 
 void CapacitySliceController::ShowAlertList() {
   DestroyCurrent();
   root_ = MakeScreenRoot(parent_);
-  lv_obj_t* list = MakeScrollableList(root_);
+  alert_list_ = MakeScrollableList(root_);
 
   const size_t row_count = std::min<size_t>(state_.alerts.size(), bounds::kMaxAlertListRows);
   for (size_t i = 0; i < row_count; ++i) {
     const AlertRow& alert = state_.alerts[i];
-    lv_obj_t* row = MakeLabel(list);
+    lv_obj_t* row = MakeLabel(alert_list_);
     const std::string title = Truncate(alert.title, bounds::kMaxAlertLabelLength);
     lv_label_set_text_fmt(row, "[%s] %s", alert.severity.c_str(), title.c_str());
   }
@@ -90,30 +115,78 @@ void CapacitySliceController::ShowAlertDetail(size_t alert_index) {
   root_ = MakeScreenRoot(parent_);
   const AlertRow& alert = state_.alerts[alert_index];
 
-  lv_obj_t* title = MakeLabel(root_);
+  alert_detail_title_ = MakeLabel(root_);
   const std::string bounded_title = Truncate(alert.title, bounds::kMaxAlertLabelLength);
-  lv_label_set_text_fmt(title, "[%s] %s", alert.severity.c_str(), bounded_title.c_str());
+  lv_label_set_text_fmt(alert_detail_title_, "[%s] %s", alert.severity.c_str(),
+                        bounded_title.c_str());
 
-  lv_obj_t* detail = MakeLabel(root_);
-  lv_label_set_text(detail, Truncate(alert.detail, bounds::kMaxAlertDetailLength).c_str());
+  alert_detail_body_ = MakeLabel(root_);
+  lv_label_set_text(alert_detail_body_,
+                    Truncate(alert.detail, bounds::kMaxAlertDetailLength).c_str());
 
   current_screen_ = CapacityScreen::kAlertDetail;
+}
+
+void CapacitySliceController::AdvanceScreen() {
+  switch (current_screen_) {
+    case CapacityScreen::kLiveStatus:
+      ShowAlertList();
+      return;
+    case CapacityScreen::kAlertList:
+      ShowAlertDetail(0);
+      // An empty alert list has nothing to show detail for; ShowAlertDetail
+      // is then a no-op and current_screen_ stays kAlertList, so fall
+      // through to settings instead of getting stuck.
+      if (current_screen_ == CapacityScreen::kAlertList) {
+        ShowSettings();
+      }
+      return;
+    case CapacityScreen::kAlertDetail:
+      ShowSettings();
+      return;
+    case CapacityScreen::kSettings:
+      ShowLiveStatus();
+      return;
+  }
 }
 
 void CapacitySliceController::ShowSettings() {
   DestroyCurrent();
   root_ = MakeScreenRoot(parent_);
-  lv_obj_t* list = MakeScrollableList(root_);
+  settings_list_ = MakeScrollableList(root_);
 
   const size_t row_count = std::min<size_t>(state_.settings.size(), bounds::kMaxSettingsRows);
   for (size_t i = 0; i < row_count; ++i) {
     const SettingRow& setting = state_.settings[i];
-    lv_obj_t* row = MakeLabel(list);
+    lv_obj_t* row = MakeLabel(settings_list_);
     const std::string label = Truncate(setting.label, bounds::kMaxSettingLabelLength);
     const std::string value = Truncate(setting.value, bounds::kMaxSettingValueLength);
     lv_label_set_text_fmt(row, "%s: %s", label.c_str(), value.c_str());
   }
   current_screen_ = CapacityScreen::kSettings;
+}
+
+CapacitySliceState MakeMaxRepresentativeState() {
+  CapacitySliceState state;
+  state.live_status_text = "cpu:-- ram:-- net:-- (placeholder, no Host source yet)";
+
+  for (uint32_t i = 0; i < bounds::kMaxAlertListRows; ++i) {
+    AlertRow row;
+    row.severity = (i % 2 == 0) ? "Medium" : "Low";
+    row.title = "placeholder alert " + std::to_string(i);
+    row.detail = "placeholder detail text exercising the declared maximum detail length for row " +
+                 std::to_string(i);
+    state.alerts.push_back(std::move(row));
+  }
+
+  for (uint32_t i = 0; i < bounds::kMaxSettingsRows; ++i) {
+    SettingRow row;
+    row.label = "setting_" + std::to_string(i);
+    row.value = "placeholder";
+    state.settings.push_back(std::move(row));
+  }
+
+  return state;
 }
 
 }  // namespace firmware::ui::capacity

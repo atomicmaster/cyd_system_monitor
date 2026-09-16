@@ -123,12 +123,12 @@ produced a linking image (no WiFi/BLE) with:
 
 | Region | Used | Used % | Remaining |
 | --- | ---: | ---: | ---: |
-| DRAM | 109,560 bytes | 87.94% | 15,020 bytes |
+| DRAM | 109,656 bytes | 88.02% | 14,924 bytes |
 | IRAM | 65,378 bytes | 49.88% | 65,694 bytes |
-| Flash (.bin) | 617,904 bytes | — | 0x691e0 bytes (41%) free of the 1 MiB app partition |
+| Flash (.bin) | 623,392 bytes | — | 0x67c70 bytes (41%) free of the 1 MiB app partition |
 
 This is UI/runtime-only headroom with no radio host linked at all, so it
-cannot be read as combined-load capacity, and DRAM headroom (15,020 bytes)
+cannot be read as combined-load capacity, and DRAM headroom (14,924 bytes)
 is already well below the ~13,296+22,576 byte DRAM overflow the WiFi+NimBLE
 and WiFi+Bluedroid build-time probes recorded above. A capacity change
 (smaller UI/runtime footprint, a lower-level BLE receiver, or a
@@ -139,3 +139,12 @@ row/string bounds in `firmware/domain/include/firmware/domain/capacity.hpp`
 and the `DEV:CAPACITY_STATUS` UART command exist so a future physical
 session can produce the actual peak-usage and low-water-mark numbers this
 entry is missing.
+
+The diagnostic screen's new "Capacity slice" button (touch-present builds
+only) reaches the bounded slice, pre-loaded with a maximum-size placeholder
+Alert/Settings fixture (`firmware::ui::capacity::MakeMaxRepresentativeState`)
+since no real Host Alert/Settings source exists yet; tapping the live
+capacity-slice screen advances Live status -> Alert list -> Alert detail ->
+Settings -> back to the diagnostic screen. `./dev run hardware -- capacity
+--port <path>` is the intended session entrypoint once a board is
+available.

@@ -20,6 +20,10 @@ inline constexpr uint32_t kMaxSettingsRows = 8;
 inline constexpr uint32_t kMaxSettingLabelLength = 32;
 inline constexpr uint32_t kMaxSettingValueLength = 32;
 inline constexpr uint32_t kMaxLiveStatusTextLength = 96;
+// Matches the MVP's one-second Host snapshot cadence (see
+// IMPLEMENTATION_PLAN.md's M1a/M3 sections): the live status screen never
+// redraws more often than the data it shows can actually change.
+inline constexpr uint32_t kMinLiveStatusRefreshIntervalMs = 1000;
 
 // One FreeRTOS task's stack low-water mark, in bytes (already converted
 // from FreeRTOS's native word count -- see
