@@ -42,9 +42,12 @@ class CalibrationFlow {
     kRejected,    // degenerate fit or a validation tap exceeded max_error_px; call Reset()
   };
 
-  // Builds the calibration screen (a tappable target marker plus a status
-  // label reporting progress) under `parent`. `max_error_px` is forwarded
-  // to ValidateTap for every validation target.
+  // Builds the calibration screen (a static title, a tappable target
+  // marker, and a status label reporting progress) under `parent`. The
+  // title sits in the top half and the status label in the bottom half,
+  // both away from every target point, so on-screen text never sits under
+  // a marker the operator is trying to tap. `max_error_px` is forwarded to
+  // ValidateTap for every validation target.
   explicit CalibrationFlow(
       lv_obj_t* parent,
       double max_error_px = firmware::domain::calibration::kDefaultMaxValidationErrorPx);
@@ -60,6 +63,7 @@ class CalibrationFlow {
   }
 
   lv_obj_t* root() const { return root_; }
+  lv_obj_t* title_label() const { return title_label_; }
   lv_obj_t* status_label() const { return status_label_; }
   // The circular marker positioned at the current target's screen point
   // (kCalibrationTargets during kGuiding, kValidationTargets during
@@ -84,6 +88,7 @@ class CalibrationFlow {
   void UpdateTargetMarker();
 
   lv_obj_t* root_ = nullptr;
+  lv_obj_t* title_label_ = nullptr;
   lv_obj_t* status_label_ = nullptr;
   lv_obj_t* target_marker_ = nullptr;
 

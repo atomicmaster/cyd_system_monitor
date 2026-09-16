@@ -20,8 +20,18 @@ CalibrationFlow::CalibrationFlow(lv_obj_t* parent, double max_error_px)
   lv_obj_set_style_pad_all(root_, 0, 0);
   lv_obj_set_style_border_width(root_, 0, 0);
 
+  // Title sits at the vertical center of the screen's top half (y=60 of
+  // 240) and status at the center of the bottom half (y=180): both clear
+  // of every guided/validation target point by at least 40px (the closest
+  // is the center calibration target at y=120, and the top/bottom-mid
+  // validation targets at y=20/y=220), so on-screen text never sits under
+  // a marker the operator is trying to tap.
+  title_label_ = lv_label_create(root_);
+  lv_label_set_text(title_label_, "Touch Screen Calibration");
+  lv_obj_align(title_label_, LV_ALIGN_TOP_MID, 0, 60 - 8);
+
   status_label_ = lv_label_create(root_);
-  lv_obj_align(status_label_, LV_ALIGN_BOTTOM_MID, 0, -8);
+  lv_obj_align(status_label_, LV_ALIGN_TOP_MID, 0, 180 - 8);
 
   target_marker_ = lv_obj_create(root_);
   lv_obj_set_size(target_marker_, kTargetMarkerSizePx, kTargetMarkerSizePx);

@@ -45,21 +45,91 @@ struct AppState {
   std::optional<ui_calibration::CalibrationFlow> calibration;
   ui_diagnostic::DiagnosticScreenHandles diagnostic;
   bool touch_was_pressed = false;
+
+  // The transform LVGL's pointer indev (see TouchIndevReadCb) maps raw
+  // touch into screen coordinates with -- set once a calibration is known
+  // good (loaded at boot or just accepted), cleared while re-calibrating.
+  // Only meaningful once g_app.calibration has no value (the diagnostic
+  // screen, where widgets like recalibrate_button need real click
+  // detection); during CalibrationFlow itself, raw samples are fed
+  // directly to SubmitRawSample() instead, deliberately bypassing this,
+  // since establishing the transform is the whole point of that flow.
+  std::optional<calibration::AffineTransform> active_transform;
 };
 
 AppState g_app;
+
+// LVGL's own widget click/gesture detection (LV_EVENT_CLICKED, used by
+// recalibrate_button below) only ever fires for input fed through a
+// registered lv_indev_t -- it has no connection to PumpTouch()'s manual
+// polling, which drives CalibrationFlow directly and never touches LVGL's
+// indev system at all. Without this, no LVGL widget on any screen could
+// ever receive a touch event. Registered once at boot; inert (always
+// reports released) until active_transform has a value.
+void TouchIndevReadCb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
+  static bool s_was_pressed = false;
+
+  if (!g_app.board.touch_ready || !g_app.active_transform.has_value()) {
+    data->state = LV_INDEV_STATE_RELEASED;
+    s_was_pressed = false;
+    return;
+  }
+
+  calibration::RawTouchSample raw;
+  if (!g_app.board.touch.ReadRaw(raw)) {
+    data->state = LV_INDEV_STATE_RELEASED;
+    s_was_pressed = false;
+    return;
+  }
+
+  const calibration::ScreenPoint point = calibration::ApplyTransform(*g_app.active_transform, raw);
+  data->point.x = point.x;
+  data->point.y = point.y;
+  data->state = LV_INDEV_STATE_PRESSED;
+
+  // DIAGNOSTIC, pending physical F06 evidence: logs only on the down-edge
+  // (not every read while held) so a tap's calibrated landing point can be
+  // read directly off the serial monitor and compared against
+  // recalibrate_button's logged bounds below.
+  if (!s_was_pressed) {
+    ESP_LOGI(kTag, "indev press: raw_x=%ld raw_y=%ld -> screen_x=%ld screen_y=%ld",
+             static_cast<long>(raw.raw_x), static_cast<long>(raw.raw_y), static_cast<long>(point.x),
+             static_cast<long>(point.y));
+  }
+  s_was_pressed = true;
+}
 
 void ShowDiagnosticScreen() {
   lv_obj_t* screen = lv_display_get_screen_active(g_app.board.display);
   g_app.diagnostic = ui_diagnostic::BuildDiagnosticScreen(screen, g_app.diagnostic_state);
   if (g_app.diagnostic.recalibrate_button != nullptr) {
+    // DIAGNOSTIC, pending physical F06 evidence: logs the button's actual
+    // on-screen bounds once, to compare against "indev press: ... ->
+    // screen_x/y" log lines and tell a coordinate-mapping problem (tap
+    // lands outside these bounds) apart from LVGL never detecting the
+    // press at all (button bounds look right, but neither this nor
+    // LV_EVENT_CLICKED below ever logs).
+    lv_obj_update_layout(g_app.diagnostic.recalibrate_button);
+    ESP_LOGI(kTag, "recalibrate_button bounds: x=%ld y=%ld w=%ld h=%ld",
+             static_cast<long>(lv_obj_get_x(g_app.diagnostic.recalibrate_button)),
+             static_cast<long>(lv_obj_get_y(g_app.diagnostic.recalibrate_button)),
+             static_cast<long>(lv_obj_get_width(g_app.diagnostic.recalibrate_button)),
+             static_cast<long>(lv_obj_get_height(g_app.diagnostic.recalibrate_button)));
+
+    lv_obj_add_event_cb(
+        g_app.diagnostic.recalibrate_button,
+        [](lv_event_t*) { ESP_LOGI(kTag, "recalibrate_button: LV_EVENT_PRESSED"); },
+        LV_EVENT_PRESSED, nullptr);
+
     lv_obj_add_event_cb(
         g_app.diagnostic.recalibrate_button,
         [](lv_event_t*) {
+          ESP_LOGI(kTag, "recalibrate_button: LV_EVENT_CLICKED");
           if (g_app.diagnostic.root != nullptr) {
             lv_obj_delete(g_app.diagnostic.root);
             g_app.diagnostic = {};
           }
+          g_app.active_transform.reset();
           lv_obj_t* screen = lv_display_get_screen_active(g_app.board.display);
           g_app.calibration.emplace(screen);
           g_app.touch_was_pressed = false;
@@ -85,6 +155,7 @@ void PersistAndShowDiagnostic(const calibration::AffineTransform& transform) {
     lv_obj_delete(g_app.calibration->root());
     g_app.calibration.reset();
   }
+  g_app.active_transform = transform;
   ShowDiagnosticScreen();
 }
 
@@ -178,6 +249,19 @@ extern "C" void app_main(void) {
 
   g_app.diagnostic_state = board::InitBoard(g_app.board);
 
+  // lv_indev_create() binds the new device to lv_display_get_default() at
+  // the moment it's called -- created before InitBoard() (which is where
+  // the real lv_display_t comes from, deep inside display::InitDisplay())
+  // permanently bound the indev to no display at all. LVGL logs a warning
+  // for exactly this ("no display was created so far"), but LV_USE_LOG 0
+  // in firmware/ui/lv_conf.h silently swallows it, which is why this went
+  // unnoticed until physical testing showed the recalibrate button's
+  // LV_EVENT_CLICKED (and even LV_EVENT_PRESSED) never firing despite
+  // confirmed real touches. Must run after InitBoard() succeeds.
+  lv_indev_t* indev = lv_indev_create();
+  lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+  lv_indev_set_read_cb(indev, TouchIndevReadCb);
+
   ESP_LOGI(kTag, "profile=%s build=%s reset_reason=%s", g_app.diagnostic_state.profile_id.c_str(),
            g_app.diagnostic_state.build_identity.c_str(),
            firmware::domain::ToString(g_app.diagnostic_state.reset_reason));
@@ -198,6 +282,9 @@ extern "C" void app_main(void) {
       // diagnostics rather than presenting a flow that can never advance.
       ESP_LOGI(kTag, "boot: showing diagnostic screen (touch_ready=%d have_valid_calibration=%d)",
                g_app.board.touch_ready, have_valid_calibration);
+      if (have_valid_calibration) {
+        g_app.active_transform = stored.transform;
+      }
       ShowDiagnosticScreen();
     } else {
       ESP_LOGI(kTag, "boot: entering guided calibration (no valid stored record)");
