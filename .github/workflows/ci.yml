@@ -9,7 +9,7 @@ jobs:
   protocol:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install cmake and ninja
         run: brew install cmake ninja
       - name: Install Rust
@@ -19,7 +19,7 @@ jobs:
   simulator:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install cmake and ninja
         run: brew install cmake ninja
       - run: ./dev check simulator
@@ -27,7 +27,7 @@ jobs:
   host:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Rust
         run: rustup show
       - run: ./dev check host
@@ -35,7 +35,7 @@ jobs:
   macos:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: ./dev check macos
 
   firmware-native-domain:
@@ -43,19 +43,19 @@ jobs:
     # acceptance): no runner here needs the ESP-IDF toolchain for this job.
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install cmake and ninja
         run: brew install cmake ninja
       - run: ./dev check firmware
 
   firmware-image:
     # Builds the actual ESP32 image via the pinned ESP-IDF container.
-    # Unverified locally (no Docker/ESP-IDF in the authoring environment);
-    # this is the missing evidence recorded for the M0 exit criteria in
-    # docs/development.md until a real run confirms it.
+    # Verified locally with a manually installed ESP-IDF v5.3.2 (see
+    # docs/development.md); this job itself, on esp-idf-ci-action's
+    # container, is the remaining open evidence until a run is observed.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build firmware image
         uses: espressif/esp-idf-ci-action@v1
         with:
