@@ -8,6 +8,78 @@ using firmware::domain::calibration::kCalibrationTargets;
 using firmware::domain::calibration::ScreenPoint;
 using firmware::domain::calibration::ValidateTap;
 
+namespace {
+
+// Crosshair proportions inside a kTargetMarkerSizePx square, all centered
+// on the square's own center: a border-only ring, a small filled center
+// dot, and four arms extending from the ring's outer edge to the square's
+// edge. Sized for easy precision tapping on a 320x240 panel without
+// crowding adjacent targets (closest pair is 40px apart on an axis, e.g.
+// the calibration corners to the panel edge inset).
+constexpr lv_coord_t kRingDiameterPx = 16;
+constexpr lv_coord_t kCenterDotDiameterPx = 5;
+constexpr lv_coord_t kArmThicknessPx = 2;
+constexpr lv_coord_t kArmLengthPx = (kTargetMarkerSizePx - kRingDiameterPx) / 2;
+
+lv_obj_t* MakeArm(lv_obj_t* parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
+                  lv_color_t color) {
+  lv_obj_t* arm = lv_obj_create(parent);
+  lv_obj_set_pos(arm, x, y);
+  lv_obj_set_size(arm, w, h);
+  lv_obj_set_style_radius(arm, 0, 0);
+  lv_obj_set_style_bg_color(arm, color, 0);
+  lv_obj_set_style_bg_opa(arm, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(arm, 0, 0);
+  lv_obj_remove_flag(arm, LV_OBJ_FLAG_SCROLLABLE);
+  return arm;
+}
+
+// Builds the crosshair (ring + center dot + four arms) as children of a
+// kTargetMarkerSizePx square container, so CalibrationFlow only ever has
+// to reposition one object (the container) to move the whole marker.
+lv_obj_t* BuildCrosshairMarker(lv_obj_t* parent) {
+  const lv_color_t color = lv_palette_main(LV_PALETTE_TEAL);
+  constexpr lv_coord_t kCenter = kTargetMarkerSizePx / 2;
+
+  lv_obj_t* container = lv_obj_create(parent);
+  lv_obj_set_size(container, kTargetMarkerSizePx, kTargetMarkerSizePx);
+  lv_obj_set_style_bg_opa(container, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(container, 0, 0);
+  lv_obj_set_style_pad_all(container, 0, 0);
+  lv_obj_remove_flag(container, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* ring = lv_obj_create(container);
+  lv_obj_set_pos(ring, kCenter - kRingDiameterPx / 2, kCenter - kRingDiameterPx / 2);
+  lv_obj_set_size(ring, kRingDiameterPx, kRingDiameterPx);
+  lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ring, kArmThicknessPx, 0);
+  lv_obj_set_style_border_color(ring, color, 0);
+  lv_obj_remove_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* dot = lv_obj_create(container);
+  lv_obj_set_pos(dot, kCenter - kCenterDotDiameterPx / 2, kCenter - kCenterDotDiameterPx / 2);
+  lv_obj_set_size(dot, kCenterDotDiameterPx, kCenterDotDiameterPx);
+  lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(dot, color, 0);
+  lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(dot, 0, 0);
+  lv_obj_remove_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+
+  // Top, bottom, left, right arms, each spanning from the container edge
+  // to the ring's outer edge.
+  MakeArm(container, kCenter - kArmThicknessPx / 2, 0, kArmThicknessPx, kArmLengthPx, color);
+  MakeArm(container, kCenter - kArmThicknessPx / 2, kTargetMarkerSizePx - kArmLengthPx,
+          kArmThicknessPx, kArmLengthPx, color);
+  MakeArm(container, 0, kCenter - kArmThicknessPx / 2, kArmLengthPx, kArmThicknessPx, color);
+  MakeArm(container, kTargetMarkerSizePx - kArmLengthPx, kCenter - kArmThicknessPx / 2,
+          kArmLengthPx, kArmThicknessPx, color);
+
+  return container;
+}
+
+}  // namespace
+
 CalibrationFlow::CalibrationFlow(lv_obj_t* parent, double max_error_px)
     : max_error_px_(max_error_px) {
   root_ = lv_obj_create(parent);
@@ -33,12 +105,7 @@ CalibrationFlow::CalibrationFlow(lv_obj_t* parent, double max_error_px)
   status_label_ = lv_label_create(root_);
   lv_obj_align(status_label_, LV_ALIGN_TOP_MID, 0, 180 - 8);
 
-  target_marker_ = lv_obj_create(root_);
-  lv_obj_set_size(target_marker_, kTargetMarkerSizePx, kTargetMarkerSizePx);
-  lv_obj_set_style_radius(target_marker_, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_bg_color(target_marker_, lv_palette_main(LV_PALETTE_RED), 0);
-  lv_obj_set_style_border_width(target_marker_, 2, 0);
-  lv_obj_set_style_border_color(target_marker_, lv_color_white(), 0);
+  target_marker_ = BuildCrosshairMarker(root_);
 
   UpdateStatusLabel();
 }

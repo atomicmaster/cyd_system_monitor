@@ -21,11 +21,13 @@ inline constexpr std::array<firmware::domain::calibration::ScreenPoint, 4> kVali
     {firmware::domain::calibration::kCalibrationMarginPx, 120},        // left-mid
 }};
 
-// Diameter of the tappable target marker CalibrationFlow centers on the
-// current target/validation point. Public (not a calibration_flow.cpp
-// implementation detail) so tests can compute the marker's expected
-// top-left position without duplicating this value.
-inline constexpr lv_coord_t kTargetMarkerSizePx = 24;
+// Side length of the (invisible) square container CalibrationFlow centers
+// on the current target/validation point; the crosshair marker itself
+// (ring, center dot, and four arms -- see BuildCrosshairMarker in
+// calibration_flow.cpp) is laid out inside it. Public (not a
+// calibration_flow.cpp implementation detail) so tests can compute the
+// container's expected top-left position without duplicating this value.
+inline constexpr lv_coord_t kTargetMarkerSizePx = 30;
 
 // Drives the guided 5-point calibration flow followed by a separate
 // validation pass, as an explicit state machine so the simulator (and
@@ -65,9 +67,10 @@ class CalibrationFlow {
   lv_obj_t* root() const { return root_; }
   lv_obj_t* title_label() const { return title_label_; }
   lv_obj_t* status_label() const { return status_label_; }
-  // The circular marker positioned at the current target's screen point
-  // (kCalibrationTargets during kGuiding, kValidationTargets during
-  // kValidating), hidden once the flow concludes (kAccepted/kRejected).
+  // The (invisible) container holding the crosshair marker, positioned at
+  // the current target's screen point (kCalibrationTargets during
+  // kGuiding, kValidationTargets during kValidating), hidden once the flow
+  // concludes (kAccepted/kRejected).
   lv_obj_t* target_marker() const { return target_marker_; }
 
   // Called once per touch-down with the controller's raw sample for
