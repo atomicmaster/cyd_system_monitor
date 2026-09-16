@@ -1,2 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 CONFIG_COMPILER_CXX_EXCEPTIONS=y
+
+# The managed lvgl/lvgl component's ESP-IDF Kconfig defaults
+# LV_BUILD_EXAMPLES to "on" (see managed_components/lvgl__lvgl/Kconfig),
+# which compiles LVGL's entire examples/ tree into the build for no reason
+# -- firmware/ui/ never references it. Off here mirrors the simulator's
+# CMake FetchContent build, which already sets LV_BUILD_EXAMPLES/
+# LV_BUILD_DEMOS off directly.
+CONFIG_LV_BUILD_EXAMPLES=n

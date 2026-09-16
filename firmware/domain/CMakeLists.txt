@@ -14,16 +14,23 @@ set(FIRMWARE_DOMAIN_ACTIVE_PROFILE
     "lcdwiki-esp32-32e-2.8"
     CACHE STRING "Hardware profile id under hardware/profiles/ to validate against")
 
+# CMAKE_CURRENT_LIST_DIR, not CMAKE_CURRENT_SOURCE_DIR, for every path
+# computed here: ESP-IDF's early requirements-scan pass evaluates this file
+# via a throwaway include() (not add_subdirectory()), which leaves
+# CMAKE_CURRENT_SOURCE_DIR pointing at the top build directory rather than
+# this component's own directory. CMAKE_CURRENT_LIST_DIR tracks the file
+# actually being processed regardless of how it was reached, so it stays
+# correct in both that early pass and the later real configure pass.
 set(_fd_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(_fd_profile_toml
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../hardware/profiles/${FIRMWARE_DOMAIN_ACTIVE_PROFILE}/profile.toml")
+    "${CMAKE_CURRENT_LIST_DIR}/../../hardware/profiles/${FIRMWARE_DOMAIN_ACTIVE_PROFILE}/profile.toml")
 set(_fd_profile_header "${_fd_generated_dir}/firmware/domain/generated/profile.hpp")
-set(_fd_generator "${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_profile_header.py")
+set(_fd_generator "${CMAKE_CURRENT_LIST_DIR}/../tools/generate_profile_header.py")
 
 # calibration/CMakeLists.txt is a plain set()-only fragment (see its own
 # comment); include() it rather than add_subdirectory() it so it shares
 # this file's scope and early-scan safety.
-include("${CMAKE_CURRENT_SOURCE_DIR}/calibration/CMakeLists.txt")
+include("${CMAKE_CURRENT_LIST_DIR}/calibration/CMakeLists.txt")
 
 set(_fd_sources
     "src/geometry_check.cpp"

@@ -88,8 +88,10 @@ lv_display_t* InitDisplay() {
   io_cfg.trans_queue_depth = 10;
   io_cfg.lcd_cmd_bits = 8;
   io_cfg.lcd_param_bits = 8;
-  err = esp_lcd_new_panel_io_spi(reinterpret_cast<esp_lcd_spi_bus_handle_t>(kDisplaySpiHost),
-                                 &io_cfg, &g_panel_io);
+  // esp_lcd_spi_bus_handle_t is `typedef int`, not a pointer, so this is a
+  // plain enum-to-int conversion (static_cast), not a bit-reinterpretation.
+  err = esp_lcd_new_panel_io_spi(static_cast<esp_lcd_spi_bus_handle_t>(kDisplaySpiHost), &io_cfg,
+                                 &g_panel_io);
   if (err != ESP_OK) {
     ESP_LOGE(kTag, "esp_lcd_new_panel_io_spi failed: %s", esp_err_to_name(err));
     return nullptr;

@@ -35,11 +35,14 @@ bool Init() {
   chan_cfg.atten = ADC_ATTEN_DB_12;  // full ~0-3.3V range for a supply-voltage diagnostic read
   if (adc_oneshot_config_channel(g_adc_handle, kAdcChannel, &chan_cfg) != ESP_OK) return false;
 
-  adc_cali_curve_fitting_config_t cali_cfg = {};
+  // The original ESP32 (this board's chip) only supports the ADC
+  // calibration v1 "line fitting" scheme; curve fitting is v2/v3 hardware
+  // only available on later chips (S2/C3/S3/...).
+  adc_cali_line_fitting_config_t cali_cfg = {};
   cali_cfg.unit_id = kAdcUnit;
   cali_cfg.atten = ADC_ATTEN_DB_12;
   cali_cfg.bitwidth = ADC_BITWIDTH_DEFAULT;
-  g_calibrated = adc_cali_create_scheme_curve_fitting(&cali_cfg, &g_cali_handle) == ESP_OK;
+  g_calibrated = adc_cali_create_scheme_line_fitting(&cali_cfg, &g_cali_handle) == ESP_OK;
 
   return true;
 }
@@ -59,8 +62,8 @@ int ReadMillivolts() {
 
   // Uncalibrated fallback: linear approximation over the 12-bit range at
   // ADC_ATTEN_DB_12's ~3300mV full scale. Coarser than the calibrated
-  // path but still a usable diagnostic value if curve-fitting calibration
-  // is unavailable on this chip revision.
+  // path but still a usable diagnostic value if line-fitting calibration
+  // is unavailable on this chip revision (e.g. no eFuse calibration data).
   return (raw * 3300) / 4095;
 }
 
