@@ -14,6 +14,6 @@ This notice will be expanded with exact dependency names, versions, copyright ho
 
 - **Rust 1.97.1** (pinned in [`rust-toolchain.toml`](rust-toolchain.toml)), Apache-2.0/MIT dual-licensed. `host/` and `protocol/generated/rust` have no external crate dependencies yet; concrete collectors and codecs will add crates with their own notices as they land.
 - **ESP-IDF v5.3** (target pin for `firmware/`; see [docs/development.md](docs/development.md)). Its bundled libraries and their licenses are covered above and in the release-time dependency inventory this file defers to.
-- **LVGL**: not yet pinned. `firmware/ui/` is empty until F05; no build links LVGL at M0.
+- **LVGL**: deliberately not pinned here. `firmware/ui/` is empty until F05 implements the first screen, and F05 pins LVGL alongside that work rather than this ticket choosing a version for an empty tree.
 - **CMake (>= 3.20) and Ninja**: build-time only, not linked into any shipped artifact.
 - **Swift 6.4 / Xcode 16+** for `macos/setup-app/`, which has no external Swift package dependencies yet.

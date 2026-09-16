@@ -32,7 +32,7 @@ falling back to another target.
 | Python 3 | firmware, protocol (generation) | >= 3.11 (stdlib `tomllib`) | `brew install python3` or Xcode Command Line Tools |
 | Rust | host, protocol (generated crate) | 1.97.1, pinned in [`rust-toolchain.toml`](../rust-toolchain.toml) | `rustup` auto-installs the pinned toolchain on first use |
 | Swift / Xcode | macos | Swift 6.4 (Xcode 16+) | Xcode from the App Store or developer.apple.com; accept its license once |
-| LVGL | firmware, simulator | not yet pinned | deferred: `firmware/ui/` is empty until F05, so no build currently links LVGL |
+| LVGL | firmware, simulator | pinned by F05, not M0 | `firmware/ui/` is empty until F05 implements the first screen; F05 pins LVGL alongside that work rather than this ticket choosing a version for an empty tree |
 
 Developer dependency fetching (crates.io, ESP-IDF's own component registry,
 Homebrew) is unrelated to the installed product's outbound-traffic
