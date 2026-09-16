@@ -5,11 +5,66 @@
 Pins and geometry live in hardware/profiles/<id>/profile.toml. Application
 and domain modules include the generated header instead of restating pin
 numbers, so a new profile only requires a new TOML file.
+
+This does not use the stdlib `tomllib` module: ESP-IDF v5.3's own managed
+Python environment (used to run this script during `idf.py build`, inside
+and outside CI) can be as old as Python 3.10, which predates `tomllib`
+(3.11+). `parse_flat_toml` below is a dependency-free parser for exactly the
+subset of TOML the hardware profiles actually use: flat `[section]` tables
+of scalar `key = value` assignments (quoted strings, decimal/hex integers,
+booleans). Anything outside that subset fails clearly rather than silently
+misparsing.
 """
 import argparse
 import pathlib
+import re
 import sys
-import tomllib
+
+_SECTION_RE = re.compile(r"^\[([A-Za-z0-9_]+)\]$")
+_ASSIGNMENT_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$")
+
+
+def _parse_value(raw: str, context: str):
+    if raw.startswith('"') and raw.endswith('"') and len(raw) >= 2:
+        return raw[1:-1]
+    if raw in ("true", "false"):
+        return raw == "true"
+    if raw.lower().startswith("0x"):
+        return int(raw, 16)
+    if re.fullmatch(r"-?\d+", raw):
+        return int(raw)
+    raise ValueError(f"unsupported TOML value {raw!r} in {context}")
+
+
+def parse_flat_toml(text: str) -> dict:
+    """Parses flat `[section]` tables of scalar assignments. See module docstring."""
+    profile = {}
+    section = None
+    section_name = "<top-level>"
+    for lineno, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        context = f"line {lineno}"
+
+        section_match = _SECTION_RE.match(line)
+        if section_match:
+            section_name = section_match.group(1)
+            section = profile.setdefault(section_name, {})
+            continue
+
+        assignment_match = _ASSIGNMENT_RE.match(line)
+        if not assignment_match:
+            raise ValueError(f"unparseable TOML line at {context}: {raw_line!r}")
+        key, raw_value = assignment_match.groups()
+        value = _parse_value(raw_value.strip(), f"{section_name}.{key} ({context})")
+
+        if section is None:
+            profile[key] = value
+        else:
+            section[key] = value
+    return profile
+
 
 TEMPLATE = """// SPDX-License-Identifier: Apache-2.0
 // Generated from {source} by firmware/tools/generate_profile_header.py.
@@ -35,8 +90,7 @@ def main() -> int:
     parser.add_argument("output_header", type=pathlib.Path)
     args = parser.parse_args()
 
-    with args.profile_toml.open("rb") as f:
-        profile = tomllib.load(f)
+    profile = parse_flat_toml(args.profile_toml.read_text())
 
     display = profile.get("display", {})
     touch = profile.get("touch", {})

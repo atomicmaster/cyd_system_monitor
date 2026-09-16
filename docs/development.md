@@ -29,7 +29,7 @@ falling back to another target.
 | ESP-IDF | firmware | v5.3.2 | `git clone -b v5.3.2 --recursive` + `install.sh esp32`; `source $IDF_PATH/export.sh` before `./dev build firmware` ([docs](https://docs.espressif.com/projects/esp-idf)) |
 | CMake | firmware (native test), simulator, protocol | >= 3.20 (firmware/ESP-IDF: let `install.sh` fetch its own pinned 3.30.2 rather than relying on a newer system CMake — see below) | `brew install cmake` |
 | Ninja | firmware (native test), simulator, protocol | latest | `brew install ninja` |
-| Python 3 | firmware, protocol (generation) | >= 3.11 (stdlib `tomllib`) | `brew install python3` or Xcode Command Line Tools; after `source $IDF_PATH/export.sh`, confirm `python3 --version` still resolves to this one, not an older CommandLineTools Python ahead of it on `PATH` |
+| Python 3 | firmware, protocol (generation) | firmware: no floor (dependency-free parser, see below); protocol: >= 3.11 (stdlib `tomllib`) | `brew install python3` or Xcode Command Line Tools; after `source $IDF_PATH/export.sh`, confirm `python3 --version` still resolves to this one, not an older CommandLineTools Python ahead of it on `PATH` |
 | Rust | host, protocol (generated crate) | 1.97.1, pinned in [`rust-toolchain.toml`](../rust-toolchain.toml) | `rustup` auto-installs the pinned toolchain on first use |
 | Swift / Xcode | macos | Swift 6.4 (Xcode 16+) | Xcode from the App Store or developer.apple.com; accept its license once |
 | LVGL | firmware, simulator | pinned by F05, not M0 | `firmware/ui/` is empty until F05 implements the first screen; F05 pins LVGL alongside that work rather than this ticket choosing a version for an empty tree |
@@ -44,6 +44,17 @@ pinned 3.30.2 under `~/.espressif/tools/cmake/`) and re-source
 `export.sh`; it then takes priority on `PATH` ahead of a newer system CMake
 for any `idf.py` invocation, while `cmake`/`ninja` outside an ESP-IDF shell
 (simulator, protocol, the native domain test) keep using the system one.
+
+**ESP-IDF's own Python, not the system one, runs build-time scripts:**
+`idf_component_register`'s custom commands run under whatever interpreter
+ESP-IDF's own managed virtualenv resolves to (`~/.espressif/python_env/...`
+locally, or the CI container's own venv), not necessarily the `python3` on
+the outer `PATH`. `espressif/esp-idf-ci-action`'s v5.3 container ships
+Python 3.10, which predates the stdlib `tomllib` module (3.11+). This is why
+`firmware/tools/generate_profile_header.py` parses its TOML subset itself
+(see that file's docstring) instead of depending on `tomllib`;
+`protocol/tools/generate.py` still uses `tomllib` since it never runs inside
+an ESP-IDF component build.
 
 Developer dependency fetching (crates.io, ESP-IDF's own component registry,
 Homebrew) is unrelated to the installed product's outbound-traffic

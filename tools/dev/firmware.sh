@@ -31,7 +31,9 @@ build() {
 check() {
   require_tool cmake "brew install cmake" || return 1
   require_tool ninja "brew install ninja" || return 1
+  require_tool python3 "install Python 3" || return 1
   _check_format
+  python3 "$(_firmware_dir)/tools/test_generate_profile_header.py"
   local test_dir="$(_firmware_dir)/domain/tests"
   cmake -S "$test_dir" -B "$test_dir/build" -G Ninja
   cmake --build "$test_dir/build"

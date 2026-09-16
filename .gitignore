@@ -19,6 +19,8 @@ firmware/sdkconfig.old
 firmware/managed_components/
 firmware/dependencies.lock
 
+__pycache__/
+
 # Editors
 .vscode/
 .idea/
