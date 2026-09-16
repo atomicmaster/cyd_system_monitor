@@ -21,6 +21,12 @@ inline constexpr std::array<firmware::domain::calibration::ScreenPoint, 4> kVali
     {firmware::domain::calibration::kCalibrationMarginPx, 120},        // left-mid
 }};
 
+// Diameter of the tappable target marker CalibrationFlow centers on the
+// current target/validation point. Public (not a calibration_flow.cpp
+// implementation detail) so tests can compute the marker's expected
+// top-left position without duplicating this value.
+inline constexpr lv_coord_t kTargetMarkerSizePx = 24;
+
 // Drives the guided 5-point calibration flow followed by a separate
 // validation pass, as an explicit state machine so the simulator (and
 // later, tests) can inject synthetic RawTouchSamples deterministically
@@ -36,9 +42,9 @@ class CalibrationFlow {
     kRejected,    // degenerate fit or a validation tap exceeded max_error_px; call Reset()
   };
 
-  // Builds the calibration screen (a target-position label plus a status
-  // label) under `parent`. `max_error_px` is forwarded to ValidateTap for
-  // every validation target.
+  // Builds the calibration screen (a tappable target marker plus a status
+  // label reporting progress) under `parent`. `max_error_px` is forwarded
+  // to ValidateTap for every validation target.
   explicit CalibrationFlow(
       lv_obj_t* parent,
       double max_error_px = firmware::domain::calibration::kDefaultMaxValidationErrorPx);
@@ -55,6 +61,10 @@ class CalibrationFlow {
 
   lv_obj_t* root() const { return root_; }
   lv_obj_t* status_label() const { return status_label_; }
+  // The circular marker positioned at the current target's screen point
+  // (kCalibrationTargets during kGuiding, kValidationTargets during
+  // kValidating), hidden once the flow concludes (kAccepted/kRejected).
+  lv_obj_t* target_marker() const { return target_marker_; }
 
   // Called once per touch-down with the controller's raw sample for
   // whichever target is currently presented. Advances the state machine;
@@ -67,10 +77,15 @@ class CalibrationFlow {
   void Reset();
 
  private:
+  // Updates both the status label text and the target marker's position/
+  // visibility for the current stage/target_index. Called on every
+  // transition (SubmitRawSample advancement and Reset()).
   void UpdateStatusLabel();
+  void UpdateTargetMarker();
 
   lv_obj_t* root_ = nullptr;
   lv_obj_t* status_label_ = nullptr;
+  lv_obj_t* target_marker_ = nullptr;
 
   Stage stage_ = Stage::kGuiding;
   int current_target_index_ = 0;

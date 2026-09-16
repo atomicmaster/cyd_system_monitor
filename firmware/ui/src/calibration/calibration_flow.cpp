@@ -5,15 +5,31 @@ namespace firmware::ui::calibration {
 
 using firmware::domain::calibration::ComputeAffineTransform;
 using firmware::domain::calibration::kCalibrationTargets;
+using firmware::domain::calibration::ScreenPoint;
 using firmware::domain::calibration::ValidateTap;
 
 CalibrationFlow::CalibrationFlow(lv_obj_t* parent, double max_error_px)
     : max_error_px_(max_error_px) {
   root_ = lv_obj_create(parent);
   lv_obj_set_size(root_, 320, 240);
+  // Zero padding/border so target_marker_'s coordinates map 1:1 onto the
+  // same screen-pixel space firmware::domain::calibration's targets are
+  // defined in -- LVGL's default container style otherwise insets the
+  // content area, which would tap-offset every marker from its intended
+  // calibration point.
+  lv_obj_set_style_pad_all(root_, 0, 0);
+  lv_obj_set_style_border_width(root_, 0, 0);
 
   status_label_ = lv_label_create(root_);
-  lv_obj_center(status_label_);
+  lv_obj_align(status_label_, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+  target_marker_ = lv_obj_create(root_);
+  lv_obj_set_size(target_marker_, kTargetMarkerSizePx, kTargetMarkerSizePx);
+  lv_obj_set_style_radius(target_marker_, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(target_marker_, lv_palette_main(LV_PALETTE_RED), 0);
+  lv_obj_set_style_border_width(target_marker_, 2, 0);
+  lv_obj_set_style_border_color(target_marker_, lv_color_white(), 0);
+
   UpdateStatusLabel();
 }
 
@@ -34,6 +50,30 @@ void CalibrationFlow::UpdateStatusLabel() {
       lv_label_set_text(status_label_, "Calibration rejected - retry");
       break;
   }
+  UpdateTargetMarker();
+}
+
+void CalibrationFlow::UpdateTargetMarker() {
+  if (stage_ == Stage::kAccepted || stage_ == Stage::kRejected) {
+    lv_obj_add_flag(target_marker_, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  lv_obj_remove_flag(target_marker_, LV_OBJ_FLAG_HIDDEN);
+
+  const ScreenPoint point = (stage_ == Stage::kGuiding)
+                                ? kCalibrationTargets[static_cast<size_t>(current_target_index_)]
+                                : kValidationTargets[static_cast<size_t>(current_target_index_)];
+  // target_marker_'s position is its top-left corner; center the marker on
+  // the target point rather than anchoring a corner to it.
+  lv_obj_set_pos(target_marker_, point.x - kTargetMarkerSizePx / 2,
+                 point.y - kTargetMarkerSizePx / 2);
+  // lv_obj_set_pos() only schedules a coordinate recompute; lv_obj_get_x/y
+  // read the cached obj->coords directly and would otherwise see the
+  // previous position until the next full layout/render pass. Flushing it
+  // here keeps target_marker()'s position query-consistent immediately
+  // after every SubmitRawSample()/Reset(), not just once LVGL gets around
+  // to its own refresh timer.
+  lv_obj_update_layout(target_marker_);
 }
 
 void CalibrationFlow::SubmitRawSample(firmware::domain::calibration::RawTouchSample raw) {

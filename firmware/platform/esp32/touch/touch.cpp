@@ -105,15 +105,23 @@ bool Xpt2046Touch::Init() {
 
 bool Xpt2046Touch::ReadRaw(firmware::domain::calibration::RawTouchSample& out) {
   if (!initialized_) return false;
-
-  // IRQ is active-low while the panel is pressed.
-  const bool pressed =
-      gpio_get_level(static_cast<gpio_num_t>(firmware::domain::profile::kTouchIrq)) == 0;
-  if (!pressed) return false;
+  if (!IrqAsserted()) return false;
 
   out.raw_x = AveragedRead(kCommandReadX);
   out.raw_y = AveragedRead(kCommandReadY);
   return true;
+}
+
+bool Xpt2046Touch::IrqAsserted() const {
+  // IRQ is active-low while the panel is pressed.
+  return gpio_get_level(static_cast<gpio_num_t>(firmware::domain::profile::kTouchIrq)) == 0;
+}
+
+firmware::domain::calibration::RawTouchSample Xpt2046Touch::ReadRawIgnoringIrq() {
+  firmware::domain::calibration::RawTouchSample out;
+  out.raw_x = AveragedRead(kCommandReadX);
+  out.raw_y = AveragedRead(kCommandReadY);
+  return out;
 }
 
 }  // namespace firmware::platform::esp32::touch

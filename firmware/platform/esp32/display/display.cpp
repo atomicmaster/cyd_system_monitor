@@ -115,7 +115,15 @@ lv_display_t* InitDisplay() {
   // application drives; there is no dedicated per-panel reset line to
   // assert, so this stays -1 (no reset pin) rather than a fabricated GPIO.
   panel_cfg.reset_gpio_num = -1;
-  panel_cfg.color_space = ESP_LCD_COLOR_SPACE_RGB;
+  // This exact ILI9341 module wires its subpixels BGR, not RGB: a solid
+  // red fill rendered as solid blue on the real board is the signature of
+  // an R/B channel-order mismatch (distinct from the RGB565 byte-
+  // endianness LV_COLOR_16_SWAP fixes above -- a byte swap can't produce a
+  // clean primary-color swap like this, since R/G/B don't align to byte
+  // boundaries in RGB565). Black text and near-white backgrounds are
+  // invariant to an R/B swap, which is why this was invisible until a
+  // saturated color (the calibration target marker) was rendered.
+  panel_cfg.rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR;
   panel_cfg.bits_per_pixel = 16;
 
   err = esp_lcd_new_panel_ili9341(g_panel_io, &panel_cfg, &g_panel);

@@ -28,6 +28,20 @@ class Xpt2046Touch {
   // before handing the result to firmware::domain::calibration.
   bool ReadRaw(firmware::domain::calibration::RawTouchSample& out);
 
+  // DIAGNOSTIC, pending physical F06 evidence: true if the controller's
+  // IRQ (T_IRQ) pin currently reads asserted (low). Exposed separately
+  // from ReadRaw() so a caller can log/compare it against
+  // ReadRawIgnoringIrq()'s result to tell an IRQ-detection fault apart
+  // from a SPI-data-path fault when a physical tap produces no response.
+  bool IrqAsserted() const;
+
+  // DIAGNOSTIC, pending physical F06 evidence: performs the same averaged
+  // X/Y read as ReadRaw() but unconditionally, ignoring IRQ entirely.
+  // Never used by the real calibration flow (SubmitRawSample must only
+  // see genuine touch-down events, not continuous noise); only for
+  // comparing against IrqAsserted() while debugging the real board.
+  firmware::domain::calibration::RawTouchSample ReadRawIgnoringIrq();
+
  private:
   bool initialized_ = false;
 };

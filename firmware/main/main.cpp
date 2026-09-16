@@ -106,6 +106,16 @@ void PumpTouch() {
     return;
   }
 
+  // Diagnostic pending real physical calibration evidence (see
+  // docs/tickets/F06.md): confirms touch-down is actually reaching this
+  // point and shows the raw controller reading in each report, since a
+  // "no response" tap could mean the XPT2046 IRQ line never asserts, or it
+  // asserts but PumpTouch/SubmitRawSample isn't reached, or it reaches here
+  // with implausible raw values -- this log distinguishes all three.
+  ESP_LOGI(kTag, "touch-down: raw_x=%ld raw_y=%ld stage=%d target=%d",
+           static_cast<long>(sample.raw_x), static_cast<long>(sample.raw_y),
+           static_cast<int>(g_app.calibration->stage()), g_app.calibration->current_target_index());
+
   if (g_app.calibration->stage() == ui_calibration::CalibrationFlow::Stage::kRejected) {
     g_app.calibration->Reset();
     return;
@@ -115,6 +125,35 @@ void PumpTouch() {
   if (g_app.calibration->stage() == ui_calibration::CalibrationFlow::Stage::kAccepted) {
     PersistAndShowDiagnostic(*g_app.calibration->transform());
   }
+}
+
+// DIAGNOSTIC, pending physical F06 evidence (see docs/tickets/F06.md):
+// logs the IRQ pin level and an unconditional (IRQ-independent) raw X/Y
+// read once a second, regardless of calibration state. The first physical
+// session found IRQ never asserts for any tap at any of the 5 targets --
+// this isolates whether that's genuinely an IRQ-detection fault (raw X/Y
+// stay flat/unchanging too, meaning the whole SPI data path never
+// responds) or specifically an IRQ-pin fault (raw X/Y visibly move when
+// touched despite IrqAsserted() staying false, meaning touch detection
+// should switch to a Z-pressure/threshold method instead of relying on
+// the hardware IRQ pin). Not gated by touch_ready's screen-mode checks so
+// it logs during either screen. Remove once F06 lands a real fix.
+void PumpTouchDiagnostics() {
+  if (!g_app.board.touch_ready) {
+    return;
+  }
+
+  static int64_t s_last_log_us = 0;
+  const int64_t now_us = esp_timer_get_time();
+  if (now_us - s_last_log_us < 1'000'000) {
+    return;
+  }
+  s_last_log_us = now_us;
+
+  const bool irq = g_app.board.touch.IrqAsserted();
+  const calibration::RawTouchSample sample = g_app.board.touch.ReadRawIgnoringIrq();
+  ESP_LOGI(kTag, "touch-diagnostic: irq_asserted=%d raw_x=%ld raw_y=%ld", irq,
+           static_cast<long>(sample.raw_x), static_cast<long>(sample.raw_y));
 }
 
 // firmware/ui/lv_conf.h sets LV_TICK_CUSTOM 0, which means LVGL supplies no
@@ -157,15 +196,31 @@ extern "C" void app_main(void) {
     if (have_valid_calibration || !g_app.board.touch_ready) {
       // No usable touch means calibration is unreachable; go straight to
       // diagnostics rather than presenting a flow that can never advance.
+      ESP_LOGI(kTag, "boot: showing diagnostic screen (touch_ready=%d have_valid_calibration=%d)",
+               g_app.board.touch_ready, have_valid_calibration);
       ShowDiagnosticScreen();
     } else {
+      ESP_LOGI(kTag, "boot: entering guided calibration (no valid stored record)");
       g_app.calibration.emplace(screen);
     }
   }
 
+  // Bit-banged touch polling happens once per loop iteration, not inside
+  // LVGL's own timer/input-device framework (see PumpTouch's comment), so
+  // it must never be starved by a long vTaskDelay. lv_timer_handler()
+  // returns LV_NO_TIMER_READY (0xFFFFFFFF) once nothing is due to redraw
+  // soon -- unclamped, pdMS_TO_TICKS() of that turns into an effectively
+  // infinite delay, silently stalling touch polling (and this loop's own
+  // diagnostic logging) the moment the screen finishes its first render
+  // and goes idle. Clamp to a small bound so the loop always stays
+  // touch-responsive regardless of what LVGL reports.
+  constexpr uint32_t kMaxLoopSleepMs = 20;
   for (;;) {
     PumpTouch();
+    PumpTouchDiagnostics();
     const uint32_t sleep_ms = lv_timer_handler();
-    vTaskDelay(pdMS_TO_TICKS(sleep_ms > 0 ? sleep_ms : 5));
+    const uint32_t clamped_sleep_ms =
+        (sleep_ms > 0 && sleep_ms < kMaxLoopSleepMs) ? sleep_ms : kMaxLoopSleepMs;
+    vTaskDelay(pdMS_TO_TICKS(clamped_sleep_ms));
   }
 }
