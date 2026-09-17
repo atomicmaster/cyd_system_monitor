@@ -309,13 +309,14 @@ controller-only VHCI path and the full NimBLE host link with headroom. The
 capacity precondition is met, so what remains is measurement, not a
 capacity decision.
 
-Still to record on the board, under combined radio and UI load: touch
-behavior, one-second serial traffic, channel revisit timing, and packet
-loss. Compare the current software-touch/SPI2-display/SPI3-MicroSD
-arrangement with an alternative under that same load. A provisional
-partition/write/endurance budget beyond the NVS write-rate evidence below
-is also still absent; `firmware/partitions.csv` states its own sizes are a
-provisional M1a budget rather than an endurance budget. M1a does not close
+Still to record on the board, under combined radio and UI load: one-second
+serial traffic, channel revisit timing, and packet loss. Touch behavior
+under combined radio load is now recorded below. Compare the current
+software-touch/SPI2-display/SPI3-MicroSD arrangement with an alternative
+under that same load. A provisional partition/write/endurance budget
+beyond the NVS write-rate evidence below is also still absent;
+`firmware/partitions.csv` states its own sizes are a provisional M1a
+budget rather than an endurance budget. M1a does not close
 until those are present.
 
 ## CPU load and NVS write rate under combined load
@@ -369,6 +370,66 @@ unmeasured here -- but it establishes a real per-write latency figure
 (roughly 0.8 ms) to size a settings/journal write budget against, rather
 than the "provisional... not yet measured" gap the ticket previously left
 open.
+
+## Touch under combined radio load: live board result
+
+On 2026-09-17, with a human operator physically at the same E32R28T
+(controller-only-BLE plus passive-Wi-Fi build, radio reception continuous
+throughout, `DEV:CPU_STATUS`/`DEV:HCI_STATUS` polled every 15 s over a
+serial capture), the operator repeatedly entered and stepped through the
+F08a capacity slice (Live status -> Alert list -> Alert detail -> Settings
+-> back to diagnostic, several full loops), then tapped "Recalibrate,"
+deliberately failed the five-point calibration once (to exercise the
+failure/retry path), and completed a full five-point calibration
+afterward, then returned to more capacity-slice loops. Total session
+length was just over four minutes of active operator interaction.
+
+**Detection latency.** The one directly comparable pair in this session --
+`indev press` (raw touch-down detected) and `recalibrate_button:
+LV_EVENT_PRESSED` (LVGL's own press-dispatch event) -- carried the same
+logged timestamp (both at uptime 56,950 ms), i.e. touch-down detection to
+LVGL event dispatch took less than the ~10 ms log-timestamp resolution.
+This is the number the 100 ms processed-touch-input budget in
+[mvp-validation.md](../../../../docs/mvp-validation.md) is actually about,
+and it held with BLE scanning and Wi-Fi monitoring both running.
+
+**Indev-press-to-click interval.** `indev press` to the resulting
+`LV_EVENT_CLICKED` (fired on release) measured 30-130 ms across eight taps
+on `capacity_slice_button` and `recalibrate_button`
+(100, 90, 90, 100, 70, 30, 130, 100 ms). This interval is dominated by how
+long the operator's finger stayed on the glass, not firmware queueing --
+the 0 ms PRESSED-dispatch figure above already accounts for the
+detection-side latency -- so it is reported as an upper bound on
+system-attributable delay, not a floor.
+
+**CPU load under active touch.** `DEV:CPU_STATUS` samples taken during the
+five-point calibration's rapid touch sequences showed `main` (LVGL timer
+handler, touch polling, dev console) at 30.2-33.9% of core 0, roughly
+double the ~12-17% seen on the same core while idle on a menu screen
+between taps (see the CPU-load table above). Core 1, carrying the BLE/Wi-Fi
+tasks, stayed under 0.1% busy throughout, including during active touch.
+
+**No degradation, no crash, board recoverable.** Across the full session,
+`command_failures`, `malformed_events`, and `dropped_events` stayed at zero
+while `advertising_reports` rose from 150 to 9,499 and
+`wifi_management_frames` from 0 to 81. A single `boot: showing diagnostic
+screen` line at the start of the log confirms no reset or crash occurred
+despite the deliberate calibration failure and retry. A `DEV:CAPACITY_STATUS`
+query afterward showed 76,304 B free heap (unchanged from the earlier
+idle reading) and 72,892 B minimum free heap, so nothing measurable leaked
+across the exercise; LVGL pool peak used rose from 10,348 B to 11,412 B
+(the capacity slice's own screens, not radio activity, are the reason --
+see the F08a physical result below for the per-screen breakdown) and
+`main`'s stack low-water mark stayed at 12,540 B, both far from their
+respective ceilings. `DEV:PERIPHERAL_STATUS` confirmed MicroSD stayed
+mounted and the board fully responsive afterward.
+
+This closes F08's touch-under-radio-load gap: active touch, including a
+full calibration flow, coexists with continuous BLE/Wi-Fi reception with
+no observed loss, no crash, and CPU/RAM headroom well inside budget. It
+does not measure display flush time or a frame-accurate render latency --
+only the detection-to-dispatch and detection-to-click intervals available
+from existing log timestamps.
 
 ## F08a UI capacity slice: build-time result (no physical board)
 
