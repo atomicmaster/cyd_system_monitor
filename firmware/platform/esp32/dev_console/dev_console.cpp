@@ -202,11 +202,12 @@ void RunChannelStatus() {
                                   : 0;
   ESP_LOGI(kTag,
            "DEV:CHANNEL_STATUS: current_channel=%u switch_count=%lu last_switch_duration_us=%lu "
-           "max_switch_duration_us=%lu average_switch_duration_us=%llu",
+           "max_switch_duration_us=%lu average_switch_duration_us=%llu beacon_frames_total=%lu",
            status.current_channel, static_cast<unsigned long>(status.channel_switch_count),
            static_cast<unsigned long>(status.last_switch_duration_us),
            static_cast<unsigned long>(status.max_switch_duration_us),
-           static_cast<unsigned long long>(average_us));
+           static_cast<unsigned long long>(average_us),
+           static_cast<unsigned long>(status.beacon_frames));
 }
 
 struct Command {

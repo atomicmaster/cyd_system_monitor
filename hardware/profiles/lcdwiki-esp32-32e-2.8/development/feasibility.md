@@ -438,17 +438,26 @@ from existing log timestamps.
 On 2026-09-17, `controller_probe.cpp` gained a bounded `ChannelHopTask`
 that cycles a fixed 3-channel probe set (1, 6, 11 -- the standard
 non-overlapping 2.4 GHz trio, not ADR 0026's eventual per-region Channel
-Plan, which does not exist yet) on a 1 s dwell, timing each
-`esp_wifi_set_channel()` call and logging it alongside the running BLE/WiFi
-counters. `DEV:CHANNEL_STATUS` reports the cumulative switch count and
-last/max/average switch duration. This measures whether explicit WiFi
-channel switching is affordable and whether it visibly interrupts BLE
-reception on this single-radio target (ADR 0003) -- it is not a scheduling
-policy, and it does not yet interleave with an explicit BLE Observation
-Window on the same clock, since no such scheduler exists yet.
+Plan, which does not exist yet), timing each `esp_wifi_set_channel()` call
+and logging it alongside the running BLE/WiFi counters. `DEV:CHANNEL_STATUS`
+reports the cumulative switch count and last/max/average switch duration.
+This measures whether explicit WiFi channel switching is affordable and
+whether it visibly interrupts BLE reception on this single-radio target
+(ADR 0003) -- it is not a scheduling policy, and it does not yet interleave
+with an explicit BLE Observation Window on the same clock, since no such
+scheduler exists yet.
+
+An initial run used an arbitrary 1 s dwell (matching the Host snapshot
+cadence, not beacon timing) and is recorded below for provenance, but the
+dwell was then revised to align with 802.11 beacon timing, which is the
+actually relevant clock for "is this channel switch fast enough to keep
+observing WiFi Activity" -- see "Beacon-aligned dwell revision" below for
+the current, superseding measurement.
+
+### Initial run: 1 s dwell (superseded)
 
 Run unattended (no operator needed) on the same controller-only-BLE plus
-passive-Wi-Fi build, over 45 s and 38 channel switches:
+passive-Wi-Fi build, over 45 s and 38 channel switches at a 1 s dwell:
 
 | Metric | Value |
 | --- | ---: |
@@ -470,18 +479,74 @@ a probe artifact). `DEV:CPU_STATUS` during the run showed the `wifi` task
 at under 0.1% of core 1 and the new `channel_hop` task's own overhead not
 separately visible above that noise floor.
 
-This establishes that, at a 1 s dwell, WiFi channel switching on this
-board is cheap (under 1 ms per switch) and does not visibly interrupt
-concurrent passive BLE scanning -- ESP-IDF's coexistence layer appears to
-absorb this specific interaction without a dedicated application-level
-Observation Window scheduler. It does not establish this at shorter
-dwells, under simultaneous UI/touch/flash load (the earlier touch session
-above did not have channel hopping enabled), for a full regional channel
-plan wider than 3 channels, or for the BLE-scan-window side of switching
-(this probe never stops or restarts BLE scanning -- only WiFi channel
-changes). A real Observation Window scheduler, when designed, needs its
-own measurement pass under those conditions rather than inheriting this
-result.
+This 1 s figure was arbitrary, chosen only because it matched the Host
+snapshot cadence elsewhere in the project; it was not checked against
+whether it actually captured beacons, the frames the WiFi screen's
+"sampled-channel Observed WiFi Activity" (per
+[radio-model.md](../../../../docs/radio-model.md)) depends on for
+identifying an Observed BSS.
+
+### Beacon-aligned dwell revision
+
+The 802.11 default beacon period (`dot11BeaconPeriod`) is 100 TU =
+102,400 μs, and the overwhelming majority of consumer APs use exactly that
+default. A dwell shorter than one beacon period can miss every beacon from
+an AP on that channel purely from phase alignment, independent of RF
+conditions -- that would be a probe artifact reported as a coverage gap,
+not a real one. `kChannelDwellMs` was revised from the arbitrary 1 s to
+300 ms: roughly three beacon periods, giving margin for this task's own
+`vTaskDelay()` being quantized to `CONFIG_FREERTOS_HZ`'s 10 ms tick, for
+APs that configure a longer-than-default beacon period, and for needing
+more than one sighting to trust a miss. A new `beacon_frames` counter
+(802.11 frame-control type 0 / subtype 8, read directly out of each
+captured management frame, as distinct from probe/assoc/deauth/etc.
+traffic already counted in `wifi_management_frames`) exists specifically
+to check that margin against reality rather than assume it.
+
+Run unattended over 46 s and 156 channel switches at the revised 300 ms
+dwell:
+
+| Metric | Value |
+| --- | ---: |
+| Channel switches | 156 |
+| Min / max switch duration | ~547 / 761 μs |
+| Average switch duration | 665 μs |
+| Revisit period (3 channels x 300 ms dwell) | 0.9 s |
+| Beacon frames observed (of 82 total management frames) | 50 |
+
+Switch cost is unchanged from the 1 s-dwell run (paragraph above), as
+expected -- the per-call cost of `esp_wifi_set_channel()` does not depend
+on dwell length. `DEV:HCI_STATUS` again showed zero `command_failures`,
+`malformed_events`, and `dropped_events`.
+
+The beacon counter's per-dwell breakdown is the interesting result: of 51
+dwells on channel 11, 27 saw zero beacons and 24 saw 1-3 (matching the
+~300 ms / ~102.4 ms ≈ 2.9 beacons-per-dwell arithmetic when reception
+succeeded), while channels 1 and 6 saw zero beacons in every single one of
+their 105 combined dwells across the whole run. That is the pattern a
+weak or moderately distant single real AP on channel 11 produces --
+roughly half its beacons lost to fading/interference, non-zero counts
+clustering near the arithmetic prediction when reception does succeed --
+not the pattern a too-short dwell would produce. A dwell that was
+structurally too short to catch a present beacon would show a similarly
+sparse, low pattern on every channel with an AP, not a clean, sustained
+zero on two channels for the entire 46 s run while the third fluctuates.
+This is not proof (no reference AP with a known beacon interval was
+available to establish ground truth), but it is evidence the 300 ms
+margin is doing its job rather than silently starving reception.
+
+This supersedes the 1 s-dwell numbers above for the product-relevant
+question ("is the dwell long enough to actually observe beacons"), while
+confirming the same conclusion on switching cost and BLE non-interference
+at three times the switch rate. It does not establish behavior at a
+shorter-than-beacon-period dwell (not attempted, since that would be
+expected to fail this exact test), under simultaneous UI/touch/flash load
+(the earlier touch session above ran without channel hopping enabled), for
+a full regional channel plan wider than 3 channels, or for the BLE-scan-
+window side of switching (this probe never stops or restarts BLE scanning
+-- only WiFi's channel changes). A real Observation Window scheduler, when
+designed, needs its own measurement pass under those conditions rather
+than inheriting this result.
 
 ## F08a UI capacity slice: build-time result (no physical board)
 

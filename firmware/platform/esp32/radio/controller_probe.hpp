@@ -17,6 +17,12 @@ struct ControllerProbeStatus {
   uint32_t command_failures = 0;
   uint32_t advertising_reports = 0;
   uint32_t wifi_management_frames = 0;
+  // Subset of wifi_management_frames that are specifically 802.11 beacons
+  // (frame control type=0/subtype=8), not probe/assoc/deauth/etc. Exists
+  // to check the channel-hop dwell (see ChannelHopTask) against real
+  // beacon sightings, since the dwell is sized from the 802.11 beacon
+  // period, not from generic management-frame traffic.
+  uint32_t beacon_frames = 0;
   uint32_t malformed_events = 0;
   uint32_t dropped_events = 0;
 

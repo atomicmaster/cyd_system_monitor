@@ -28,15 +28,29 @@ constexpr uint8_t kWifiMonitorChannel = 1;
 
 // F08 Work item 2: a fixed, non-overlapping 3-channel probe set (1/6/11 --
 // the standard non-overlapping 2.4 GHz WiFi trio, not ADR 0026's eventual
-// per-region Channel Plan, which does not exist yet) and a 1 s dwell,
-// matching the product's one-second Host snapshot cadence so a revisit
-// period is easy to reason about in the same units. This measures whether
-// explicit channel switching is affordable and whether the ESP32's single
-// radio visibly interrupts BLE reception while WiFi switches -- it is not
-// a scheduling policy.
+// per-region Channel Plan, which does not exist yet). This measures
+// whether explicit channel switching is affordable and whether the
+// ESP32's single radio visibly interrupts BLE reception while WiFi
+// switches -- it is not a scheduling policy.
 constexpr uint8_t kChannelPlan[] = {1, 6, 11};
 constexpr size_t kChannelPlanSize = sizeof(kChannelPlan) / sizeof(kChannelPlan[0]);
-constexpr uint32_t kChannelDwellMs = 1000;
+
+// Dwell is sized against beacon timing, not an arbitrary round number: the
+// 802.11 default beacon period is 100 TU = 102,400 us
+// (dot11BeaconPeriod), and the overwhelming majority of consumer APs use
+// exactly that default. A dwell shorter than one beacon period can miss
+// every beacon from an AP on that channel depending on phase alignment
+// alone, independent of RF conditions -- that would be a probe artifact,
+// not a real coverage gap. 300 ms is roughly three beacon periods, giving
+// margin for: (a) this task's own vTaskDelay() being quantized to
+// CONFIG_FREERTOS_HZ's 10 ms tick, so the actual dwell can run a tick or
+// two short of the nominal value; (b) APs that configure a longer-than-
+// default beacon period (up to a few hundred TU is seen in the wild); and
+// (c) needing more than a single beacon sighting to be confident a miss
+// means "no AP heard," not "unlucky phase." See the beacon-frame counter
+// below, which exists specifically to check this margin against reality
+// rather than assume it.
+constexpr uint32_t kChannelDwellMs = 300;
 
 constexpr size_t kHciPacketBytes = 260;
 // Four complete H4 events are enough to separate the VHCI callback from the
@@ -141,9 +155,31 @@ void EventTask(void*) {
   }
 }
 
-void OnWifiPacket(void*, wifi_promiscuous_pkt_type_t type) {
-  if (type == WIFI_PKT_MGMT) {
-    ++g_status.wifi_management_frames;
+// Distinguishes beacons from the rest of WIFI_PKT_MGMT (probe req/resp,
+// (dis)association, deauth, ...) by reading the 802.11 frame control
+// field's type/subtype directly out of the first payload byte -- beacon
+// is type=0 (management), subtype=8. This exists so the channel-hop
+// dwell (kChannelDwellMs) can be checked against real beacon sightings
+// instead of assumed correct from the 802.11 default alone.
+bool IsBeaconFrame(const wifi_promiscuous_pkt_t& packet) {
+  if (packet.rx_ctrl.sig_len < 1) {
+    return false;
+  }
+  constexpr uint8_t kManagementFrameType = 0;
+  constexpr uint8_t kBeaconSubtype = 8;
+  const uint8_t frame_control_byte0 = packet.payload[0];
+  const uint8_t frame_type = (frame_control_byte0 >> 2) & 0x3;
+  const uint8_t frame_subtype = (frame_control_byte0 >> 4) & 0xF;
+  return frame_type == kManagementFrameType && frame_subtype == kBeaconSubtype;
+}
+
+void OnWifiPacket(void* buf, wifi_promiscuous_pkt_type_t type) {
+  if (type != WIFI_PKT_MGMT) {
+    return;
+  }
+  ++g_status.wifi_management_frames;
+  if (IsBeaconFrame(*static_cast<const wifi_promiscuous_pkt_t*>(buf))) {
+    ++g_status.beacon_frames;
   }
 }
 
@@ -172,8 +208,17 @@ void StartWifi() {
 // Bluetooth"), not just whether the switch call itself is cheap.
 void ChannelHopTask(void*) {
   size_t index = 0;
+  uint32_t beacon_frames_at_dwell_start = g_status.beacon_frames;
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(kChannelDwellMs));
+
+    // Attribute this dwell's beacon sightings to the channel that was just
+    // active, before switching away from it -- this is the number
+    // kChannelDwellMs's beacon-period margin is meant to keep above zero
+    // whenever an AP is actually present on that channel.
+    const uint8_t dwelled_channel = g_status.current_channel;
+    const uint32_t beacons_this_dwell = g_status.beacon_frames - beacon_frames_at_dwell_start;
+
     const uint8_t next_channel = kChannelPlan[index];
     index = (index + 1) % kChannelPlanSize;
 
@@ -190,10 +235,12 @@ void ChannelHopTask(void*) {
     g_status.last_switch_duration_us = duration_us;
     g_status.max_switch_duration_us = std::max(g_status.max_switch_duration_us, duration_us);
     g_status.total_switch_duration_us += duration_us;
+    beacon_frames_at_dwell_start = g_status.beacon_frames;
     ESP_LOGI(kTag,
-             "channel switch: channel=%u duration_us=%lu advertising_reports=%lu "
-             "wifi_management_frames=%lu",
-             next_channel, static_cast<unsigned long>(duration_us),
+             "channel switch: dwelled_channel=%u beacons_this_dwell=%lu next_channel=%u "
+             "duration_us=%lu advertising_reports=%lu wifi_management_frames=%lu",
+             dwelled_channel, static_cast<unsigned long>(beacons_this_dwell), next_channel,
+             static_cast<unsigned long>(duration_us),
              static_cast<unsigned long>(g_status.advertising_reports),
              static_cast<unsigned long>(g_status.wifi_management_frames));
   }
