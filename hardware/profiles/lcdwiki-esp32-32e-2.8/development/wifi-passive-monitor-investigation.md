@@ -198,3 +198,17 @@ Applying `sdkconfig.large_app_probe.defaults` selected ESP-IDF's documented
 partition check with 389,136 B (26%) free. It is therefore eligible for a
 physical runtime probe; this does not establish that its static DRAM margin
 or passive reception quality is sufficient.
+
+## First physical probe
+
+On 2026-09-17, the combined probe at commit `6344ddc` was flashed to the
+E32R28T on `/dev/cu.usbserial-140`. Boot confirmed `wifi:mode : null` and
+sniffer enablement. Settled `DEV:HCI_STATUS` samples rose from 136 to 197
+Wi-Fi management frames in twelve seconds, alongside BLE advertising reports
+rising from 1,033 to 1,479; at about 96 seconds uptime they were 450 and
+3,754 respectively. `dropped_events` and `malformed_events` stayed zero.
+
+The result establishes live receive callbacks for both radio paths, not frame
+capture completeness or radio coexistence quality. A future scheduled-window
+experiment must measure channel dwell/revisit, receiver-available time, and
+loss against a controlled transmitter before accepting F08 coverage.

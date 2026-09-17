@@ -111,6 +111,27 @@ controller-only-BLE image completed successfully: its 1,143,792 B binary has
 reversible probe overlay, not a production partition decision. It establishes
 that the image is now eligible for a physical radio/runtime experiment.
 
+### First live controller-only radio result
+
+On 2026-09-17, commit `6344ddc` was flashed to the known E32R28T on
+`/dev/cu.usbserial-140` with the 32 KiB LVGL, passive-Wi-Fi,
+controller-only-BLE, and large-single-app probe overlays. The boot log
+confirmed the 2 MiB flash and the 1.5 MiB factory partition. It reached the
+diagnostic screen, mounted MicroSD, initialized Wi-Fi in null/sniffer mode,
+and enabled the BLE controller.
+
+Settled UART samples at roughly 27 s and 39 s uptime showed BLE advertising
+reports increasing 1,033 -> 1,479 and Wi-Fi management frames 136 -> 197.
+At roughly 96 s, the counters were 3,754 and 450. `command_failures`,
+`malformed_events`, and `dropped_events` remained zero. The stable resource
+readings were 114,416 B free heap (98,124 B minimum), 10,348 B LVGL-pool
+peak with 21,068 B available from a 30,788 B usable pool, and 12,560/1,340 B
+low-water stack headroom for `main`/`dev_console`.
+
+This establishes that the image boots and receives both frame classes without
+an observed early queue failure. It is not a packet-loss, coexistence-window,
+channel-revisit, continuous-load, or active-touch UI acceptance result.
+
 ## Accounting rules already fixed
 
 The portable feasibility assessment tests enforce the two claims that later
