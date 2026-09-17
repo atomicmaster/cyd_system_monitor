@@ -210,6 +210,30 @@ void RunChannelStatus() {
            static_cast<unsigned long>(status.beacon_frames));
 }
 
+// F08 Work item 2: on-demand summary of the BLE-side scan toggle probe
+// (BleScanToggleTask in controller_probe.cpp) -- the BLE counterpart to
+// RunChannelStatus above. BLE has no per-channel switch, so this reports
+// scan disable/enable round-trip timing and the cumulative count of
+// advertising reports seen while the scan was deliberately off (expected
+// to stay at zero).
+void RunBleToggleStatus() {
+  const auto status = firmware::platform::esp32::radio::ReadControllerProbeStatus();
+  const uint64_t average_us =
+      status.ble_scan_toggle_count > 0
+          ? status.total_scan_toggle_duration_us / (2ULL * status.ble_scan_toggle_count)
+          : 0;
+  ESP_LOGI(kTag,
+           "DEV:BLE_TOGGLE_STATUS: toggle_count=%lu last_disable_duration_us=%lu "
+           "last_enable_duration_us=%lu max_toggle_duration_us=%lu "
+           "average_toggle_duration_us=%llu advertising_reports_while_disabled=%lu",
+           static_cast<unsigned long>(status.ble_scan_toggle_count),
+           static_cast<unsigned long>(status.last_scan_disable_duration_us),
+           static_cast<unsigned long>(status.last_scan_enable_duration_us),
+           static_cast<unsigned long>(status.max_scan_toggle_duration_us),
+           static_cast<unsigned long long>(average_us),
+           static_cast<unsigned long>(status.advertising_reports_while_disabled));
+}
+
 struct Command {
   const char* line;
   void (*run)();
@@ -228,6 +252,7 @@ constexpr Command kCommands[] = {
     {"DEV:CAPACITY_STATUS", RunCapacityStatus},
     {"DEV:HCI_STATUS", RunControllerProbeStatus},
     {"DEV:CHANNEL_STATUS", RunChannelStatus},
+    {"DEV:BLE_TOGGLE_STATUS", RunBleToggleStatus},
     {"DEV:CPU_STATUS", RunCpuStatus},
     {"DEV:NVS_WRITE_TEST", RunNvsWriteTest},
 };

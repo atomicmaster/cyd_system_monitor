@@ -632,12 +632,76 @@ signature the earlier 3-channel runs relied on to distinguish real silence
 from a too-short dwell holds here too).
 
 This does not establish behavior under simultaneous UI/touch/flash load
-(the earlier touch session above ran without channel hopping enabled), a
-non-US regional channel set (12-13, or 12-14 with Japan's channel 14), or
-the BLE-scan-window side of switching (this probe never stops or restarts
-BLE scanning -- only WiFi's channel changes). A real Observation Window
-scheduler, when designed, needs its own measurement pass under those
-conditions rather than inheriting this result.
+(the earlier touch session above ran without channel hopping enabled) or a
+non-US regional channel set (12-13, or 12-14 with Japan's channel 14). The
+BLE-scan-window side of switching, left open above, is covered next.
+
+## BLE-side switching: scan disable/enable round trip
+
+BLE has no per-channel select command comparable to `esp_wifi_set_channel()`
+-- the controller itself cycles the three primary advertising channels
+(37/38/39) on its own while a scan is running. The switching-gap question
+on the BLE side is therefore different: the cost of stopping and
+restarting the scan itself, which an explicit BLE Observation Window (ADR
+0003) would need to pay every time it hands airtime to WiFi.
+
+`controller_probe.cpp` gained a `BleScanToggleTask` that cycles LE Set Scan
+Enable off then on every 2 s (an arbitrary window -- unlike 802.11's fixed
+default beacon period, there is no equivalent standard default BLE
+advertising interval to align to; peripherals commonly use anywhere from
+~20 ms to several seconds), timing each command's real round trip. Timing
+uses a new `SendCommandAndWaitForCompletion` helper that waits for the
+actual HCI Command Complete event via a semaphore signaled from the event
+parser, rather than `WaitAndSend`'s existing blind 30 ms guess (used
+elsewhere for the one-time boot sequence, where a fixed guess was
+acceptable because nothing there was being measured). `DEV:BLE_TOGGLE_STATUS`
+reports the cumulative toggle count and last/max/average round-trip
+duration, alongside a running total of advertising reports seen while the
+scan was deliberately disabled -- expected to stay at zero.
+
+Run unattended over 70 s and 17 toggle cycles, concurrently with the
+11-channel WiFi hop from the section above (335 WiFi channel switches and
+124 beacon frames observed over the same window, both consistent with
+that section's per-switch/per-channel figures, confirming the two probes
+don't interfere with each other):
+
+| Metric | Value |
+| --- | ---: |
+| Toggle cycles | 17 |
+| Scan disable duration | 466-1128 μs |
+| Scan enable duration | 1417-5416 μs |
+| Average round trip (disable+enable) | 1364 μs |
+| Advertising reports seen while disabled | 0 (all 17 cycles) |
+
+Disabling the scan is cheap and consistent, under 1.2 ms every time.
+Enabling it is markedly more expensive and asymmetric: the first two
+enables in the run took 5416 and 5330 μs, then settled to roughly
+1400-2000 μs for the remaining fifteen. This shape (expensive first,
+cheaper once warmed up) suggests some one-time or periodically-refreshed
+controller-side setup cost on scan start (comparable in spirit to a
+frequency synthesizer settling time or an internal state reset), not a
+constant per-call cost -- but that is inference from the shape of the
+data, not confirmed against the controller's internals, which are closed.
+
+`DEV:HCI_STATUS` showed zero `command_failures`, `malformed_events`, or
+`dropped_events` across the run, and -- the more important number --
+**zero advertising reports were counted while the scan was deliberately
+disabled, in every one of the 17 cycles**. This is direct evidence that
+LE Set Scan Enable's "disable" actually stops reception immediately from
+the host's perspective, rather than leaving in-flight reports to trickle
+in after the command completes. An explicit BLE Observation Window that
+hands the BLE scan window to WiFi can trust that a disable is a real,
+clean stop.
+
+This establishes the BLE-side switching cost (sub-2 ms disable, up to
+~5.4 ms enable in the worst case observed) and that toggling doesn't
+silently leak reception during the "off" state. It does not establish this
+under simultaneous UI/touch/flash load, at a shorter or longer toggle
+window than 2 s, for active (rather than passive) scanning, or with a real
+BLE Observation Window scheduler that alternates BLE and WiFi exclusively
+rather than running both continuously as this probe still does (BLE
+toggling on/off was tested independently of, not instead of, the
+continuous WiFi channel hop above).
 
 ## F08a UI capacity slice: build-time result (no physical board)
 

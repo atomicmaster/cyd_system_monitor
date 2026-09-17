@@ -36,6 +36,24 @@ struct ControllerProbeStatus {
   uint32_t last_switch_duration_us = 0;
   uint32_t max_switch_duration_us = 0;
   uint64_t total_switch_duration_us = 0;
+
+  // F08 Work item 2: the BLE-side analog of the WiFi channel-hop probe
+  // above (see BleScanToggleTask in controller_probe.cpp). BLE has no
+  // per-channel select command comparable to esp_wifi_set_channel() --
+  // the controller itself cycles the three primary advertising channels
+  // (37/38/39) while a scan is enabled -- so the switching-gap question
+  // on this side is the cost of stopping and restarting the scan itself,
+  // as an explicit BLE Observation Window would need to (ADR 0003).
+  uint32_t ble_scan_toggle_count = 0;
+  uint32_t last_scan_disable_duration_us = 0;
+  uint32_t last_scan_enable_duration_us = 0;
+  uint32_t max_scan_toggle_duration_us = 0;
+  uint64_t total_scan_toggle_duration_us = 0;
+  // Advertising reports counted while the scan was deliberately disabled.
+  // Expected to stay at zero -- any nonzero value means either a stray
+  // report the controller queued before actually stopping, or a real
+  // parser/ordering bug, and is worth flagging either way.
+  uint32_t advertising_reports_while_disabled = 0;
 };
 
 ControllerProbeStatus ReadControllerProbeStatus();

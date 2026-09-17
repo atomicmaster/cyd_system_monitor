@@ -17,6 +17,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 namespace firmware::platform::esp32::radio {
@@ -52,6 +53,23 @@ constexpr size_t kChannelPlanSize = sizeof(kChannelPlan) / sizeof(kChannelPlan[0
 // rather than assume a bigger number is automatically safer.
 constexpr uint32_t kChannelDwellMs = 205;
 
+// F08 Work item 2: BLE's counterpart to the WiFi channel-hop probe. BLE
+// has no per-channel select command comparable to esp_wifi_set_channel()
+// -- the controller itself cycles the three primary advertising channels
+// (37/38/39) on its own while a scan is running -- so the switching-gap
+// question on this side is the round-trip cost of stopping and
+// restarting the scan itself, which an explicit BLE Observation Window
+// (ADR 0003) would need to pay every time it hands airtime to WiFi. The
+// 2 s on/off window is arbitrary (unlike 802.11's fixed default beacon
+// period, there is no equivalent standard default BLE advertising
+// interval to align to -- peripherals commonly use anywhere from ~20 ms
+// to several seconds), chosen only to be long enough to tell "reports
+// stopped because we disabled scanning" apart from "reports stopped
+// because no peripheral happened to be advertising right then."
+constexpr uint32_t kBleScanToggleWindowMs = 2000;
+constexpr uint16_t kLeSetScanEnableOpcode = 0x200c;  // OGF 0x08 (LE Controller), OCF 0x0c.
+constexpr uint32_t kCommandCompletionTimeoutMs = 500;
+
 constexpr size_t kHciPacketBytes = 260;
 // Four complete H4 events are enough to separate the VHCI callback from the
 // parser while keeping this feasibility probe's static reservation explicit.
@@ -67,6 +85,18 @@ StaticQueue_t g_event_queue_storage;
 std::array<uint8_t, kHciEventQueueDepth * sizeof(HciPacket)> g_event_queue_bytes{};
 QueueHandle_t g_event_queue = nullptr;
 ControllerProbeStatus g_status;
+
+// Signaled by ParseEvent when a Command Complete event for
+// g_awaited_opcode arrives, so SendCommandAndWaitForCompletion can time
+// the real round trip instead of guessing a fixed delay like WaitAndSend
+// does for the fire-and-forget boot sequence in StartBle().
+SemaphoreHandle_t g_command_complete_sem = nullptr;
+volatile uint16_t g_awaited_opcode = 0;
+// Set for the duration of BleScanToggleTask's deliberate "scan off"
+// window, so ParseEvent can attribute any LE Advertising Report that
+// still arrives during that window to advertising_reports_while_disabled
+// instead of silently folding it into the ordinary count.
+volatile bool g_ble_scan_disabled = false;
 
 bool Send(const uint8_t* bytes, uint16_t length) {
   if (!esp_vhci_host_check_send_available()) {
@@ -84,6 +114,28 @@ void WaitAndSend(const uint8_t* bytes, uint16_t length) {
   // The next command is only issued after the controller has had a chance to
   // return Command Complete/Status through the same bounded queue.
   vTaskDelay(pdMS_TO_TICKS(30));
+}
+
+// Times the full round trip of a command that reports completion via HCI
+// Command Complete (event code 0x0e), rather than WaitAndSend's blind
+// 30 ms guess -- BleScanToggleTask's whole point is measuring how long
+// the controller actually takes to stop/start scanning, not assuming a
+// number is enough headroom. Returns false (duration still populated with
+// however long was waited) if no Command Complete for `opcode` arrives
+// within kCommandCompletionTimeoutMs.
+bool SendCommandAndWaitForCompletion(const uint8_t* bytes, uint16_t length, uint16_t opcode,
+                                     uint32_t* out_duration_us) {
+  g_awaited_opcode = opcode;
+  xSemaphoreTake(g_command_complete_sem, 0);  // drain any stale signal from a prior command
+  const int64_t start_us = esp_timer_get_time();
+  while (!Send(bytes, length)) {
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  const bool completed =
+      xSemaphoreTake(g_command_complete_sem, pdMS_TO_TICKS(kCommandCompletionTimeoutMs)) == pdTRUE;
+  *out_duration_us = static_cast<uint32_t>(esp_timer_get_time() - start_us);
+  g_awaited_opcode = 0;
+  return completed;
 }
 
 int OnHciPacket(uint8_t* bytes, uint16_t length) {
@@ -118,10 +170,20 @@ void ParseEvent(const HciPacket& packet) {
     ++g_status.malformed_events;
     return;
   }
-  if (event_code == 0x0e && packet.length >= 7 && packet.bytes[6] != 0) {
-    ++g_status.command_failures;
-    ESP_LOGW(kTag, "HCI command failed: opcode=0x%02x%02x status=0x%02x", packet.bytes[5],
-             packet.bytes[4], packet.bytes[6]);
+  if (event_code == 0x0e && packet.length >= 7) {
+    const auto opcode =
+        static_cast<uint16_t>(packet.bytes[4]) | (static_cast<uint16_t>(packet.bytes[5]) << 8);
+    const uint8_t status = packet.bytes[6];
+    if (status != 0) {
+      ++g_status.command_failures;
+      ESP_LOGW(kTag, "HCI command failed: opcode=0x%04x status=0x%02x", opcode, status);
+    }
+    // Signal SendCommandAndWaitForCompletion regardless of status: a
+    // failed command still completed, and the caller's timeout should not
+    // fire just because the controller rejected it.
+    if (g_command_complete_sem != nullptr && opcode == g_awaited_opcode) {
+      xSemaphoreGive(g_command_complete_sem);
+    }
     return;
   }
   // LE Meta Event / LE Advertising Report. Do not retain payloads: each
@@ -141,6 +203,9 @@ void ParseEvent(const HciPacket& packet) {
         return;
       }
       ++g_status.advertising_reports;
+      if (g_ble_scan_disabled) {
+        ++g_status.advertising_reports_while_disabled;
+      }
       offset += 10U + data_length;
     }
   }
@@ -246,6 +311,55 @@ void ChannelHopTask(void*) {
   }
 }
 
+// BLE's counterpart to ChannelHopTask. Cycles LE Set Scan Enable off then
+// on every kBleScanToggleWindowMs, timing each command's real round trip
+// via SendCommandAndWaitForCompletion, and logging whether any
+// advertising reports still arrived during the deliberate "scan off"
+// window -- a nonzero count there would mean either an in-flight report
+// the controller had already queued before actually stopping, or a real
+// ordering bug, either way worth flagging rather than silently folding
+// into the ordinary report count.
+void BleScanToggleTask(void*) {
+  constexpr uint8_t kScanDisable[] = {0x01, 0x0c, 0x20, 0x02, 0x00, 0x00};
+  constexpr uint8_t kScanEnable[] = {0x01, 0x0c, 0x20, 0x02, 0x01, 0x00};
+
+  for (;;) {
+    vTaskDelay(pdMS_TO_TICKS(kBleScanToggleWindowMs));
+
+    uint32_t disable_duration_us = 0;
+    const bool disable_completed = SendCommandAndWaitForCompletion(
+        kScanDisable, sizeof(kScanDisable), kLeSetScanEnableOpcode, &disable_duration_us);
+    g_ble_scan_disabled = true;
+    const uint32_t reports_at_disable = g_status.advertising_reports;
+
+    vTaskDelay(pdMS_TO_TICKS(kBleScanToggleWindowMs));
+    const uint32_t reports_during_disabled_window =
+        g_status.advertising_reports - reports_at_disable;
+
+    uint32_t enable_duration_us = 0;
+    const bool enable_completed = SendCommandAndWaitForCompletion(
+        kScanEnable, sizeof(kScanEnable), kLeSetScanEnableOpcode, &enable_duration_us);
+    g_ble_scan_disabled = false;
+
+    ++g_status.ble_scan_toggle_count;
+    g_status.last_scan_disable_duration_us = disable_duration_us;
+    g_status.last_scan_enable_duration_us = enable_duration_us;
+    g_status.max_scan_toggle_duration_us =
+        std::max({g_status.max_scan_toggle_duration_us, disable_duration_us, enable_duration_us});
+    g_status.total_scan_toggle_duration_us += disable_duration_us + enable_duration_us;
+
+    ESP_LOGI(kTag,
+             "ble scan toggle: disable_completed=%d disable_duration_us=%lu "
+             "reports_during_disabled_window=%lu enable_completed=%d enable_duration_us=%lu "
+             "advertising_reports_while_disabled_total=%lu advertising_reports=%lu",
+             disable_completed, static_cast<unsigned long>(disable_duration_us),
+             static_cast<unsigned long>(reports_during_disabled_window), enable_completed,
+             static_cast<unsigned long>(enable_duration_us),
+             static_cast<unsigned long>(g_status.advertising_reports_while_disabled),
+             static_cast<unsigned long>(g_status.advertising_reports));
+  }
+}
+
 void StartBle() {
   ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
   esp_bt_controller_config_t config = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
@@ -254,6 +368,8 @@ void StartBle() {
   g_event_queue = xQueueCreateStatic(kHciEventQueueDepth, sizeof(HciPacket),
                                      g_event_queue_bytes.data(), &g_event_queue_storage);
   ESP_ERROR_CHECK(g_event_queue == nullptr ? ESP_ERR_NO_MEM : ESP_OK);
+  g_command_complete_sem = xSemaphoreCreateBinary();
+  ESP_ERROR_CHECK(g_command_complete_sem == nullptr ? ESP_ERR_NO_MEM : ESP_OK);
   ESP_ERROR_CHECK(esp_vhci_host_register_callback(&kVhciCallbacks));
   xTaskCreatePinnedToCore(EventTask, "hci_parser", 2048, nullptr, 5, nullptr, 1);
 
@@ -287,6 +403,10 @@ void StartControllerOnlyProbe() {
   // the interference this probe wants to observe, not something to
   // engineer away by isolating it on core 0 with the UI.
   xTaskCreatePinnedToCore(ChannelHopTask, "channel_hop", 2048, nullptr, 4, nullptr, 1);
+  // Same core/priority as ChannelHopTask for the same reason: contending
+  // with the other radio tasks for core 1 is exactly the interference
+  // this probe wants to observe.
+  xTaskCreatePinnedToCore(BleScanToggleTask, "ble_scan_toggle", 2048, nullptr, 4, nullptr, 1);
   g_status.enabled = true;
   ESP_LOGI(kTag, "controller-only passive BLE scan and Wi-Fi monitor enabled");
 }
