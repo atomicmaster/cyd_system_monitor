@@ -309,9 +309,11 @@ controller-only VHCI path and the full NimBLE host link with headroom. The
 capacity precondition is met, so what remains is measurement, not a
 capacity decision.
 
-Still to record on the board, under combined radio and UI load: one-second
-serial traffic, channel revisit timing, and packet loss. Touch behavior
-under combined radio load is now recorded below. Compare the current
+Still to record on the board: one-second serial traffic and packet loss.
+Touch behavior under combined radio load and WiFi channel-hop switching
+gaps/revisit timing are now recorded below, though the channel-hop result
+has not yet been combined with the touch/UI load session, or run under a
+wider channel plan or shorter dwell. Compare the current
 software-touch/SPI2-display/SPI3-MicroSD arrangement with an alternative
 under that same load. A provisional partition/write/endurance budget
 beyond the NVS write-rate evidence below is also still absent;
@@ -430,6 +432,56 @@ no observed loss, no crash, and CPU/RAM headroom well inside budget. It
 does not measure display flush time or a frame-accurate render latency --
 only the detection-to-dispatch and detection-to-click intervals available
 from existing log timestamps.
+
+## WiFi channel-hop switching gaps and revisit timing
+
+On 2026-09-17, `controller_probe.cpp` gained a bounded `ChannelHopTask`
+that cycles a fixed 3-channel probe set (1, 6, 11 -- the standard
+non-overlapping 2.4 GHz trio, not ADR 0026's eventual per-region Channel
+Plan, which does not exist yet) on a 1 s dwell, timing each
+`esp_wifi_set_channel()` call and logging it alongside the running BLE/WiFi
+counters. `DEV:CHANNEL_STATUS` reports the cumulative switch count and
+last/max/average switch duration. This measures whether explicit WiFi
+channel switching is affordable and whether it visibly interrupts BLE
+reception on this single-radio target (ADR 0003) -- it is not a scheduling
+policy, and it does not yet interleave with an explicit BLE Observation
+Window on the same clock, since no such scheduler exists yet.
+
+Run unattended (no operator needed) on the same controller-only-BLE plus
+passive-Wi-Fi build, over 45 s and 38 channel switches:
+
+| Metric | Value |
+| --- | ---: |
+| Channel switches | 38 |
+| Min / max switch duration | 557 / 709 μs |
+| Average switch duration | 582 μs |
+| Revisit period (3 channels x 1 s dwell) | 3.0 s |
+
+`DEV:HCI_STATUS` showed `command_failures`, `malformed_events`, and
+`dropped_events` all remaining zero throughout. More importantly, the
+per-switch trace logged `advertising_reports` at every switch instant, and
+the increment between consecutive switches never dropped near zero: over
+the 38 switches the per-dwell-window increments ranged from 18 to 27 BLE
+advertising reports, with no window showing a stall correlated with the
+WiFi channel change. `wifi_management_frames` also climbed on every
+channel (unevenly -- channel 1 accumulated more than 6 or 11 in this
+office RF environment, which reflects real ambient channel occupancy, not
+a probe artifact). `DEV:CPU_STATUS` during the run showed the `wifi` task
+at under 0.1% of core 1 and the new `channel_hop` task's own overhead not
+separately visible above that noise floor.
+
+This establishes that, at a 1 s dwell, WiFi channel switching on this
+board is cheap (under 1 ms per switch) and does not visibly interrupt
+concurrent passive BLE scanning -- ESP-IDF's coexistence layer appears to
+absorb this specific interaction without a dedicated application-level
+Observation Window scheduler. It does not establish this at shorter
+dwells, under simultaneous UI/touch/flash load (the earlier touch session
+above did not have channel hopping enabled), for a full regional channel
+plan wider than 3 channels, or for the BLE-scan-window side of switching
+(this probe never stops or restarts BLE scanning -- only WiFi channel
+changes). A real Observation Window scheduler, when designed, needs its
+own measurement pass under those conditions rather than inheriting this
+result.
 
 ## F08a UI capacity slice: build-time result (no physical board)
 

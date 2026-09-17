@@ -188,6 +188,27 @@ void RunControllerProbeStatus() {
            static_cast<unsigned long>(status.dropped_events));
 }
 
+// F08 Work item 2: on-demand summary of the WiFi channel-hop probe
+// (ChannelHopTask in controller_probe.cpp) -- switch count and
+// last/max/average switch duration, alongside the current channel. The
+// per-switch trace (channel, duration, and running BLE/WiFi counters at
+// that instant) is logged directly by the hop task itself as it happens;
+// this command is only the cumulative summary, not a replacement for that
+// trace.
+void RunChannelStatus() {
+  const auto status = firmware::platform::esp32::radio::ReadControllerProbeStatus();
+  const uint64_t average_us = status.channel_switch_count > 0
+                                  ? status.total_switch_duration_us / status.channel_switch_count
+                                  : 0;
+  ESP_LOGI(kTag,
+           "DEV:CHANNEL_STATUS: current_channel=%u switch_count=%lu last_switch_duration_us=%lu "
+           "max_switch_duration_us=%lu average_switch_duration_us=%llu",
+           status.current_channel, static_cast<unsigned long>(status.channel_switch_count),
+           static_cast<unsigned long>(status.last_switch_duration_us),
+           static_cast<unsigned long>(status.max_switch_duration_us),
+           static_cast<unsigned long long>(average_us));
+}
+
 struct Command {
   const char* line;
   void (*run)();
@@ -205,6 +226,7 @@ constexpr Command kCommands[] = {
     {"DEV:PERIPHERAL_STATUS", RunPeripheralStatus},
     {"DEV:CAPACITY_STATUS", RunCapacityStatus},
     {"DEV:HCI_STATUS", RunControllerProbeStatus},
+    {"DEV:CHANNEL_STATUS", RunChannelStatus},
     {"DEV:CPU_STATUS", RunCpuStatus},
     {"DEV:NVS_WRITE_TEST", RunNvsWriteTest},
 };

@@ -13,6 +13,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -24,6 +25,19 @@ namespace {
 
 constexpr const char* kTag = "fw.radio_probe";
 constexpr uint8_t kWifiMonitorChannel = 1;
+
+// F08 Work item 2: a fixed, non-overlapping 3-channel probe set (1/6/11 --
+// the standard non-overlapping 2.4 GHz WiFi trio, not ADR 0026's eventual
+// per-region Channel Plan, which does not exist yet) and a 1 s dwell,
+// matching the product's one-second Host snapshot cadence so a revisit
+// period is easy to reason about in the same units. This measures whether
+// explicit channel switching is affordable and whether the ESP32's single
+// radio visibly interrupts BLE reception while WiFi switches -- it is not
+// a scheduling policy.
+constexpr uint8_t kChannelPlan[] = {1, 6, 11};
+constexpr size_t kChannelPlanSize = sizeof(kChannelPlan) / sizeof(kChannelPlan[0]);
+constexpr uint32_t kChannelDwellMs = 1000;
+
 constexpr size_t kHciPacketBytes = 260;
 // Four complete H4 events are enough to separate the VHCI callback from the
 // parser while keeping this feasibility probe's static reservation explicit.
@@ -147,6 +161,42 @@ void StartWifi() {
   ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(OnWifiPacket));
   ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
   ESP_ERROR_CHECK(esp_wifi_set_channel(kWifiMonitorChannel, WIFI_SECOND_CHAN_NONE));
+  g_status.current_channel = kWifiMonitorChannel;
+}
+
+// Cycles kChannelPlan on a fixed kChannelDwellMs dwell, timing each
+// esp_wifi_set_channel() call and logging the running BLE/WiFi counters
+// alongside it -- an operator diffing consecutive log lines can see
+// directly whether a WiFi channel switch visibly stalls BLE advertising
+// reception (ADR 0003's "single RF module time-shares WiFi and
+// Bluetooth"), not just whether the switch call itself is cheap.
+void ChannelHopTask(void*) {
+  size_t index = 0;
+  for (;;) {
+    vTaskDelay(pdMS_TO_TICKS(kChannelDwellMs));
+    const uint8_t next_channel = kChannelPlan[index];
+    index = (index + 1) % kChannelPlanSize;
+
+    const int64_t start_us = esp_timer_get_time();
+    const esp_err_t err = esp_wifi_set_channel(next_channel, WIFI_SECOND_CHAN_NONE);
+    const auto duration_us = static_cast<uint32_t>(esp_timer_get_time() - start_us);
+    if (err != ESP_OK) {
+      ESP_LOGW(kTag, "channel switch failed: channel=%u err=0x%x", next_channel, err);
+      continue;
+    }
+
+    g_status.current_channel = next_channel;
+    ++g_status.channel_switch_count;
+    g_status.last_switch_duration_us = duration_us;
+    g_status.max_switch_duration_us = std::max(g_status.max_switch_duration_us, duration_us);
+    g_status.total_switch_duration_us += duration_us;
+    ESP_LOGI(kTag,
+             "channel switch: channel=%u duration_us=%lu advertising_reports=%lu "
+             "wifi_management_frames=%lu",
+             next_channel, static_cast<unsigned long>(duration_us),
+             static_cast<unsigned long>(g_status.advertising_reports),
+             static_cast<unsigned long>(g_status.wifi_management_frames));
+  }
 }
 
 void StartBle() {
@@ -185,6 +235,11 @@ void StartControllerOnlyProbe() {
   }
   StartWifi();
   StartBle();
+  // Pinned to core 1 alongside the wifi and hci_parser tasks: a channel
+  // switch and BLE event parsing contending for the same core is exactly
+  // the interference this probe wants to observe, not something to
+  // engineer away by isolating it on core 0 with the UI.
+  xTaskCreatePinnedToCore(ChannelHopTask, "channel_hop", 2048, nullptr, 4, nullptr, 1);
   g_status.enabled = true;
   ESP_LOGI(kTag, "controller-only passive BLE scan and Wi-Fi monitor enabled");
 }
