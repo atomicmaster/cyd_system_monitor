@@ -2,11 +2,18 @@
 
 # M1a combined hardware feasibility record
 
-**Status: blocked — do not advance to M2.**
+**Status: the capacity blocker is resolved; M1a's remaining physical
+measurements are still outstanding. Do not advance to M2 yet.**
 
 This record exists to make the M1a capacity result explicit rather than
 claiming that scheduled WiFi and BLE observation fit before the physical run.
-It is not physical-board evidence.
+
+Sections below are in the order they were recorded. Everything from
+"Build-time capacity result" through "First live controller-only radio
+result" describes a memory shortage that **did not exist**: see
+[Capacity blocker resolved](#capacity-blocker-resolved-two-measurement-errors)
+for the two measurement errors those sections rest on, and treat their
+conclusions as superseded.
 
 ## Build-time capacity result
 
@@ -132,6 +139,152 @@ This establishes that the image boots and receives both frame classes without
 an observed early queue failure. It is not a packet-loss, coexistence-window,
 channel-revisit, continuous-load, or active-touch UI acceptance result.
 
+## Capacity blocker resolved: two measurement errors
+
+On 2026-09-17 the M1a capacity blocker was traced to two errors in how the
+probes above measured the board, not to a genuine shortage of memory. After
+correcting both, the full UI configuration links and runs alongside Wi-Fi
+and BLE with substantial headroom, at the original 64 KiB LVGL pool. No
+UI/runtime footprint reduction, no lower-level BLE receiver, and no
+higher-memory profile is required.
+
+### Error 1: static DRAM segment mistaken for total DRAM
+
+On ESP32 the linker can place static `.data`/`.bss` into only one DRAM
+segment. The runtime heap additionally spans DRAM regions the linker cannot
+place static data into at all: this board's boot log reports usable heap
+across `3FFAFF10`, `3FFB6388`, `3FFB9A20`, `3FFC8F58`, `3FFE0440`, and
+`3FFE4350`, of which only part is linkable.
+
+Two of this firmware's buffers were declared as static arrays and so
+competed for that one linkable segment:
+
+| Static allocation | Size |
+| --- | ---: |
+| LVGL allocation pool (`LV_MEM_SIZE`, `lv_conf.h`) | 65,536 bytes |
+| LVGL 40-row partial draw buffer (`display.cpp`) | 25,600 bytes |
+| Total | 91,136 bytes |
+
+Together these consumed roughly three quarters of the linkable segment.
+Every "DRAM overflowed by N bytes" result above is that segment filling up
+while the heap still had well over 100 KB free. The 32 KiB-LVGL-pool
+experiment appeared to work for exactly this reason, and was read at the
+time as evidence that the UI needed to be smaller. It is not: halving the
+pool simply moved 32 KiB out of the contended segment.
+
+The fix moves both buffers to the runtime heap, where they were always
+affordable, and leaves their sizes unchanged:
+
+- `firmware/ui/lv_conf.h` sets `LV_MEM_ADR 0` with `LV_MEM_POOL_ALLOC
+  malloc`, so LVGL obtains its 64 KiB pool from the C heap at `lv_init()`.
+  `lv_mem_monitor()` still reports pool peak/available, so
+  `DEV:CAPACITY_STATUS` is unaffected.
+- `firmware/platform/esp32/display/display.cpp` obtains the draw buffer via
+  `heap_caps_malloc(..., MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL)`, preserving
+  the DMA-capable internal-RAM requirement, and fails the display init
+  explicitly if the allocation does not succeed.
+
+Total RAM consumption is unchanged. Only placement changed, which is why
+free heap in the live run below is correspondingly lower than the
+pre-radio F08a readings.
+
+### Error 2: 2 MiB flash assumed on a 4 MiB part
+
+The probes above inherited ESP-IDF's default `CONFIG_ESPTOOLPY_FLASHSIZE`
+of 2 MB and its 1 MiB single-app partition, and read the resulting
+partition-size failure as a hardware limit. The board carries a 4 MB part:
+`profile.toml` declares `flash_mb = 4`, `esptool.py flash_id` reports
+"Detected flash size: 4MB", and the boot log of the live run below reports
+`SPI Flash Size : 4MB`. The "Large single-app partition result" section's
+1.5 MiB layout was therefore a workaround for a constraint that does not
+exist.
+
+`firmware/sdkconfig.defaults` now selects the 4 MB part and the project's
+own `firmware/partitions.csv` (ADR 0010: one application slot, persistent
+state in dedicated internal-flash partitions), giving a 2 MiB `factory`
+app partition and a 1.94 MiB `state` partition.
+
+### Corrected build-time results
+
+All three built at the unchanged 64 KiB LVGL pool with ESP-IDF v5.3.2 and
+the `lcdwiki-esp32-32e-2.8` profile. "Remaining" is linkable static space
+reported by `idf.py size`; the DRAM total differs between rows because the
+radio configurations reserve controller and Wi-Fi memory.
+
+| Configuration | Static DRAM remaining | IRAM remaining | Image |
+| --- | ---: | ---: | ---: |
+| No radio (ordinary image) | 167,076 B (92.4%) | 67,866 B (51.8%) | 612,816 B |
+| Controller-only BLE + passive Wi-Fi | 78,508 B (63.0%) | 22,666 B (17.3%) | 1,143,792 B |
+| Full NimBLE host + Wi-Fi | 77,304 B (62.1%) | 23,690 B (18.1%) | 1,192,772 B |
+
+Both radio images fit the 2 MiB `factory` partition with 45% and 43% free
+respectively. The previously recorded DRAM overflows of 13,296 B (NimBLE),
+22,576 B (Bluedroid), 13,008 B (controller-only), and 12,632 B
+(controller-only with passive Wi-Fi) are all gone.
+
+The full NimBLE row is the significant one: **the M1a product requirement
+for passive BLE observation no longer needs the low-level controller-only
+VHCI path.** Reproduce it by building `sdkconfig.defaults` together with
+[`m1a-capacity-probe-sdkconfig.defaults`](m1a-capacity-probe-sdkconfig.defaults)
+and [`m1a-capacity-probe.patch`](m1a-capacity-probe.patch)'s force-link of
+`esp_wifi_init()` and `nimble_port_init()`, plus
+`CONFIG_ESP_WIFI_IRAM_OPT=n` and `CONFIG_ESP_WIFI_RX_IRAM_OPT=n`. Without
+those two Wi-Fi IRAM options the NimBLE image overflows IRAM by 1,008 bytes
+and nothing else; DRAM fits either way. Which BLE host M1a finally adopts
+is now a design choice, not a capacity forced move, and that choice is not
+made here.
+
+### Live board result
+
+Commit `6aa298f` plus the working-tree fixes above was flashed to the known
+E32R28T on `/dev/cu.usbserial-140` in the controller-only-BLE plus
+passive-Wi-Fi configuration, built as:
+
+```sh
+source "$HOME/esp/esp-idf/export.sh"
+cd firmware
+idf.py -B build-radio-heap -D SDKCONFIG=build-radio-heap/sdkconfig \
+  -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.controller_only_probe.defaults;sdkconfig.passive_wifi_probe.defaults' \
+  build
+idf.py -B build-radio-heap -p /dev/cu.usbserial-140 flash
+```
+
+The boot log confirmed `SPI Flash Size : 4MB` and loaded the project
+partition table (`factory` 0x200000 at 0x10000, `state` 0x1f0000 at
+0x210000). The board reached the diagnostic screen, mounted MicroSD,
+brought up Wi-Fi in null/sniffer mode, and enabled the BLE controller.
+
+Resource readings were identical at 12 s, 42 s, 92 s, and 112 s of uptime:
+
+| Reading | Value |
+| --- | ---: |
+| LVGL pool total | 63,424 bytes |
+| LVGL pool peak used | 10,348 bytes |
+| LVGL pool available | 53,704 bytes |
+| Free heap | 81,516 bytes |
+| Minimum free heap | 65,232 bytes |
+| `main` stack low-water mark | 12,796 bytes |
+
+The heap-allocated 64 KiB pool therefore behaves exactly as the static one
+did, and the heap-allocated draw buffer renders correctly. Free heap is
+flat across the run, so neither allocation leaks.
+
+Radio counters over the same window:
+
+| Uptime | BLE advertising reports | Wi-Fi management frames |
+| ---: | ---: | ---: |
+| 14 s | 436 | 96 |
+| 44 s | 1,511 | 277 |
+| 110 s | 3,896 | 713 |
+
+`command_failures`, `malformed_events`, and `dropped_events` stayed at zero
+throughout. MicroSD remained mounted and battery read 2,115-2,125 mV.
+
+This is a boot, link, and sustained-reception result at 65,232 bytes of
+minimum free heap. It is still **not** a packet-loss, coexistence-window,
+channel-revisit, continuous-load, NVS-write, or active-touch-under-radio
+acceptance result. Those remain required below.
+
 ## Accounting rules already fixed
 
 The portable feasibility assessment tests enforce the two claims that later
@@ -151,13 +304,18 @@ promise that 32/128/512 fit the final partition.
 
 ## Required next physical evidence
 
-After selecting a buildable radio approach, reserve the board and record the
-flashed commit, port, exact config, measurement method, radio load, display
-and touch behavior, NVS write rate, one-second serial traffic, minimum free
-RAM, firmware image size, channel revisit timing, and packet loss. Compare
-the current software-touch/SPI2-display/SPI3-MicroSD arrangement with an
-alternative under that same load. This document remains blocked until those
-measurements and a provisional partition/write/endurance budget are present.
+A buildable radio approach now exists, and more than one: both the
+controller-only VHCI path and the full NimBLE host link with headroom. The
+capacity precondition is met, so what remains is measurement, not a
+capacity decision.
+
+Still to record on the board, under combined radio and UI load: display and
+touch behavior, NVS write rate, one-second serial traffic, channel revisit
+timing, and packet loss. Compare the current software-touch/SPI2-display/
+SPI3-MicroSD arrangement with an alternative under that same load. A
+provisional partition/write/endurance budget is also still absent;
+`firmware/partitions.csv` states its own sizes are a provisional M1a budget
+rather than an endurance budget. M1a does not close until those are present.
 
 ## F08a UI capacity slice: build-time result (no physical board)
 

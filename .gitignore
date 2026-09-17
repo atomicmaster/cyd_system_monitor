@@ -5,6 +5,9 @@
 # Build outputs
 build/
 firmware/build/
+# Reversible capacity-probe build trees (idf.py -B build-<name>), e.g. the
+# M1a radio/NimBLE experiments. Reproducible from the recorded overlays.
+firmware/build-*/
 simulator/build/
 target/
 host/target/

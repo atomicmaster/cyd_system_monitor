@@ -4,6 +4,7 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
+#include "esp_heap_caps.h"
 #include "esp_lcd_ili9341.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
@@ -158,10 +159,18 @@ lv_display_t* InitDisplay() {
   lv_display_t* lv_disp = lv_display_create(firmware::domain::profile::kLogicalWidth,
                                             firmware::domain::profile::kLogicalHeight);
   lv_display_set_flush_cb(lv_disp, FlushCallback);
-  static uint8_t
-      draw_buf[firmware::domain::profile::kLogicalWidth * 40 * 2];  // 40-row partial buffer
-  lv_display_set_buffers(lv_disp, draw_buf, nullptr, sizeof(draw_buf),
-                         LV_DISPLAY_RENDER_MODE_PARTIAL);
+  // 40-row partial buffer, taken from the DMA-capable internal heap rather
+  // than declared static: the ESP32 linker can only place static data in
+  // one DRAM segment, and this 25.6 KB buffer plus the LVGL pool were what
+  // pushed the M1a radio builds over that segment while the heap still had
+  // >100 KB free.
+  constexpr size_t kDrawBufSize = firmware::domain::profile::kLogicalWidth * 40 * 2;
+  void* draw_buf = heap_caps_malloc(kDrawBufSize, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+  if (draw_buf == nullptr) {
+    ESP_LOGE(kTag, "draw buffer allocation failed (%u bytes)", static_cast<unsigned>(kDrawBufSize));
+    return nullptr;
+  }
+  lv_display_set_buffers(lv_disp, draw_buf, nullptr, kDrawBufSize, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
   esp_lcd_panel_io_callbacks_t io_cbs = {};
   io_cbs.on_color_trans_done = OnColorTransDone;

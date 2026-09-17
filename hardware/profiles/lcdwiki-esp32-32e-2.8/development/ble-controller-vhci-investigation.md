@@ -5,6 +5,16 @@
 **Status: rejected for the current E32R28T UI/Wi-Fi baseline — a reproducible
 controller-only build still overflows internal DRAM and IRAM.**
 
+> **Superseded (2026-09-17).** The DRAM overflows that motivated this
+> investigation were caused by two static buffers competing for the ESP32's
+> single linkable DRAM segment, not by a shortage of memory. With the LVGL
+> pool and display draw buffer moved to the runtime heap, the full NimBLE
+> host links alongside Wi-Fi and the complete UI with roughly 77 KB of static
+> DRAM to spare. The controller-only path below still works and remains a
+> legitimate design option, but it is no longer required, and the capacity
+> conclusion in the status line above is wrong. See
+> [the feasibility record](feasibility.md#capacity-blocker-resolved-two-measurement-errors).
+
 This note investigates the narrow alternative to the failed Wi-Fi + NimBLE
 probe: keep Espressif's BLE controller, but replace the NimBLE host with a
 small, application-owned HCI command/event loop. It applies to the original

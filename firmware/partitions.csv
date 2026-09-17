@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# 4 MB flash layout for lcdwiki-esp32-32e-2.8 (ADR 0010, ADR 0014: one
+# application slot, updates over verified USB, persistent state in internal
+# flash). Sizes are a provisional M1a budget, not a final endurance budget.
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  0x200000,
+state,      data, 0x40,    0x210000, 0x1F0000,

@@ -26,8 +26,13 @@
 #define LV_USE_ASSERT_NULL 1
 #define LV_USE_ASSERT_MALLOC 1
 
-/* Memory: a single internal pool is enough for a diagnostic/calibration UI
- * with no dynamic screen churn beyond the guided calibration flow. */
+/* Memory: LVGL's builtin allocator with a single pool, so lv_mem_monitor()
+ * keeps reporting pool peak/available for the capacity probe. The pool is
+ * obtained from the C heap (malloc) at lv_init() rather than declared as a
+ * static array: on ESP32 only one DRAM segment is linkable for static
+ * data, while the runtime heap also spans DRAM that the linker cannot
+ * place .bss into. A 64 KiB static pool consumed ~60% of the linkable
+ * segment and was the actual cause of the M1a radio link overflows. */
 #define LV_USE_STDLIB_MALLOC LV_STDLIB_BUILTIN
 #define LV_USE_STDLIB_STRING LV_STDLIB_BUILTIN
 #define LV_USE_STDLIB_SPRINTF LV_STDLIB_BUILTIN
@@ -35,6 +40,9 @@
 #define FIRMWARE_LV_MEM_SIZE_KIB 64
 #endif
 #define LV_MEM_SIZE (FIRMWARE_LV_MEM_SIZE_KIB * 1024U)
+#define LV_MEM_ADR 0
+#define LV_MEM_POOL_INCLUDE <stdlib.h>
+#define LV_MEM_POOL_ALLOC malloc
 
 #define LV_USE_LABEL 1
 #define LV_USE_BUTTON 1

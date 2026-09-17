@@ -7,6 +7,15 @@ saving.** This note applies only to the original ESP32 and ESP-IDF **v5.3.2**
 used by the `lcdwiki-esp32-32e-2.8` profile. It does not make an operational
 claim about reception completeness.
 
+> **Superseded (2026-09-17).** The 376 B DRAM recovery recorded here was
+> measured against a build whose real constraint was two static buffers
+> competing for the ESP32's single linkable DRAM segment. Once the LVGL pool
+> and display draw buffer moved to the runtime heap, DRAM stopped being the
+> binding limit entirely. The passive-monitor API path and its Wi-Fi IRAM
+> options below are still accurate and still used; only the capacity framing
+> is obsolete. See
+> [the feasibility record](feasibility.md#capacity-blocker-resolved-two-measurement-errors).
+
 ## Passive monitor API path
 
 ESP-IDF's own v5.3.2 simple-sniffer example initializes Wi-Fi, selects

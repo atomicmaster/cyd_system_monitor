@@ -20,3 +20,16 @@ CONFIG_LV_BUILD_EXAMPLES=n
 # stack). DRAM headroom is ample (~76KB free per ./dev build firmware's
 # size report), so this is a generous bump, not a tight fit.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+
+# The lcdwiki-esp32-32e-2.8 board carries a 4 MB flash part (profile.toml
+# flash_mb = 4; verified with `esptool.py flash_id`: "Detected flash size:
+# 4MB"). ESP-IDF's default is 2 MB with a 1 MiB single-app partition, which
+# the M1a capacity probes mistook for a hardware limit. Use the whole part
+# and the project's own partition table (ADR 0010: internal-flash state in
+# dedicated partitions).
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+CONFIG_PARTITION_TABLE_SINGLE_APP=n
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"

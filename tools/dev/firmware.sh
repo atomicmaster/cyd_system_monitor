@@ -14,12 +14,14 @@ doctor() {
 
 _check_format() {
   if command -v clang-format >/dev/null 2>&1; then
-    # Exclude build/ (generated) and managed_components/ (vendored
-    # third-party sources fetched by the ESP-IDF component manager, e.g.
-    # lvgl/lvgl and esp_lcd_ili9341) -- this project doesn't own their
-    # formatting.
+    # Exclude build/ and build-<name>/ (generated; the latter are the
+    # reversible capacity-probe trees built with idf.py -B) and
+    # managed_components/ (vendored third-party sources fetched by the
+    # ESP-IDF component manager, e.g. lvgl/lvgl and esp_lcd_ili9341) --
+    # this project doesn't own their formatting.
     find "$(_firmware_dir)" \( -name '*.hpp' -o -name '*.cpp' \) \
-      -not -path '*/build/*' -not -path '*/managed_components/*' \
+      -not -path '*/build/*' -not -path '*/build-*/*' \
+      -not -path '*/managed_components/*' \
       -print0 | xargs -0 clang-format --dry-run --Werror
   else
     echo "note: clang-format not installed; skipping format check (see ./dev doctor)"
