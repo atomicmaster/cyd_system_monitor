@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# F08 capacity probe only: the target's 2 MiB flash can use ESP-IDF's
+# documented 1.5 MiB single-app layout. This does not enable OTA.
+CONFIG_PARTITION_TABLE_SINGLE_APP=n
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+CONFIG_PARTITION_TABLE_TWO_OTA=n
+CONFIG_PARTITION_TABLE_CUSTOM=n

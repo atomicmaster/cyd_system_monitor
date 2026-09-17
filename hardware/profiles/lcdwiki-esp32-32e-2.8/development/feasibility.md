@@ -102,6 +102,15 @@ partition-layout decision or a separate flash-size reduction is now required
 before runtime radio/heap/capture measurement; a linker-successful ELF alone
 is not sufficient evidence that the combined workload fits.
 
+### Large single-app partition result
+
+The 2 MiB target flash was then rebuilt with ESP-IDF's documented 1.5 MiB
+single-app, no-OTA partition layout. The same 32 KiB-LVGL, passive-Wi-Fi, and
+controller-only-BLE image completed successfully: its 1,143,792 B binary has
+389,136 B (26%) free in the 1,536,000 B app partition. This is still a
+reversible probe overlay, not a production partition decision. It establishes
+that the image is now eligible for a physical radio/runtime experiment.
+
 ## Accounting rules already fixed
 
 The portable feasibility assessment tests enforce the two claims that later

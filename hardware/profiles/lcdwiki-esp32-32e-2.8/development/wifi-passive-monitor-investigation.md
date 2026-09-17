@@ -192,3 +192,9 @@ The binary then exceeded the current 1 MiB factory-app partition by 95,216 B,
 so it was not flashed. The next experiment must establish a suitable
 partition layout (the profile has 2 MiB flash) or reduce image flash before
 on-board radio and UI measurements can begin.
+
+Applying `sdkconfig.large_app_probe.defaults` selected ESP-IDF's documented
+1.5 MiB single-app/no-OTA partition layout. The same image then completed the
+partition check with 389,136 B (26%) free. It is therefore eligible for a
+physical runtime probe; this does not establish that its static DRAM margin
+or passive reception quality is sufficient.
