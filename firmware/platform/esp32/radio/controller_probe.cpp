@@ -36,21 +36,19 @@ constexpr uint8_t kChannelPlan[] = {1, 6, 11};
 constexpr size_t kChannelPlanSize = sizeof(kChannelPlan) / sizeof(kChannelPlan[0]);
 
 // Dwell is sized against beacon timing, not an arbitrary round number: the
-// 802.11 default beacon period is 100 TU = 102,400 us
-// (dot11BeaconPeriod), and the overwhelming majority of consumer APs use
-// exactly that default. A dwell shorter than one beacon period can miss
-// every beacon from an AP on that channel depending on phase alignment
-// alone, independent of RF conditions -- that would be a probe artifact,
-// not a real coverage gap. 300 ms is roughly three beacon periods, giving
-// margin for: (a) this task's own vTaskDelay() being quantized to
-// CONFIG_FREERTOS_HZ's 10 ms tick, so the actual dwell can run a tick or
-// two short of the nominal value; (b) APs that configure a longer-than-
-// default beacon period (up to a few hundred TU is seen in the wild); and
-// (c) needing more than a single beacon sighting to be confident a miss
-// means "no AP heard," not "unlucky phase." See the beacon-frame counter
-// below, which exists specifically to check this margin against reality
-// rather than assume it.
-constexpr uint32_t kChannelDwellMs = 300;
+// 802.11 default beacon period is 100 TU = 102,400 us (dot11BeaconPeriod),
+// and the overwhelming majority of consumer APs use exactly that default.
+// A dwell shorter than one beacon period can miss every beacon from an AP
+// on that channel depending on phase alignment alone, independent of RF
+// conditions -- that would be a probe artifact, not a real coverage gap.
+// Two beacon periods (~205 ms) is the minimum dwell, matching Kismet's own
+// channel-hopping floor for the same reason: one period risks landing
+// exactly on the gap between two beacons if phase is unlucky, while two
+// periods guarantees a beacon falls inside the window regardless of phase.
+// This is deliberately the floor, not a padded-out margin -- see the
+// beacon-frame counter below, which exists to check this against reality
+// rather than assume a bigger number is automatically safer.
+constexpr uint32_t kChannelDwellMs = 205;
 
 constexpr size_t kHciPacketBytes = 260;
 // Four complete H4 events are enough to separate the VHCI callback from the

@@ -538,11 +538,55 @@ margin is doing its job rather than silently starving reception.
 This supersedes the 1 s-dwell numbers above for the product-relevant
 question ("is the dwell long enough to actually observe beacons"), while
 confirming the same conclusion on switching cost and BLE non-interference
-at three times the switch rate. It does not establish behavior at a
-shorter-than-beacon-period dwell (not attempted, since that would be
-expected to fail this exact test), under simultaneous UI/touch/flash load
-(the earlier touch session above ran without channel hopping enabled), for
-a full regional channel plan wider than 3 channels, or for the BLE-scan-
+at three times the switch rate.
+
+### Second revision: Kismet's two-beacon-interval floor (205 ms)
+
+300 ms (roughly three beacon periods) was itself an arbitrary safety
+margin, not a principled floor. Kismet -- widely-deployed prior art for
+exactly this problem -- dwells for two beacon intervals per channel before
+hopping, on the reasoning that one interval risks landing the entire dwell
+window exactly on the gap between two beacons if phase alignment is
+unlucky, while two intervals guarantees at least one beacon falls inside
+the window regardless of phase. `kChannelDwellMs` was revised again, from
+300 to 205 ms (2 x 102,400 us, rounded up to a whole millisecond) --
+matching that floor rather than padding past it. `pdMS_TO_TICKS` rounds
+this up to 210 ms in practice, at `CONFIG_FREERTOS_HZ`'s 10 ms tick.
+
+Run unattended over 46 s and 235 channel switches at the revised 205 ms
+(actual ~210 ms) dwell:
+
+| Metric | Value |
+| --- | ---: |
+| Channel switches | 235 |
+| Min / max switch duration | 546 / 755 μs |
+| Average switch duration | 632 μs |
+| Revisit period (3 channels x ~210 ms dwell) | ~0.63 s |
+| Beacon frames observed (of 87 total management frames) | 54 |
+
+Switch cost is unchanged again, as expected. `DEV:HCI_STATUS` showed zero
+`command_failures`, `malformed_events`, and `dropped_events`.
+
+Channels 1 and 6 again saw zero beacons across all 157 combined dwells.
+Channel 11's 78 dwells showed a repeating pattern, roughly two nonzero
+readings (1 or 2 beacons) followed by two zero readings:
+`2 0 0 2 0 0 2 2 0 0 1 0 0 1 1 0 0 1 0 0 0 2 0 0 1 1 0 0 2 0 0 2 2 0 0 2 0
+0 1 2 0 0 2 0 0 2 2 0 0 2 0 0 1 2 0 0 2 1 0 0 2 0 0 2 2 0 1 2 0 0 2 2 0 0
+2 0 0 2`. This is a different shape than the 300 ms run's roughly-half-hit
+pattern, and it is genuinely ambiguous between two explanations this probe
+cannot distinguish without a reference AP: continued fading/multipath on
+a weak channel-11 AP, or a real AP whose beacon period is longer than the
+802.11 default (a period near 3 x this dwell's revisit cadence would
+produce exactly this kind of every-third-visit pattern). Either way, the
+floor is not silently failing: zero-beacon dwells on channel 11 are
+interspersed with real captures, not universal, and the two known-quiet
+channels (1, 6) stay at a clean, sustained zero throughout, which remains
+the signature a too-short dwell would not produce.
+
+This is now the current dwell and supersedes both prior sections above.
+It does not establish behavior under simultaneous UI/touch/flash load (the
+earlier touch session above ran without channel hopping enabled), for a
+full regional channel plan wider than 3 channels, or for the BLE-scan-
 window side of switching (this probe never stops or restarts BLE scanning
 -- only WiFi's channel changes). A real Observation Window scheduler, when
 designed, needs its own measurement pass under those conditions rather
