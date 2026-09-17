@@ -26,13 +26,15 @@ namespace {
 constexpr const char* kTag = "fw.radio_probe";
 constexpr uint8_t kWifiMonitorChannel = 1;
 
-// F08 Work item 2: a fixed, non-overlapping 3-channel probe set (1/6/11 --
-// the standard non-overlapping 2.4 GHz WiFi trio, not ADR 0026's eventual
-// per-region Channel Plan, which does not exist yet). This measures
-// whether explicit channel switching is affordable and whether the
+// F08 Work item 2: the full US 2.4 GHz WiFi channel range (1-11, FCC Part
+// 15) -- not ADR 0026's eventual per-region Channel Plan, which does not
+// exist yet, but the first region-sized set this probe covers, after the
+// earlier 3-channel (1/6/11) non-overlapping subset. This measures
+// whether explicit channel switching is affordable, whether revisit
+// timing over a realistic full plan is acceptable, and whether the
 // ESP32's single radio visibly interrupts BLE reception while WiFi
 // switches -- it is not a scheduling policy.
-constexpr uint8_t kChannelPlan[] = {1, 6, 11};
+constexpr uint8_t kChannelPlan[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 constexpr size_t kChannelPlanSize = sizeof(kChannelPlan) / sizeof(kChannelPlan[0]);
 
 // Dwell is sized against beacon timing, not an arbitrary round number: the

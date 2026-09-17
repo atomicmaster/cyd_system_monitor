@@ -583,14 +583,61 @@ interspersed with real captures, not universal, and the two known-quiet
 channels (1, 6) stay at a clean, sustained zero throughout, which remains
 the signature a too-short dwell would not produce.
 
-This is now the current dwell and supersedes both prior sections above.
-It does not establish behavior under simultaneous UI/touch/flash load (the
-earlier touch session above ran without channel hopping enabled), for a
-full regional channel plan wider than 3 channels, or for the BLE-scan-
-window side of switching (this probe never stops or restarts BLE scanning
--- only WiFi's channel changes). A real Observation Window scheduler, when
-designed, needs its own measurement pass under those conditions rather
-than inheriting this result.
+This is now the current dwell.
+
+### Third revision: full US channel plan (1-11)
+
+`kChannelPlan` was widened from the 3-channel (1/6/11) non-overlapping
+subset to the full US FCC Part 15 range, channels 1 through 11 -- the
+first region-sized set this probe covers, not yet ADR 0026's eventual
+per-region Channel Plan (which does not exist yet, and would need its own
+selection for non-US regions). Dwell stays at the Kismet-aligned 205 ms
+(~210 ms actual) from the second revision above.
+
+Run unattended over 120 s and 609 channel switches:
+
+| Metric | Value |
+| --- | ---: |
+| Channel switches | 609 |
+| Min / max switch duration | 522 / 969 μs |
+| Average switch duration | 547 μs |
+| Revisit period (11 channels x ~210 ms dwell) | ~2.3 s |
+| Beacon frames observed (of 122 total management frames) | 86 |
+
+Switch cost stayed in the same sub-millisecond range as the 3-channel
+plans above; the wider plan does not change per-switch cost, only how
+often each individual channel is revisited. `DEV:HCI_STATUS` again showed
+zero `command_failures`, `malformed_events`, and `dropped_events` across
+the full 120 s run.
+
+Per-channel beacon breakdown (55-57 dwells per channel over the run):
+
+| Channel | Dwells with >=1 beacon | Beacons observed |
+| --- | ---: | ---: |
+| 1-8, 10 | 0 / ~55 | 0 |
+| 9 | 27 / 55 | 47 |
+| 11 | 22 / 55 | 39 |
+
+This is the practical payoff of covering the full plan rather than the
+3-channel subset: channel 9, invisible to every earlier measurement in
+this record because it was never in the probed set, turns out to carry
+real beacon activity comparable to channel 11's. The earlier 3-channel
+runs were not wrong about channels 1/6/11, but they could not have told
+this environment's channel-9 AP from channels 2-5/7/8/10 being genuinely
+silent, since none of those were ever dwelled on. Channels 1-8 and 10
+stayed at a clean, sustained zero across every one of their combined ~495
+dwells, consistent with no beacon-emitting AP reaching this board on those
+channels in this environment (not a probe fault -- the same clean-zero
+signature the earlier 3-channel runs relied on to distinguish real silence
+from a too-short dwell holds here too).
+
+This does not establish behavior under simultaneous UI/touch/flash load
+(the earlier touch session above ran without channel hopping enabled), a
+non-US regional channel set (12-13, or 12-14 with Japan's channel 14), or
+the BLE-scan-window side of switching (this probe never stops or restarts
+BLE scanning -- only WiFi's channel changes). A real Observation Window
+scheduler, when designed, needs its own measurement pass under those
+conditions rather than inheriting this result.
 
 ## F08a UI capacity slice: build-time result (no physical board)
 
