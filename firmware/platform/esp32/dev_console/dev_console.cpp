@@ -7,6 +7,7 @@
 // TB02's real product protocol exists.
 #include "dev_console/dev_console.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -15,8 +16,11 @@
 #include "build_identity.hpp"
 #include "button/button.hpp"
 #include "capacity/capacity_probe.hpp"
+#include "capacity/cpu_load.hpp"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "expansion/expansion.hpp"
+#include "firmware/domain/generated/profile.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "led/led.hpp"
@@ -103,6 +107,73 @@ void RunCapacityStatus() {
   }
 }
 
+// F08 Work item 2: CPU load under whatever is running concurrently right
+// now (radio probe, LVGL, touch polling). Blocks the dev-console task for
+// one second while it samples, which is fine here since this is the only
+// thing that task is doing when a command is being typed.
+void RunCpuStatus() {
+  constexpr uint32_t kSampleWindowMs = 1000;
+  const auto samples = firmware::platform::esp32::capacity::SampleCpuLoad(kSampleWindowMs);
+  if (samples.empty()) {
+    ESP_LOGW(kTag, "DEV:CPU_STATUS: no samples (window too short or stats disabled)");
+    return;
+  }
+  ESP_LOGI(kTag, "DEV:CPU_STATUS: window_ms=%lu", static_cast<unsigned long>(kSampleWindowMs));
+  for (const auto& sample : samples) {
+    ESP_LOGI(kTag, "DEV:CPU_STATUS: task=%s core=%d percent_x100=%lu", sample.task_name.c_str(),
+             sample.core_id, static_cast<unsigned long>(sample.percent_x100));
+  }
+}
+
+// F08 Work item 2/4: measures real NVS blob-write latency under whatever
+// load is currently running, for the provisional write/endurance budget.
+// Re-saves the board's own already-valid calibration record, unchanged,
+// kWriteCount times -- never a synthetic record -- so this
+// cannot desynchronize the stored checksum from a real calibration, and
+// never runs at all if no valid record is present rather than writing
+// placeholder coordinates a real calibration flow would then have to
+// silently overwrite.
+void RunNvsWriteTest() {
+  // "landscape" duplicates main.cpp's kOrientation: this dev-only probe
+  // reads the same board record main.cpp writes, and there is no shared
+  // orientation constant to include instead (see main.cpp's own comment
+  // on kOrientation).
+  constexpr const char* kOrientation = "landscape";
+  constexpr int kWriteCount = 20;
+
+  firmware::domain::calibration::CalibrationRecord record;
+  if (!firmware::platform::esp32::nvs::LoadCalibrationRecord(
+          record, firmware::domain::profile::kProfileId, kOrientation,
+          firmware::domain::calibration::kCalibrationSchemaVersion)) {
+    ESP_LOGW(kTag,
+             "DEV:NVS_WRITE_TEST: no valid stored calibration record -- skipping rather than "
+             "writing a synthetic one");
+    return;
+  }
+
+  int64_t min_us = INT64_MAX;
+  int64_t max_us = 0;
+  int64_t total_us = 0;
+  int failures = 0;
+  for (int i = 0; i < kWriteCount; ++i) {
+    const int64_t start_us = esp_timer_get_time();
+    const bool ok = firmware::platform::esp32::nvs::SaveCalibrationRecord(record);
+    const int64_t elapsed_us = esp_timer_get_time() - start_us;
+    if (!ok) {
+      ++failures;
+      continue;
+    }
+    min_us = std::min(min_us, elapsed_us);
+    max_us = std::max(max_us, elapsed_us);
+    total_us += elapsed_us;
+  }
+  const int successes = kWriteCount - failures;
+  ESP_LOGI(kTag, "DEV:NVS_WRITE_TEST: writes=%d failures=%d min_us=%lld max_us=%lld avg_us=%lld",
+           kWriteCount, failures, successes > 0 ? static_cast<long long>(min_us) : 0LL,
+           static_cast<long long>(max_us),
+           successes > 0 ? static_cast<long long>(total_us / successes) : 0LL);
+}
+
 void RunControllerProbeStatus() {
   const auto status = firmware::platform::esp32::radio::ReadControllerProbeStatus();
   ESP_LOGI(kTag,
@@ -134,6 +205,8 @@ constexpr Command kCommands[] = {
     {"DEV:PERIPHERAL_STATUS", RunPeripheralStatus},
     {"DEV:CAPACITY_STATUS", RunCapacityStatus},
     {"DEV:HCI_STATUS", RunControllerProbeStatus},
+    {"DEV:CPU_STATUS", RunCpuStatus},
+    {"DEV:NVS_WRITE_TEST", RunNvsWriteTest},
 };
 
 // UART0 is already owned by ESP-IDF's console/log VFS layer (ESP_LOGI,

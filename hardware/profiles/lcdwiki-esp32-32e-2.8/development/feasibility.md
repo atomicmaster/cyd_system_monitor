@@ -309,13 +309,66 @@ controller-only VHCI path and the full NimBLE host link with headroom. The
 capacity precondition is met, so what remains is measurement, not a
 capacity decision.
 
-Still to record on the board, under combined radio and UI load: display and
-touch behavior, NVS write rate, one-second serial traffic, channel revisit
-timing, and packet loss. Compare the current software-touch/SPI2-display/
-SPI3-MicroSD arrangement with an alternative under that same load. A
-provisional partition/write/endurance budget is also still absent;
-`firmware/partitions.csv` states its own sizes are a provisional M1a budget
-rather than an endurance budget. M1a does not close until those are present.
+Still to record on the board, under combined radio and UI load: touch
+behavior, one-second serial traffic, channel revisit timing, and packet
+loss. Compare the current software-touch/SPI2-display/SPI3-MicroSD
+arrangement with an alternative under that same load. A provisional
+partition/write/endurance budget beyond the NVS write-rate evidence below
+is also still absent; `firmware/partitions.csv` states its own sizes are a
+provisional M1a budget rather than an endurance budget. M1a does not close
+until those are present.
+
+## CPU load and NVS write rate under combined load
+
+On 2026-09-17, `DEV:CPU_STATUS` (FreeRTOS per-task runtime counters,
+`CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS`) and `DEV:NVS_WRITE_TEST` were
+added and exercised live on the same E32R28T, controller-only-BLE plus
+passive-Wi-Fi build as the live radio result above (commit tree includes
+this record's own changes; not yet a separate integrated commit).
+
+**CPU load**, sampled over a 1 s window roughly 20 s after boot, with the
+diagnostic screen idle (no active touch) and radio reception ongoing:
+
+| Task | Core | Share of that core's time |
+| --- | --- | ---: |
+| `main` (LVGL timer handler, touch polling, dev console reads run on it) | 0 | 12.6% |
+| `btController` | 0 | 1.1% |
+| `hci_parser` | 1 | 0.08% |
+| `wifi` | 1 | 0.07% |
+| `esp_timer` | 0 | 0.04% |
+| everything else (dev_console, tiT, sys_evt, ipc0/1, Tmr Svc) | both | <0.3% combined |
+| idle (core 0 / core 1) | 0 / 1 | 85.9% / 99.9% |
+
+Core 1 is almost entirely idle; core 0's ~14% busy is essentially all
+`main`, which is the touch-diagnostic polling/LVGL timer loop rather than
+the radio probe. This is well within the <1% *Host* CPU budget's spirit
+for a Monitor Device with no equivalent stated firmware budget yet, but it
+is an idle-screen reading: it does not include active touch or the
+capacity slice's own screen churn, and `main` folding LVGL, touch, and
+console I/O into one task (no dedicated UI task) means none of these can
+be attributed separately without further instrumentation.
+
+**NVS write rate**, 20 consecutive re-saves of the board's own real,
+already-valid calibration record (unchanged, so the stored checksum stays
+correct) while radio reception continued in the background:
+
+| Metric | Value |
+| --- | ---: |
+| Writes attempted / failed | 20 / 0 |
+| Min write latency | 762 μs |
+| Max write latency | 915 μs |
+| Average write latency | 775 μs |
+
+`DEV:HCI_STATUS` immediately before and after this burst showed
+`command_failures`, `malformed_events`, and `dropped_events` all remaining
+zero (advertising reports and Wi-Fi management frames continued
+incrementing throughout), so 20 back-to-back NVS blob writes did not
+visibly disrupt radio reception on this build. Twenty writes is not an
+endurance test -- NVS wear-leveling and flash sector erase-cycle limits are
+unmeasured here -- but it establishes a real per-write latency figure
+(roughly 0.8 ms) to size a settings/journal write budget against, rather
+than the "provisional... not yet measured" gap the ticket previously left
+open.
 
 ## F08a UI capacity slice: build-time result (no physical board)
 

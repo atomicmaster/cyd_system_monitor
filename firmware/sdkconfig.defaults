@@ -33,3 +33,12 @@ CONFIG_PARTITION_TABLE_SINGLE_APP=n
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# F08 Work item 2 needs measured CPU load under combined radio/UI load, not
+# an estimate. FreeRTOS's own per-task runtime counters are the only source
+# for that on this target; they default off. The esp_timer-clocked variant
+# (the Kconfig default) costs one esp_timer_get_time() read per context
+# switch, which is negligible next to the radio/LVGL work already running.
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
