@@ -703,6 +703,67 @@ rather than running both continuously as this probe still does (BLE
 toggling on/off was tested independently of, not instead of, the
 continuous WiFi channel hop above).
 
+## Non-US channel superset: does passive monitoring reach 12-14?
+
+The full US channel plan above leaves open whether channels 12-14 --
+needed by any future ETSI (1-13) or Japan (1-14) Channel Plan preset under
+ADR 0026 -- are reachable at all with `esp_wifi_set_channel()` under this
+project's current configuration, which sets no explicit
+`esp_wifi_set_country()` and so runs on ESP-IDF's default country/region
+state. **This test, like every other probe in this record, is passive
+receive-only**: the WiFi side stays in `WIFI_MODE_NULL` promiscuous
+monitor mode (no STA/AP, no association, no probe requests, no
+transmission of any kind) and the BLE side stays on passive scan
+(`kPassiveScanParameters`, no active scan requests, no connections). It
+answers only whether the driver call succeeds and keeps switching
+cleanly while listening on 12-14 -- not scheduler behavior, transmit
+legality, regulatory correctness, or channel 14's Japan-only DSSS-rate
+restriction (which is a transmit-rate restriction and does not bound
+passive reception).
+
+`kChannelPlan` was temporarily widened in the working tree (not committed)
+to `{1, ..., 14}`, built as the same controller-only-BLE plus
+passive-Wi-Fi configuration as the live board result above
+(`sdkconfig.defaults` + `sdkconfig.controller_only_probe.defaults` +
+`sdkconfig.passive_wifi_probe.defaults`), flashed to the known E32R28T on
+`/dev/cu.usbserial-140`, and captured unattended over roughly 45 s (200
+channel switches, 14-15 dwells per channel):
+
+| Metric | Value |
+| --- | ---: |
+| Channel switches | 200 |
+| Switches that failed (`channel switch failed` log) | 0 |
+| Min / max switch duration (all channels) | 530 / 2301 μs |
+| Switch duration into channels 12-14 specifically | 535 μs - 1922 μs |
+| Dwells per channel | 14-15 |
+
+Every switch onto 12, 13, and 14 succeeded and cost the same
+sub-millisecond-to-low-millisecond range as switches within 1-11 -- no
+distinct failure mode or cost cliff at the US/non-US boundary. Advertising
+reports and WiFi management-frame counts kept climbing normally throughout
+(reaching 421 and 47 respectively by the end of the run), and the board
+remained fully responsive and recoverable afterward: reflashed back to the
+committed 1-11 plan and reflashed image, it resumed clean operation
+immediately with no distinct handling required.
+
+This establishes that channels 12-14 are reachable at the driver level for
+**passive listening only** (monitor-mode WiFi sniffing and passive BLE
+scanning; no transmission was attempted on any channel), without any
+`esp_wifi_set_country()` call, on this ESP-IDF version and board. It does
+**not** establish RF receive performance on those channels (this board has
+no reference equipment to verify actual receive sensitivity or antenna
+behavior at 12-14 versus 1-11), any transmit behavior or legality
+(untested and out of scope -- the Monitor Device never transmits), whether
+a real EU/Japan Channel Plan preset would need an explicit
+`esp_wifi_set_country()` call for correctness or regulatory conformance
+(IDF's channel-availability table is still driven by the country setting
+even for a receive-only device), or channel 14's Japan-specific
+transmit-rate restriction (DSSS-only, which bounds transmission and has no
+bearing on passive reception). Those remain open for whichever ticket
+implements ADR 0026's actual per-region Channel Plan. The temporary 1-14
+plan was reverted before this record was written; the committed probe
+still runs the US 1-11 plan documented above.
+
 ## F08a UI capacity slice: build-time result (no physical board)
 
 [F08a](../../../../docs/tickets/F08a.md) adds the bounded operational UI
