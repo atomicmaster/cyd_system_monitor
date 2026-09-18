@@ -2,8 +2,18 @@
 
 # M1a combined hardware feasibility record
 
-**Status: the capacity blocker is resolved; M1a's remaining physical
-measurements are still outstanding. Do not advance to M2 yet.**
+**Status: the capacity blocker is resolved, and every physical measurement
+this record's owner (F08) controls is now recorded -- CPU load, NVS and
+raw-partition write/erase rate, touch under combined radio load, WiFi
+channel-hop timing (including a non-US channel superset check), BLE
+scan-toggle timing, one-second serial traffic and packet loss (both idle
+and under combined WiFi/BLE load), and a provisional partition/record/
+endurance budget. One F08 work item remains open on this board (comparing
+the current software-touch/SPI2/SPI3 arrangement against an alternative;
+see [Required next physical evidence](#required-next-physical-evidence)),
+and C01's real message sizes plus M6's actual journal implementation are
+out of this record's scope entirely. Do not advance to M2 until that
+remaining item is resolved or explicitly descoped.**
 
 This record exists to make the M1a capacity result explicit rather than
 claiming that scheduled WiFi and BLE observation fit before the physical run.
@@ -293,6 +303,10 @@ measurements must retain:
 - UART capacity is calculated with 8N1 framing and a one-second,
   1,024-byte representative snapshot needs 10,240 bits/s; at 115,200 baud
   this leaves 104,960 bits/s before protocol overhead is refined by C01.
+  [Superseded by a costed estimate](#one-second-serial-traffic-a-pre-c01-size-estimate-and-live-throughput-probe):
+  ~1,019 bytes for a full snapshot per host-metrics.md's field list, close
+  to this placeholder by coincidence rather than derivation, plus a live
+  measurement (idle and under combined radio load) against that size.
 - Requested Observation Window time is never verified receive time. Only a
   measured receiver-available interval counts; all other requested time is a
   Coverage Gap, with uncertainty retained as a separate measurement field.
@@ -304,22 +318,44 @@ promise that 32/128/512 fit the final partition.
 
 ## Required next physical evidence
 
+*(Kept as a running list; entries below are struck through once their
+evidence is recorded elsewhere in this file rather than deleted, so the
+history of what was open when stays visible.)*
+
 A buildable radio approach now exists, and more than one: both the
 controller-only VHCI path and the full NimBLE host link with headroom. The
 capacity precondition is met, so what remains is measurement, not a
 capacity decision.
 
-Still to record on the board: one-second serial traffic and packet loss.
-Touch behavior under combined radio load and WiFi channel-hop switching
-gaps/revisit timing are now recorded below, though the channel-hop result
-has not yet been combined with the touch/UI load session, or run under a
-wider channel plan or shorter dwell. Compare the current
-software-touch/SPI2-display/SPI3-MicroSD arrangement with an alternative
-under that same load. A provisional partition/write/endurance budget
-beyond the NVS write-rate evidence below is also still absent;
-`firmware/partitions.csv` states its own sizes are a provisional M1a
-budget rather than an endurance budget. M1a does not close
-until those are present.
+- ~~One-second serial traffic and packet loss~~ -- recorded both idle and
+  under combined WiFi/BLE load; see
+  [One-second serial traffic](#one-second-serial-traffic-a-pre-c01-size-estimate-and-live-throughput-probe)
+  and its [combined-load result](#combined-load-result-serial-traffic-alongside-continuous-wifible).
+- ~~Touch behavior under combined radio load~~ -- recorded; see
+  [Touch under combined radio load](#touch-under-combined-radio-load-live-board-result).
+- ~~WiFi channel-hop switching gaps/revisit timing~~ -- recorded for the
+  full US 1-11 plan and, separately, a non-US 1-14 superset; see
+  [WiFi channel-hop switching gaps and revisit timing](#wifi-channel-hop-switching-gaps-and-revisit-timing)
+  and [Non-US channel superset](#non-us-channel-superset-does-passive-monitoring-reach-12-14).
+  Not run at a wider regional plan combined with touch/UI load in the same
+  session, or at a shorter dwell than the Kismet-aligned 205 ms floor --
+  neither is required by F08's acceptance criteria as written.
+- ~~A provisional partition/write/endurance budget~~ -- recorded; see
+  [Partition, record, and endurance budget](#partition-record-and-endurance-budget).
+  `firmware/partitions.csv` still states its own sizes as provisional, not
+  final -- that budget note explains why the current sizing has
+  comfortable, measured headroom rather than asserting it is final.
+- **Still open:** compare the current
+  software-touch/SPI2-display/SPI3-MicroSD arrangement with an alternative
+  under combined load (F08 Work item 3). Every session in this record used
+  that one arrangement and found it worked cleanly under touch, radio, and
+  serial load individually and in combination -- a workable arrangement is
+  established -- but no alternative split has actually been tried against
+  it, so the *comparison* the work item asks for has not happened.
+
+M1a does not close until the still-open item above is resolved or
+explicitly descoped, and until C01/TB02 rechecks this record's estimated
+message sizes against the real protocol once it exists.
 
 ## CPU load and NVS write rate under combined load
 
