@@ -764,6 +764,69 @@ implements ADR 0026's actual per-region Channel Plan. The temporary 1-14
 plan was reverted before this record was written; the committed probe
 still runs the US 1-11 plan documented above.
 
+## One-second serial traffic: a pre-C01 size estimate and live throughput probe
+
+C01 (the real CBOR snapshot contract) has not started, so F08's
+"one-second full-snapshot serial bandwidth" item has no real message
+sizes to test against yet. [`snapshot-size-estimate.md`](snapshot-size-estimate.md)
+works out a representative size ahead of that ticket by costing
+[host-metrics.md](../../../../docs/host-metrics.md)'s full metric list in
+CBOR against [ADR 0011](../../../../docs/adr/0011-use-versioned-cbor-over-usb.md)'s
+envelope: **~1,019 bytes** for a text-encoded snapshot capped at 8
+reported interfaces (the dominant, currently-unbounded cost -- see that
+note for why, and for a binary-encoding alternative that would roughly
+halve it). This supersedes the prior arbitrary 1,024-byte placeholder with
+one that has a documented basis, without pretending to be C01's actual
+wire format.
+
+[`serial_snapshot_probe.py`](serial_snapshot_probe.py) streams
+newline-framed, sequence-numbered filler lines at that size from the host
+side; a new `DEV:SERIAL_RX_TEST` dev-console command
+(`firmware/platform/esp32/dev_console/dev_console.cpp`) counts bytes
+received, detects sequence gaps, and times inter-frame arrival for 60
+frames. Both are throughput/loss instrumentation only -- no CBOR is parsed
+on either side, since there is no schema yet to parse.
+
+The first run at the designed 1 Hz / 1,019-byte cadence tripped the task
+watchdog on `IDLE1` every ~5 s for the whole run: `pdMS_TO_TICKS(5)`
+truncates to 0 ticks at this project's 100 Hz tick rate, so the
+new command's "no data yet" branch never actually yielded the CPU, in a
+task (`dev_console`) that already runs one priority level above idle.
+Raising that delay to a real block fixed the watchdog trip but, at 50 ms,
+introduced silent byte loss instead (`sequence_gaps=5`, spurious
+near-0 ms frame intervals, and leftover stream bytes afterward
+misparsed by the ordinary command parser as garbage lines) --
+at 115200 baud this console's polling VFS UART driver can have several
+hundred bytes waiting by the time a 50 ms-blocked task next polls it, more
+than its buffer holds. A 10 ms (1-tick) delay resolved both: real per-poll
+blocking without missing bytes.
+
+With that fix, on the plain (non-radio) diagnostic build, idle otherwise:
+
+| Requested rate | Measured throughput | Frames | Bytes | Sequence gaps | Watchdog trips |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 Hz (product cadence) | 918 B/s | 60/60 | 61,200/61,200 | 0 | 0 |
+| 5 Hz | 3,274 B/s | 60/60 | 61,200/61,200 | 0 | 0 |
+| 50 Hz (host-paced ceiling) | 7,730 B/s | 60/60 | 61,200/61,200 | 0 | 0 |
+| Unpaced (`--rate-hz 1000`) | 9,342 B/s | 60/60 | 61,200/61,200 | 0 | 0 |
+
+The unpaced run is close to 115200 baud's 8N1 theoretical ceiling
+(~11,520 B/s) and still lost nothing -- the host-side `pyserial` write
+call, not the ESP32 side, is the limiting factor at that point. Against
+the ~1 KB/s the product actually needs once per second, this is roughly
+**9x measured headroom** on the receive side, all zero-loss.
+
+This is a real result on real hardware, but a narrow one: idle-board
+byte throughput and loss through the current dev-console recovery path
+only (`dev_console.cpp` itself says TB02 replaces this with the negotiated
+product command -- a real UART driver with an interrupt-fed ring buffer,
+not this polling VFS console, may have different headroom entirely). It
+does **not** yet cover the combined WiFi/BLE/touch/flash load the rest of
+this record measures separately, real CBOR encode/decode cost on either
+side, or C01's actual wire format once it exists. The watchdog/byte-loss
+bug this run surfaced was in the throwaway test harness added for this
+probe, not in any previously-shipped path.
+
 ## F08a UI capacity slice: build-time result (no physical board)
 
 [F08a](../../../../docs/tickets/F08a.md) adds the bounded operational UI

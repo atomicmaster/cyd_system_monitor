@@ -234,6 +234,118 @@ void RunBleToggleStatus() {
            static_cast<unsigned long>(status.advertising_reports_while_disabled));
 }
 
+// F08: measures raw UART throughput and frame loss against a host-side
+// simulator sending representative-sized Host Metric snapshot frames
+// (see hardware/profiles/lcdwiki-esp32-32e-2.8/development/
+// serial_snapshot_probe.py and snapshot-size-estimate.md), ahead of C01's
+// real protocol. Each frame is a newline-terminated "SEQ:<n>:<filler>"
+// line; this counts total bytes, detects sequence gaps, and times
+// inter-frame arrival -- not a CBOR decoder, since no wire format exists
+// yet. Held in a static buffer, not the stack, because DevConsoleTask's
+// stack is sized for short command handlers, not a snapshot-sized line.
+constexpr size_t kSerialRxTestFrameCount = 60;
+constexpr size_t kSerialRxTestMaxFrameBytes = 4096;
+char g_serial_rx_test_frame[kSerialRxTestMaxFrameBytes];
+
+void RunSerialRxTest() {
+  ESP_LOGI(kTag, "DEV:SERIAL_RX_TEST: waiting for %zu frames (\"SEQ:<n>:<filler>\\n\")",
+           kSerialRxTestFrameCount);
+
+  uint32_t expected_seq = 0;
+  bool have_expected = false;
+  uint32_t sequence_gaps = 0;
+  uint64_t bytes_received = 0;
+  size_t frames_received = 0;
+  size_t frame_len = 0;
+  const int64_t start_us = esp_timer_get_time();
+  int64_t last_frame_us = start_us;
+  int64_t min_interval_us = INT64_MAX;
+  int64_t max_interval_us = 0;
+  int64_t total_interval_us = 0;
+
+  while (frames_received < kSerialRxTestFrameCount) {
+    const int ch = getchar();
+    if (ch == EOF) {
+      // At the default 100 Hz tick rate, pdMS_TO_TICKS(5) truncates to 0
+      // ticks and never actually blocks, which starves IDLE1 and trips the
+      // task watchdog under continuous traffic (observed live: reproduced
+      // the watchdog reset every ~5 s for this task's whole duration). The
+      // smallest real (1-tick, 10 ms) delay is deliberately used instead of
+      // matching DevConsoleTask's 50 ms EOF delay: at 115200 baud this
+      // console UART's polling VFS driver can receive several hundred bytes
+      // in 50 ms, and blocking that long between polls dropped bytes and
+      // corrupted frame boundaries in the first fix attempt (observed:
+      // sequence_gaps, spurious near-0ms frame intervals, and leftover
+      // stream bytes misparsed as console commands afterward).
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+    ++bytes_received;
+    const char byte = static_cast<char>(ch);
+
+    if (byte != '\n' && byte != '\r') {
+      if (frame_len < kSerialRxTestMaxFrameBytes - 1) {
+        g_serial_rx_test_frame[frame_len++] = byte;
+      } else {
+        // Overlong frame: drop it and resync on the next newline, counting
+        // it as a loss rather than growing an unbounded buffer.
+        frame_len = 0;
+        ++sequence_gaps;
+      }
+      continue;
+    }
+    if (frame_len == 0) {
+      continue;  // stray CR/LF between frames
+    }
+
+    const int64_t now_us = esp_timer_get_time();
+    if (frames_received > 0) {
+      const int64_t interval_us = now_us - last_frame_us;
+      min_interval_us = std::min(min_interval_us, interval_us);
+      max_interval_us = std::max(max_interval_us, interval_us);
+      total_interval_us += interval_us;
+    }
+    last_frame_us = now_us;
+
+    // Parse the "SEQ:<digits>:" prefix; anything else can't be checked for
+    // loss but still counts toward bytes/frames received.
+    if (frame_len > 4 && std::strncmp(g_serial_rx_test_frame, "SEQ:", 4) == 0) {
+      size_t i = 4;
+      uint32_t seq = 0;
+      bool any_digit = false;
+      while (i < frame_len && g_serial_rx_test_frame[i] >= '0' &&
+             g_serial_rx_test_frame[i] <= '9') {
+        seq = seq * 10 + static_cast<uint32_t>(g_serial_rx_test_frame[i] - '0');
+        ++i;
+        any_digit = true;
+      }
+      if (any_digit && i < frame_len && g_serial_rx_test_frame[i] == ':') {
+        if (have_expected && seq != expected_seq) {
+          ++sequence_gaps;
+        }
+        expected_seq = seq + 1;
+        have_expected = true;
+      }
+    }
+    ++frames_received;
+    frame_len = 0;
+  }
+
+  const int64_t total_duration_us = esp_timer_get_time() - start_us;
+  const int64_t avg_interval_us =
+      frames_received > 1 ? total_interval_us / static_cast<int64_t>(frames_received - 1) : 0;
+  ESP_LOGI(kTag,
+           "DEV:SERIAL_RX_STATUS: frames_received=%zu bytes_received=%llu sequence_gaps=%lu "
+           "duration_ms=%lld avg_frame_interval_ms=%lld min_frame_interval_ms=%lld "
+           "max_frame_interval_ms=%lld",
+           frames_received, static_cast<unsigned long long>(bytes_received),
+           static_cast<unsigned long>(sequence_gaps),
+           static_cast<long long>(total_duration_us / 1000),
+           static_cast<long long>(avg_interval_us / 1000),
+           static_cast<long long>((min_interval_us == INT64_MAX ? 0 : min_interval_us) / 1000),
+           static_cast<long long>(max_interval_us / 1000));
+}
+
 struct Command {
   const char* line;
   void (*run)();
@@ -255,6 +367,7 @@ constexpr Command kCommands[] = {
     {"DEV:BLE_TOGGLE_STATUS", RunBleToggleStatus},
     {"DEV:CPU_STATUS", RunCpuStatus},
     {"DEV:NVS_WRITE_TEST", RunNvsWriteTest},
+    {"DEV:SERIAL_RX_TEST", RunSerialRxTest},
 };
 
 // UART0 is already owned by ESP-IDF's console/log VFS layer (ESP_LOGI,
