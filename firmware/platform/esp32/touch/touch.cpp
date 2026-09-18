@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// PROVISIONAL bit-banged XPT2046 driver -- see touch.hpp and
-// hardware/profiles/lcdwiki-esp32-32e-2.8/README.md's open
-// three-buses-vs-two-controllers question. F08 validates or replaces this
-// under combined load.
+// Bit-banged XPT2046 driver -- see touch.hpp for why this arrangement was
+// chosen and how F08 confirmed it under combined load. Revisiting it is
+// deferred to before V2's SD-backed WiGLE Survey Artifacts, not required
+// for M1a/M2.
 #include "touch/touch.hpp"
 
 #include "driver/gpio.h"

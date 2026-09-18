@@ -11,12 +11,15 @@ namespace firmware::platform::esp32::microsd {
 
 namespace {
 
-// PROVISIONAL: shares the expansion SPI bus's mosi/sclk/miso (see
-// board_init.cpp), using MicroSD's own CS. This is SPI3 (VSPI), the
-// ESP32's second general-purpose SPI controller, kept separate from the
-// display's SPI2. Touch uses bit-banged software SPI instead of a third
-// hardware controller (touch/touch.hpp), which is the provisional
-// resolution to the board's three-buses-vs-two-controllers constraint.
+// Shares the expansion SPI bus's mosi/sclk/miso (see board_init.cpp),
+// using MicroSD's own CS. This is SPI3 (VSPI), the ESP32's second
+// general-purpose SPI controller, kept separate from the display's SPI2.
+// Touch uses bit-banged software SPI instead of a third hardware
+// controller (touch/touch.hpp) -- F08 confirmed this arrangement under
+// combined load. Giving MicroSD hardware SPI instead of touch was
+// evaluated and deliberately deferred to before V2's SD-backed WiGLE
+// Survey Artifacts, the first feature that actually needs MicroSD write
+// bandwidth; see touch/touch.hpp for the full reasoning.
 constexpr spi_host_device_t kMicrosdSpiHost = SPI3_HOST;
 constexpr const char* kMountPoint = "/sdcard";
 

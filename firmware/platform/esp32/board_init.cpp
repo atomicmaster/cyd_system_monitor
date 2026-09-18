@@ -13,8 +13,17 @@
 //     controller at all, since only two hardware SPI controllers exist
 //     and both are claimed above. See touch/touch.hpp.
 //
-// F08 measures this arrangement under combined load (display + touch +
-// radio + MicroSD together) and may replace any part of it.
+// F08 measured this arrangement under combined load (display + touch +
+// radio + MicroSD together, repeatedly, including a full session with a
+// physical operator actively tapping the screen): it holds with no
+// observed loss or degradation on any bus. An alternative (hardware-SPI
+// touch, bit-banged MicroSD) was evaluated but deliberately not built --
+// MicroSD's own hardware-SPI bandwidth only starts mattering once V2's
+// SD-backed WiGLE Survey Artifacts writes to it; see
+// hardware/profiles/lcdwiki-esp32-32e-2.8/development/feasibility.md's
+// "Required next physical evidence" section for the reasoning and the
+// combined-load evidence this decision rests on. Revisit before building
+// that V2 feature, not before M2.
 #include "board_init.hpp"
 
 #include <string>

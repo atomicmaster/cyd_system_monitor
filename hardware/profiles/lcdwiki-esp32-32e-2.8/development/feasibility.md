@@ -8,12 +8,16 @@ raw-partition write/erase rate, touch under combined radio load, WiFi
 channel-hop timing (including a non-US channel superset check), BLE
 scan-toggle timing, one-second serial traffic and packet loss (both idle
 and under combined WiFi/BLE load), and a provisional partition/record/
-endurance budget. One F08 work item remains open on this board (comparing
-the current software-touch/SPI2/SPI3 arrangement against an alternative;
-see [Required next physical evidence](#required-next-physical-evidence)),
-and C01's real message sizes plus M6's actual journal implementation are
-out of this record's scope entirely. Do not advance to M2 until that
-remaining item is resolved or explicitly descoped.**
+endurance budget. F08's SPI-arrangement comparison work item is resolved
+by an explicit decision, not further board time: keep the current
+software-touch/SPI2-display/SPI3-MicroSD arrangement, and revisit the
+alternative (hardware-SPI touch, bit-banged MicroSD) before V2's
+SD-backed WiGLE Survey Artifacts rather than now -- see
+[Required next physical evidence](#required-next-physical-evidence) for
+the reasoning. C01's real message sizes plus M6's actual journal
+implementation remain out of this record's scope entirely. M1a's
+remaining gate is that C01/TB02 recheck this record's estimated message
+sizes once the real protocol exists.**
 
 This record exists to make the M1a capacity result explicit rather than
 claiming that scheduled WiFi and BLE observation fit before the physical run.
@@ -345,16 +349,38 @@ capacity decision.
   `firmware/partitions.csv` still states its own sizes as provisional, not
   final -- that budget note explains why the current sizing has
   comfortable, measured headroom rather than asserting it is final.
-- **Still open:** compare the current
-  software-touch/SPI2-display/SPI3-MicroSD arrangement with an alternative
-  under combined load (F08 Work item 3). Every session in this record used
-  that one arrangement and found it worked cleanly under touch, radio, and
-  serial load individually and in combination -- a workable arrangement is
-  established -- but no alternative split has actually been tried against
-  it, so the *comparison* the work item asks for has not happened.
+- ~~Compare the current software-touch/SPI2-display/SPI3-MicroSD
+  arrangement with an alternative under combined load~~ (F08 Work item 3)
+  -- **resolved by explicit decision, deferred rather than measured
+  further.** Every session in this record used the current arrangement
+  and found it worked cleanly under touch, radio, and serial load
+  individually and in combination (see
+  [Touch under combined radio load](#touch-under-combined-radio-load-live-board-result)
+  and the [combined-load serial result](#combined-load-result-serial-traffic-alongside-continuous-wifible)
+  in particular): a workable arrangement is established with real
+  headroom, not just an untested default. The realistic alternative --
+  hardware-SPI touch, bit-banged MicroSD -- was identified (the board's
+  three physically separate SPI buses mean ESP32's two general-purpose
+  controllers can only serve two of {display, touch, MicroSD} in
+  hardware; display bit-banged is a clearly worse option given its
+  continuous frame-buffer bandwidth need, leaving touch-vs-MicroSD as the
+  only real choice). Building and benchmarking it was considered and
+  deliberately not done, for three reasons: MicroSD is V2-only scope
+  (SD-backed WiGLE Survey Artifacts; MVP only mounts/detects it, already
+  proven reliable under the same combined-load sessions above); a fair
+  bit-banged-MicroSD benchmark requires writing a raw test sector directly
+  to whatever card is in the board, bypassing the filesystem -- a
+  destructive operation against physical test hardware for a feature nine
+  months from being built; and a correct software SD SPI-mode driver
+  (card init state machine, block addressing, write-busy polling) is
+  substantially larger and more failure-prone to write from scratch than
+  the touch driver it would replace, for a bus that currently has no
+  measured deficiency to fix. This is recorded as a task to revisit before
+  V2's SD-backed WiGLE Survey Artifacts implementation begins, not before
+  M2 -- see [the roadmap](../../../../docs/roadmap.md)'s V2 section and
+  [F08](../../../../docs/tickets/F08.md).
 
-M1a does not close until the still-open item above is resolved or
-explicitly descoped, and until C01/TB02 rechecks this record's estimated
+M1a's remaining gate is that C01/TB02 recheck this record's estimated
 message sizes against the real protocol once it exists.
 
 ## CPU load and NVS write rate under combined load

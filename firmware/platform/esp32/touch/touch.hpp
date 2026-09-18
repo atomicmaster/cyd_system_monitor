@@ -7,14 +7,22 @@ namespace firmware::platform::esp32::touch {
 
 // XPT2046 resistive touch driver.
 //
-// PROVISIONAL: implemented as software/bit-banged GPIO SPI, not a hardware
-// SPI peripheral. Display, touch, and MicroSD are wired to three separate
-// SPI buses on this board, but ESP32 exposes only two general-purpose SPI
+// Implemented as software/bit-banged GPIO SPI, not a hardware SPI
+// peripheral. Display, touch, and MicroSD are wired to three separate SPI
+// buses on this board, but ESP32 exposes only two general-purpose SPI
 // controllers (see hardware/profiles/lcdwiki-esp32-32e-2.8/README.md's
-// "Observation and feasibility limits" section). F06 picks bit-banged
-// touch SPI as the provisional resolution so the display keeps its own
-// hardware SPI2 bus undisturbed; F08 measures and finalizes the real
-// arrangement under combined load.
+// "Observation and feasibility limits" section). F06 picked bit-banged
+// touch SPI so the display keeps its own hardware SPI2 bus undisturbed;
+// F08 then measured this arrangement repeatedly under combined
+// radio/UI/serial load, including a physical operator actively tapping
+// through calibration and the capacity slice, with no observed loss or
+// degradation -- see
+// hardware/profiles/lcdwiki-esp32-32e-2.8/development/feasibility.md's
+// "Required next physical evidence" section. An alternative (hardware-SPI
+// touch, bit-banged MicroSD) was evaluated and deliberately not built:
+// MicroSD's own hardware-SPI bandwidth only starts mattering once V2's
+// SD-backed WiGLE Survey Artifacts writes to it, so that comparison is
+// deferred to before that feature, not required for M1a/M2.
 class Xpt2046Touch {
  public:
   // Configures the touch controller's GPIOs (profile touch.sclk/mosi/miso/

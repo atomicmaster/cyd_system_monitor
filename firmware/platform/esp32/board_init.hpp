@@ -19,7 +19,7 @@ struct BoardHandles {
   // Touch driver, already Init()'d. main.cpp polls ReadRaw() on it to
   // drive first-boot/recalibration (see firmware::ui::calibration) --
   // board_init owns construction/Init() so it stays the single place the
-  // provisional bit-banged SPI arrangement is wired up.
+  // bit-banged SPI arrangement is wired up.
   firmware::platform::esp32::touch::Xpt2046Touch touch;
   bool touch_ready = false;
 };
@@ -28,7 +28,8 @@ struct BoardHandles {
 //   1. nvs_flash_init (required before any NVS access, including
 //      calibration record load).
 //   2. Display (owns the display's dedicated SPI2 bus).
-//   3. Touch (bit-banged software SPI; PROVISIONAL, see touch/touch.hpp).
+//   3. Touch (bit-banged software SPI; F08-confirmed under combined load,
+//      see touch/touch.hpp and board_init.cpp's arrangement comment).
 //   4. MicroSD probe (shares the expansion SPI3 bus with the expansion
 //      header; see the "Provisional bus arrangement" comment in
 //      board_init.cpp, the single documented decision point for that
