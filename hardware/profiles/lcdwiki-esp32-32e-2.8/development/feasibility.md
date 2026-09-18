@@ -827,6 +827,44 @@ side, or C01's actual wire format once it exists. The watchdog/byte-loss
 bug this run surfaced was in the throwaway test harness added for this
 probe, not in any previously-shipped path.
 
+### Combined-load result: serial traffic alongside continuous WiFi/BLE
+
+The idle-only result above left F08's actual headline item -- combined
+radio/serial load, not serial in isolation -- still open. Repeated on the
+same controller-only-BLE plus passive-Wi-Fi build as the channel-hop and
+BLE-toggle results above (`build-radio-heap`, WiFi channel hop and BLE
+scan toggle both running continuously throughout, not paused for this
+test), at the product's actual 1 Hz / 1,019-byte cadence:
+
+| Metric | Value |
+| --- | ---: |
+| Frames received / sent | 60 / 60 |
+| Bytes received / sent | 61,200 / 61,200 |
+| Sequence gaps | 0 |
+| `DEV:HCI_STATUS` command_failures / malformed_events / dropped_events (before -> after) | 0 -> 0 / 0 -> 0 / 0 -> 0 |
+| Watchdog trips | 0 |
+
+Over the run, `advertising_reports` climbed from 47 to 1,782+ and
+`wifi_management_frames` from 2 to 282+, confirming the radio probe kept
+running the whole time rather than being starved by the serial reception
+work (or vice versa) -- both consumed real CPU on the same board
+concurrently with zero measured loss on either side. `DEV:CAPACITY_STATUS`
+afterward showed 67,084 B free heap / 66,488 B minimum free heap, in the
+same range as this build's earlier radio-only readings, and
+`DEV:PERIPHERAL_STATUS` confirmed MicroSD stayed mounted -- no leak, no
+crash, board fully recoverable.
+
+This closes the specific gap the idle-only result left: serial reception
+at the product's required rate does coexist with continuous WiFi
+channel-hopping and BLE scan toggling, measured, not assumed. It does
+**not** add simultaneous active touch to this same run -- that needs a
+human operator physically present, which this automated pass did not
+have. The touch-under-radio-load session above already showed touch and
+radio coexist cleanly, and this session shows radio and serial coexist
+cleanly; the one remaining untested combination is literally all three
+(touch + radio + serial) in the same session, which is a narrower gap
+than what stood open before this result.
+
 ## Partition, record, and endurance budget
 
 [`partition-write-budget.md`](partition-write-budget.md) closes F08's last
