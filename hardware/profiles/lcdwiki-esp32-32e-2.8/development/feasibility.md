@@ -827,6 +827,31 @@ side, or C01's actual wire format once it exists. The watchdog/byte-loss
 bug this run surfaced was in the throwaway test harness added for this
 probe, not in any previously-shipped path.
 
+## Partition, record, and endurance budget
+
+[`partition-write-budget.md`](partition-write-budget.md) closes F08's last
+open item ahead of C01/TB02/M6: a provisional 128-byte Alert / 96-byte
+Transmitter Baseline record design costs the 32/128/512 targets at
+~68 KiB working set (~204 KiB with a conservative 2x reclamation
+headroom), fitting comfortably inside `partitions.csv`'s already-reserved
+1.94 MiB `state` partition (~9.7x headroom). A new `DEV:PARTITION_WRITE_TEST`
+command measured real `esp_partition_erase_range`/`esp_partition_write`
+cost against that partition on the E32R28T: 2,850 μs per 4,096-byte sector
+erase and 701-861 μs per 128-byte record write (zero failures), close to
+the previously-measured NVS blob-write figure above. Those measurements
+ground a bounded endurance estimate (decades of margin under two stated,
+deliberately conservative assumptions) rather than leaving endurance
+purely asserted.
+
+Getting a real measurement here first required fixing a local build
+issue: `firmware/sdkconfig` had gone stale relative to `sdkconfig.defaults`
+and was silently building against ESP-IDF's built-in single-app partition
+table instead of `partitions.csv`, so the `state` partition did not exist
+on the flashed image until `firmware/sdkconfig` was deleted and
+regenerated. See that note for the full account, the record field tables,
+and what remains M6 work (the actual journal, its reclamation algorithm,
+and the on-flash schema).
+
 ## F08a UI capacity slice: build-time result (no physical board)
 
 [F08a](../../../../docs/tickets/F08a.md) adds the bounded operational UI

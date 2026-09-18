@@ -18,6 +18,7 @@
 #include "capacity/capacity_probe.hpp"
 #include "capacity/cpu_load.hpp"
 #include "esp_log.h"
+#include "esp_partition.h"
 #include "esp_timer.h"
 #include "expansion/expansion.hpp"
 #include "firmware/domain/generated/profile.hpp"
@@ -172,6 +173,72 @@ void RunNvsWriteTest() {
            kWriteCount, failures, successes > 0 ? static_cast<long long>(min_us) : 0LL,
            static_cast<long long>(max_us),
            successes > 0 ? static_cast<long long>(total_us / successes) : 0LL);
+}
+
+// F08 Work item 4: raw esp_partition_write()/erase_range() timing against
+// the "state" partition ADR 0017's future Alert/Baseline journal will
+// live in -- distinct from RunNvsWriteTest above, which measures the
+// ESP-IDF NVS library's own blob API against the separate "nvs"
+// partition. Nothing reads "state" yet (the journal itself is M6 work),
+// so this is free to erase and overwrite it; the sector is left erased
+// (0xFF) afterward so no stale test pattern is mistaken for real data by
+// whatever reads this partition first. kPartitionTestRecordBytes matches
+// snapshot-size-estimate.md sibling work's provisional 128-byte Alert
+// record size, not a coincidence -- this grounds that budget's per-write
+// latency assumption in a measurement instead of an estimate.
+void RunPartitionWriteTest() {
+  constexpr size_t kRecordBytes = 128;
+  constexpr int kWriteCount = 20;        // matches RunNvsWriteTest, for comparability
+  constexpr size_t kSectorBytes = 4096;  // ESP32 SPI NOR flash erase-sector size
+  static_assert(kRecordBytes * kWriteCount <= kSectorBytes,
+                "test writes must fit the single erased sector this probe uses");
+
+  const esp_partition_t* partition = esp_partition_find_first(
+      ESP_PARTITION_TYPE_DATA, static_cast<esp_partition_subtype_t>(0x40), "state");
+  if (partition == nullptr) {
+    ESP_LOGW(kTag,
+             "DEV:PARTITION_WRITE_TEST: \"state\" partition not found -- check partitions.csv");
+    return;
+  }
+
+  const int64_t erase_start_us = esp_timer_get_time();
+  const esp_err_t erase_err = esp_partition_erase_range(partition, 0, kSectorBytes);
+  const int64_t erase_duration_us = esp_timer_get_time() - erase_start_us;
+  if (erase_err != ESP_OK) {
+    ESP_LOGW(kTag, "DEV:PARTITION_WRITE_TEST: sector erase failed: 0x%x", erase_err);
+    return;
+  }
+
+  uint8_t record[kRecordBytes];
+  std::memset(record, 0xA5, sizeof(record));
+
+  int64_t min_us = INT64_MAX;
+  int64_t max_us = 0;
+  int64_t total_us = 0;
+  int failures = 0;
+  for (int i = 0; i < kWriteCount; ++i) {
+    const size_t offset = static_cast<size_t>(i) * kRecordBytes;
+    const int64_t start_us = esp_timer_get_time();
+    const esp_err_t write_err = esp_partition_write(partition, offset, record, sizeof(record));
+    const int64_t elapsed_us = esp_timer_get_time() - start_us;
+    if (write_err != ESP_OK) {
+      ++failures;
+      continue;
+    }
+    min_us = std::min(min_us, elapsed_us);
+    max_us = std::max(max_us, elapsed_us);
+    total_us += elapsed_us;
+  }
+  const int successes = kWriteCount - failures;
+
+  ESP_LOGI(kTag,
+           "DEV:PARTITION_WRITE_TEST: sector_erase_us=%lld record_bytes=%zu writes=%d "
+           "failures=%d min_write_us=%lld max_write_us=%lld avg_write_us=%lld",
+           static_cast<long long>(erase_duration_us), kRecordBytes, kWriteCount, failures,
+           successes > 0 ? static_cast<long long>(min_us) : 0LL, static_cast<long long>(max_us),
+           successes > 0 ? static_cast<long long>(total_us / successes) : 0LL);
+
+  esp_partition_erase_range(partition, 0, kSectorBytes);
 }
 
 void RunControllerProbeStatus() {
@@ -367,6 +434,7 @@ constexpr Command kCommands[] = {
     {"DEV:BLE_TOGGLE_STATUS", RunBleToggleStatus},
     {"DEV:CPU_STATUS", RunCpuStatus},
     {"DEV:NVS_WRITE_TEST", RunNvsWriteTest},
+    {"DEV:PARTITION_WRITE_TEST", RunPartitionWriteTest},
     {"DEV:SERIAL_RX_TEST", RunSerialRxTest},
 };
 
