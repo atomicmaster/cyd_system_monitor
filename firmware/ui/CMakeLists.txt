@@ -11,6 +11,8 @@ set(_fu_sources
     "src/calibration/calibration_flow.cpp"
     "src/capacity/capacity_slice.cpp"
     "src/system/cpu/cpu_card.cpp"
+    "src/system/card/metric_card.cpp"
+    "src/system/system_screen.cpp"
     "src/system/link/link_screen.cpp")
 
 if(ESP_PLATFORM)

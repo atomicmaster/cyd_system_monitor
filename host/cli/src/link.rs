@@ -9,7 +9,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use metrics::{Collector, MetricAvailability};
 use platform_macos::cpu::CpuCollector;
-use protocol::{Availability, CommandOperation, CommandResult, CpuSnapshot, Freshness};
+use platform_macos::ram::RamCollector;
+use protocol::{
+    Availability, CommandOperation, CommandResult, CpuSnapshot, Freshness, RamSnapshot,
+};
 use transport::client::{Event, HostClient, Phase, Refusal};
 use transport::serial::SerialPort;
 
@@ -137,6 +140,7 @@ impl Link {
     /// Sends one snapshot per second forever; returns only on a link error.
     pub fn serve(&mut self) -> Result<(), LinkError> {
         let mut cpu_collector = CpuCollector::new();
+        let mut ram_collector = RamCollector::new();
         let epoch = Instant::now();
         let mut next = Instant::now();
         let mut buf = [0u8; 512];
@@ -144,28 +148,34 @@ impl Link {
             let now_ms = epoch.elapsed().as_millis() as u64;
             let sample = cpu_collector.collect(now_ms);
             let snapshot = CpuSnapshot {
-                availability: match sample.availability {
-                    MetricAvailability::Available => Availability::Available,
-                    MetricAvailability::Unsupported => Availability::Unsupported,
-                    MetricAvailability::Absent => Availability::Absent,
-                    MetricAvailability::TemporarilyUnavailable => {
-                        Availability::TemporarilyUnavailable
-                    }
-                    MetricAvailability::Error => Availability::Error,
-                },
+                availability: availability(sample.availability),
                 utilization_per_mille: sample.value.unwrap_or(0),
                 source_age_ms: 0,
                 freshness: Freshness::Fresh,
                 configuration_revision: 0,
             };
+            let ram_sample = ram_collector.collect(now_ms);
+            let ram = RamSnapshot {
+                availability: availability(ram_sample.availability),
+                used_bytes: ram_sample.value.map_or(0, |r| r.used_bytes),
+                total_bytes: ram_sample.value.map_or(0, |r| r.total_bytes),
+                source_age_ms: 0,
+                freshness: Freshness::Fresh,
+            };
             let frame = self
                 .client
-                .snapshot(&snapshot, None, Some(utc_ms()))
+                .snapshot(&snapshot, Some(&ram), Some(utc_ms()))
                 .ok_or(LinkError::Timeout("sending: the link is no longer paired"))?;
             self.port.write_all(&frame)?;
-            match sample.value {
-                Some(v) => println!("cpu {:.1}%", f64::from(v) / 10.0),
-                None => println!("cpu unavailable"),
+            match (sample.value, ram_sample.value) {
+                (Some(v), Some(r)) => println!(
+                    "cpu {:.1}%  ram {:.1} / {:.1} GB",
+                    f64::from(v) / 10.0,
+                    r.used_bytes as f64 / (1u64 << 30) as f64,
+                    r.total_bytes as f64 / (1u64 << 30) as f64
+                ),
+                (Some(v), None) => println!("cpu {:.1}%  ram unavailable", f64::from(v) / 10.0),
+                (None, _) => println!("cpu unavailable"),
             }
             next += SNAPSHOT_PERIOD;
             while Instant::now() < next {
@@ -215,6 +225,16 @@ impl Link {
             }
         }
         Err(LinkError::Timeout("waiting for the command reply"))
+    }
+}
+
+fn availability(a: MetricAvailability) -> Availability {
+    match a {
+        MetricAvailability::Available => Availability::Available,
+        MetricAvailability::Unsupported => Availability::Unsupported,
+        MetricAvailability::Absent => Availability::Absent,
+        MetricAvailability::TemporarilyUnavailable => Availability::TemporarilyUnavailable,
+        MetricAvailability::Error => Availability::Error,
     }
 }
 

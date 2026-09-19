@@ -48,4 +48,9 @@ int RunCpuReplay();
 // C02's `./dev run simulator -- metric-cards`.
 int RunMetricCards();
 
+// Draws the System shell (status bar plus the registered CPU and RAM cards)
+// and asserts label text, dimming, and RAM's missing-data behaviour. Matches
+// TB03's `./dev run simulator -- system-screen`.
+int RunSystemScreen();
+
 }  // namespace simulator::scenarios

@@ -5,3 +5,4 @@
 //! added by their tracer tickets, each behind `metrics::MetricSample`.
 
 pub mod cpu;
+pub mod ram;

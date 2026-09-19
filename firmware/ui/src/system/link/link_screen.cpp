@@ -22,9 +22,9 @@ void LinkScreen::MakeButton(const char* text, lv_align_t align, Target* target) 
 }
 
 LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision)
-    : cpu_screen_(parent), on_decision_(std::move(on_decision)) {
+    : system_(parent), on_decision_(std::move(on_decision)) {
   about_label_ = lv_label_create(parent);
-  lv_obj_set_pos(about_label_, 8, 138);
+  lv_obj_set_pos(about_label_, 8, 136);
   lv_obj_set_width(about_label_, 304);
 
   fault_label_ = lv_label_create(parent);
@@ -45,15 +45,16 @@ LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision)
 }
 
 LinkScreen::~LinkScreen() {
-  // Delete our own objects; the CpuScreen member removes its own tree.
+  // Delete our own objects; the SystemScreen member removes its own tree.
   if (about_label_ != nullptr) lv_obj_delete(about_label_);
   if (fault_label_ != nullptr) lv_obj_delete(fault_label_);
   if (prompt_panel_ != nullptr) lv_obj_delete(prompt_panel_);
 }
 
-void LinkScreen::Update(const firmware::domain::CpuView& cpu,
+void LinkScreen::Update(const firmware::domain::CpuView& status,
+                        std::span<const firmware::domain::MetricCardView> cards,
                         const firmware::domain::LinkView& link) {
-  cpu_screen_.Update(cpu);
+  system_.Update(status, cards);
   lv_label_set_text(about_label_, link.about.c_str());
   lv_label_set_text(fault_label_, link.fault.c_str());
   if (link.prompt_visible) {

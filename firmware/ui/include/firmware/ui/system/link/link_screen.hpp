@@ -4,16 +4,17 @@
 #include <lvgl.h>
 
 #include <functional>
+#include <span>
 
 #include "firmware/domain/cpu_view.hpp"
 #include "firmware/domain/link_view.hpp"
-#include "firmware/ui/system/cpu/cpu_card.hpp"
+#include "firmware/ui/system/system_screen.hpp"
 
 namespace firmware::ui::system {
 
-// The CPU shell plus TB02's minimal pairing prompt and About/diagnostics
-// text. Renders CpuView/LinkView only; the Confirm/Decline buttons report
-// the touch decision to the caller, which owns the link.
+// The System shell (status bar and registered cards) plus TB02's minimal pairing prompt and
+// About/diagnostics text. Renders CpuView/LinkView only; the Confirm/Decline buttons report the
+// touch decision to the caller, which owns the link.
 class LinkScreen {
  public:
   using DecisionCallback = std::function<void(bool accepted)>;
@@ -22,7 +23,10 @@ class LinkScreen {
   LinkScreen(const LinkScreen&) = delete;
   LinkScreen& operator=(const LinkScreen&) = delete;
 
-  void Update(const firmware::domain::CpuView& cpu, const firmware::domain::LinkView& link);
+  void Update(const firmware::domain::CpuView& status,
+              std::span<const firmware::domain::MetricCardView> cards,
+              const firmware::domain::LinkView& link);
+  const SystemScreen& system() const { return system_; }
 
   lv_obj_t* prompt_panel() const { return prompt_panel_; }
   lv_obj_t* about_label() const { return about_label_; }
@@ -34,7 +38,7 @@ class LinkScreen {
     bool accepted = false;
   };
   void MakeButton(const char* text, lv_align_t align, Target* target);
-  CpuScreen cpu_screen_;
+  SystemScreen system_;
   DecisionCallback on_decision_;
   Target confirm_target_;
   Target decline_target_;

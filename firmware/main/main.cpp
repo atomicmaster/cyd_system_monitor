@@ -9,6 +9,7 @@
 // physical hardware.
 #include <cstdlib>
 #include <optional>
+#include <vector>
 
 #include "board_init.hpp"
 #include "capacity/capacity_probe.hpp"
@@ -18,6 +19,7 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "firmware/domain/calibration/calibration.hpp"
+#include "firmware/domain/card_registry.hpp"
 #include "firmware/domain/cpu_replay.hpp"
 #include "firmware/domain/cpu_view.hpp"
 #include "firmware/domain/generated/profile.hpp"
@@ -336,9 +338,12 @@ void PumpLink() {
   const int64_t now_us = esp_timer_get_time();
   if (g_link->screen.has_value() && now_us - g_link->last_draw_us >= 100'000) {
     g_link->last_draw_us = now_us;
-    g_link->screen->Update(
-        firmware::domain::MakeCpuView(g_link->link.state(), g_link->clock.NowMs()),
-        firmware::domain::MakeLinkView(g_link->link, g_link->link.paired()));
+    const auto now_ms = g_link->clock.NowMs();
+    const auto& state = g_link->link.state();
+    std::vector<firmware::domain::MetricCardView> cards;
+    for (const auto& card : firmware::domain::Cards()) cards.push_back(card.make(state, now_ms));
+    g_link->screen->Update(firmware::domain::MakeCpuView(state, now_ms), cards,
+                           firmware::domain::MakeLinkView(g_link->link, g_link->link.paired()));
   }
 }
 
