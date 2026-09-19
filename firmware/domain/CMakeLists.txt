@@ -38,6 +38,8 @@ set(_fd_sources
     "src/diagnostic.cpp"
     "src/feasibility.cpp"
     "src/capacity.cpp"
+    "src/host_state.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../../protocol/core/cpp/protocol.cpp"
     "${FIRMWARE_DOMAIN_CALIBRATION_SOURCES}")
 
 if(ESP_PLATFORM)
@@ -49,6 +51,7 @@ if(ESP_PLATFORM)
   idf_component_register(
     SRCS ${_fd_sources}
     INCLUDE_DIRS "include" "${FIRMWARE_DOMAIN_CALIBRATION_INCLUDE_DIR}" "${_fd_generated_dir}"
+                 "${CMAKE_CURRENT_LIST_DIR}/../../protocol/core/cpp"
   )
 
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -72,6 +75,7 @@ else()
   add_library(firmware_domain STATIC ${_fd_sources})
   add_dependencies(firmware_domain firmware_domain_generated)
   target_include_directories(firmware_domain PUBLIC include
-                              "${FIRMWARE_DOMAIN_CALIBRATION_INCLUDE_DIR}" "${_fd_generated_dir}")
+                              "${FIRMWARE_DOMAIN_CALIBRATION_INCLUDE_DIR}" "${_fd_generated_dir}"
+                              "${CMAKE_CURRENT_LIST_DIR}/../../protocol/core/cpp")
   target_compile_features(firmware_domain PUBLIC cxx_std_20)
 endif()

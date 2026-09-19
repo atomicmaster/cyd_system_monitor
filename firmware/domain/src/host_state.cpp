@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "firmware/domain/host_state.hpp"
+
+namespace firmware::domain {
+void HostStateReducer::ApplySnapshot(const protocol::Decoded& decoded, uint64_t now_ms,
+                                     uint64_t resolved_source_time_ms) {
+  if (!decoded.has_cpu) return;
+  state_.connection = ConnectionState::kLive;
+  state_.cpu.availability = decoded.cpu.availability;
+  state_.cpu.freshness = decoded.cpu.freshness;
+  state_.cpu.value_per_mille = decoded.cpu.utilization_per_mille;
+  state_.cpu.source_time_ms = resolved_source_time_ms;
+  state_.cpu.received_at_ms = now_ms;
+  state_.host_last_seen_ms = now_ms;
+  state_.configuration_revision = decoded.cpu.configuration_revision;
+}
+void HostStateReducer::Advance(uint64_t now_ms) {
+  if (state_.connection == ConnectionState::kIncompatible || state_.host_last_seen_ms == 0) return;
+  const uint64_t age = now_ms - state_.host_last_seen_ms;
+  if (age >= 15000)
+    state_.connection = ConnectionState::kDisconnected;
+  else if (age >= 3000) {
+    state_.connection = ConnectionState::kStale;
+    state_.cpu.freshness = protocol::Freshness::kStale;
+  }
+}
+void HostStateReducer::MarkIncompatible() { state_.connection = ConnectionState::kIncompatible; }
+void HostStateReducer::CorrectTime() { state_.time_available = true; }
+void Acknowledge(AlertEpisode* episode) {
+  if (episode) episode->acknowledged = true;
+}
+void EndObservedQuiet(AlertEpisode* episode, uint64_t order) {
+  if (episode && episode->state == EpisodeState::kActive) {
+    episode->state = EpisodeState::kEnded;
+    episode->last_evidence_order = order;
+  }
+}
+void InterruptForRecovery(AlertEpisode* episode) {
+  if (episode && episode->state == EpisodeState::kActive)
+    episode->state = EpisodeState::kInterrupted;
+}
+}  // namespace firmware::domain
