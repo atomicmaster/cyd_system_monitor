@@ -25,7 +25,7 @@ lv_obj_t* InitLvglHeadless() {
   g_display = lv_display_create(kWidth, kHeight);
   lv_display_set_flush_cb(g_display, FlushCallback);
   lv_display_set_buffers(g_display, g_draw_buf, nullptr, sizeof(g_draw_buf),
-                          LV_DISPLAY_RENDER_MODE_PARTIAL);
+                         LV_DISPLAY_RENDER_MODE_PARTIAL);
   return lv_display_get_screen_active(g_display);
 }
 

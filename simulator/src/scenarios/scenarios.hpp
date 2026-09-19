@@ -26,4 +26,9 @@ int RunPeripherals();
 // F08a's `./dev run simulator -- capacity`.
 int RunCapacity();
 
+// Replays a deterministic negotiated-session transcript through the same C++
+// codec and host-state reducer used by firmware. No wall clock or transport is
+// consulted, making reconnect/time-discontinuity expectations reproducible.
+int RunProtocolReplay();
+
 }  // namespace simulator::scenarios

@@ -56,8 +56,12 @@ int main(int argc, char** argv) {
   if (scenario == "capacity") {
     return simulator::scenarios::RunCapacity();
   }
+  if (scenario == "protocol-replay") {
+    return simulator::scenarios::RunProtocolReplay();
+  }
   std::fprintf(stderr,
                "usage: simulator <scenario>\n"
-               "  scenario: smoke | display-smoke | calibration | peripherals | capacity\n");
+               "  scenario: smoke | display-smoke | calibration | peripherals | capacity | "
+               "protocol-replay\n");
   return 2;
 }

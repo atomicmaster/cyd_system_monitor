@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include <cstring>
 
-#include "firmware/ui/diagnostic/diagnostic_screen.hpp"
-#include "scenarios.hpp"
-
 #include "../expect.hpp"
 #include "../fixtures.hpp"
 #include "../lvgl_env.hpp"
+#include "firmware/ui/diagnostic/diagnostic_screen.hpp"
+#include "scenarios.hpp"
 
 namespace simulator::scenarios {
 
@@ -28,7 +27,8 @@ int RunPeripherals() {
     const char* text = lv_label_get_text(row);
 
     char what[192];
-    std::snprintf(what, sizeof(what), "row %u contains peripheral name '%s'", i, peripheral.name.c_str());
+    std::snprintf(what, sizeof(what), "row %u contains peripheral name '%s'", i,
+                  peripheral.name.c_str());
     result.Expect(std::strstr(text, peripheral.name.c_str()) != nullptr, what);
 
     const char* expect_presence = peripheral.present ? "PRESENT" : "ABSENT";
@@ -36,7 +36,8 @@ int RunPeripherals() {
                   peripheral.name.c_str());
     result.Expect(std::strstr(text, expect_presence) != nullptr, what);
 
-    std::snprintf(what, sizeof(what), "row %u contains detail text for '%s'", i, peripheral.name.c_str());
+    std::snprintf(what, sizeof(what), "row %u contains detail text for '%s'", i,
+                  peripheral.name.c_str());
     result.Expect(std::strstr(text, peripheral.detail.c_str()) != nullptr, what);
   }
 
