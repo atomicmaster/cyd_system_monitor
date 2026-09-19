@@ -170,7 +170,7 @@ Error EncodeControlBody(const Envelope &e, std::vector<uint8_t> *cbor) {
   }
 }
 Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
-                 std::vector<uint8_t> *cbor) {
+                 const RamSnapshot *ram, std::vector<uint8_t> *cbor) {
   cbor->clear();
   const uint8_t envelope_fields =
       6 + e.utc_ms.has_value() + e.utc_uncertainty_ms.has_value();
@@ -187,7 +187,7 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
   UInt(cbor, 0, e.sequence);
   UInt(cbor, 0, 5);
   if (cpu) {
-    Map(cbor, 5);
+    Map(cbor, ram ? 6 : 5);
     UInt(cbor, 0, 0);
     UInt(cbor, 0, static_cast<uint8_t>(cpu->availability));
     UInt(cbor, 0, 1);
@@ -198,6 +198,22 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
     UInt(cbor, 0, static_cast<uint8_t>(cpu->freshness));
     UInt(cbor, 0, 4);
     UInt(cbor, 0, cpu->configuration_revision);
+    if (ram) {
+      if (ram->used_bytes > ram->total_bytes)
+        return Error::kMalformed;
+      UInt(cbor, 0, 5);
+      Map(cbor, 5);
+      UInt(cbor, 0, 0);
+      UInt(cbor, 0, static_cast<uint8_t>(ram->availability));
+      UInt(cbor, 0, 1);
+      UInt(cbor, 0, ram->used_bytes);
+      UInt(cbor, 0, 2);
+      UInt(cbor, 0, ram->total_bytes);
+      UInt(cbor, 0, 3);
+      UInt(cbor, 0, ram->source_age_ms);
+      UInt(cbor, 0, 4);
+      UInt(cbor, 0, static_cast<uint8_t>(ram->freshness));
+    }
   } else {
     const Error error = EncodeControlBody(e, cbor);
     if (error != Error::kNone)
@@ -313,7 +329,23 @@ uint32_t Crc32(std::span<const uint8_t> b) {
 }
 Error Encode(const Envelope &e, std::vector<uint8_t> *out) {
   std::vector<uint8_t> c;
-  Error x = EncodeBody(e, nullptr, &c);
+  Error x = EncodeBody(e, nullptr, nullptr, &c);
+  if (x != Error::kNone)
+    return x;
+  out->clear();
+  uint32_t n = c.size() + 4;
+  out->push_back(n >> 8);
+  out->push_back(n);
+  out->insert(out->end(), c.begin(), c.end());
+  uint32_t z = Crc32(c);
+  for (int s = 24; s >= 0; s -= 8)
+    out->push_back(z >> s);
+  return Error::kNone;
+}
+Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
+                     const RamSnapshot *ram, std::vector<uint8_t> *out) {
+  std::vector<uint8_t> c;
+  Error x = EncodeBody(e, &cpu, ram, &c);
   if (x != Error::kNone)
     return x;
   out->clear();
@@ -328,19 +360,42 @@ Error Encode(const Envelope &e, std::vector<uint8_t> *out) {
 }
 Error EncodeCpuSnapshot(const Envelope &e, const CpuSnapshot &cpu,
                         std::vector<uint8_t> *out) {
-  std::vector<uint8_t> c;
-  Error x = EncodeBody(e, &cpu, &c);
-  if (x != Error::kNone)
-    return x;
-  out->clear();
-  uint32_t n = c.size() + 4;
-  out->push_back(n >> 8);
-  out->push_back(n);
-  out->insert(out->end(), c.begin(), c.end());
-  uint32_t z = Crc32(c);
-  for (int s = 24; s >= 0; s -= 8)
-    out->push_back(z >> s);
-  return Error::kNone;
+  return EncodeSnapshot(e, cpu, nullptr, out);
+}
+// A metric group: five required fields, unknown extra keys skipped, values
+// range-checked. Returns false for anything malformed.
+bool ReadRamGroup(std::span<const uint8_t> c, std::size_t *p, RamSnapshot *ram) {
+  uint64_t count;
+  if (!ReadUInt(c, p, 5, &count) || count > 16)
+    return false;
+  bool seen[5] = {};
+  uint64_t value[5] = {};
+  for (uint64_t i = 0; i < count; ++i) {
+    uint64_t key;
+    if (!ReadUInt(c, p, 0, &key))
+      return false;
+    if (key > 4) {
+      if (!Skip(c, p))
+        return false;
+      continue;
+    }
+    if (seen[key] || !ReadUInt(c, p, 0, &value[key]))
+      return false;
+    seen[key] = true;
+  }
+  for (bool present : seen) {
+    if (!present)
+      return false;
+  }
+  if (value[0] > static_cast<uint8_t>(Availability::kError) || value[1] > value[2] ||
+      value[3] > UINT32_MAX || value[4] > static_cast<uint8_t>(Freshness::kStale))
+    return false;
+  ram->availability = static_cast<Availability>(value[0]);
+  ram->used_bytes = value[1];
+  ram->total_bytes = value[2];
+  ram->source_age_ms = static_cast<uint32_t>(value[3]);
+  ram->freshness = static_cast<Freshness>(value[4]);
+  return true;
 }
 Error Decode(std::span<const uint8_t> f, Decoded *r) {
   if (f.size() < 7)
@@ -408,6 +463,12 @@ Error Decode(std::span<const uint8_t> f, Decoded *r) {
           uint64_t q, w;
           if (!ReadUInt(c, &p, 0, &q))
             return Error::kMalformed;
+          if (q == 5) {
+            if (d.has_ram || !ReadRamGroup(c, &p, &d.ram))
+              return Error::kMalformed;
+            d.has_ram = true;
+            continue;
+          }
           if (q > 4) {
             if (!Skip(c, &p))
               return Error::kMalformed;

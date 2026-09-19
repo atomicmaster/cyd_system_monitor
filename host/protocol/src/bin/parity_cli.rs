@@ -51,17 +51,28 @@ fn decode_frame(frame: &[u8]) -> Result<Decoded, String> {
 fn summary(result: &Result<Decoded, String>) -> String {
     let (envelope, body) = match result {
         Err(name) => return format!("err {name}"),
-        Ok(Message::Snapshot(e, c)) => (
-            e,
-            format!(
+        Ok(Message::Snapshot(e, snapshot)) => {
+            let c = &snapshot.cpu;
+            let mut text = format!(
                 "{},{},{},{},{}",
                 c.availability as u8,
                 c.utilization_per_mille,
                 c.source_age_ms,
                 c.freshness as u8,
                 c.configuration_revision
-            ),
-        ),
+            );
+            if let Some(r) = &snapshot.ram {
+                text += &format!(
+                    ";ram={},{},{},{},{}",
+                    r.availability as u8,
+                    r.used_bytes,
+                    r.total_bytes,
+                    r.source_age_ms,
+                    r.freshness as u8
+                );
+            }
+            (e, text)
+        }
         Ok(Message::Control(e, body)) => (
             e,
             match body {
@@ -106,7 +117,7 @@ fn summary(result: &Result<Decoded, String>) -> String {
 
 fn reencode(decoded: &Decoded) -> String {
     let result = match decoded {
-        Message::Snapshot(e, c) => encode_cpu(e, c),
+        Message::Snapshot(e, s) => encode_snapshot(e, &s.cpu, s.ram.as_ref()),
         Message::Control(e, b) => encode_control(e, b),
     };
     match result {

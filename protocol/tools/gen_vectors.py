@@ -151,3 +151,62 @@ write("hello-v1-unknown-body-nested.hex",
 write("hello-v1-unknown-body-too-deep.hex",
       frame(envelope(1, with_unknown(HELLO, 9, nest(4)))),
       "unknown Hello-body field nested four arrays deep: malformed")
+
+# Metric groups (C02): the snapshot body carries CPU at keys 0-4 and each further
+# metric as an optional nested group at keys 5 and up. RAM is the first group.
+def ram_group(items):
+    return uint(5, len(items)) + kv(items)
+
+
+def with_ram(group, extra_body=()):
+    items = [(0, u(0)), (1, u(723)), (2, u(1000)), (3, u(0)), (4, u(4)), (5, group)]
+    items += list(extra_body)
+    return uint(5, len(items)) + kv(items)
+
+
+GIB = 1 << 30
+RAM = [(0, u(0)), (1, u(8 * GIB)), (2, u(16 * GIB)), (3, u(250)), (4, u(0))]
+write("ram-snapshot-v1.hex", frame(envelope(4, with_ram(ram_group(RAM)))),
+      "CPU plus RAM group: 8 GiB of 16 GiB, source age 250 ms")
+write("ram-snapshot-v1-max-u64.hex",
+      frame(envelope(4, with_ram(ram_group(
+          [(0, u(0)), (1, u((1 << 64) - 1)), (2, u((1 << 64) - 1)), (3, u(0)), (4, u(0))])))),
+      "RAM used and total at the 64-bit maximum: valid")
+write("ram-snapshot-v1-used-exceeds-total.hex",
+      frame(envelope(4, with_ram(ram_group(
+          [(0, u(0)), (1, u(17 * GIB)), (2, u(16 * GIB)), (3, u(0)), (4, u(0))])))),
+      "RAM used larger than total: malformed")
+write("ram-snapshot-v1-missing-field.hex",
+      frame(envelope(4, with_ram(ram_group(RAM[:4])))),
+      "RAM group without freshness (key 4): malformed")
+write("ram-snapshot-v1-duplicate-key.hex",
+      frame(envelope(4, with_ram(ram_group([RAM[0], RAM[1], RAM[1]] + RAM[2:])))),
+      "RAM group key 1 twice: malformed")
+write("ram-snapshot-v1-not-a-map.hex",
+      frame(envelope(4, with_ram(uint(2, 3) + b"\x01\x02\x03"))),
+      "RAM group is a byte string, not a field map: malformed")
+write("ram-snapshot-v1-unknown-field.hex",
+      frame(envelope(4, with_ram(ram_group(RAM + [(6, uint(4, 2) + u(1) + u(2))])))),
+      "unknown optional RAM field 6 holding [1, 2]: skipped, snapshot applies")
+write("ram-snapshot-v1-unknown-too-deep.hex",
+      frame(envelope(4, with_ram(ram_group(RAM + [(6, nest(4))])))),
+      "unknown RAM field nested four arrays deep: over the skip limit, malformed")
+write("ram-snapshot-v1-bad-availability.hex",
+      frame(envelope(4, with_ram(ram_group([(0, u(5))] + RAM[1:])))),
+      "RAM availability 5 is not a defined value: malformed")
+write("ram-snapshot-v1-bad-freshness.hex",
+      frame(envelope(4, with_ram(ram_group(RAM[:4] + [(4, u(2))])))),
+      "RAM freshness 2 is not a defined value: malformed")
+write("ram-snapshot-v1-age-overflow.hex",
+      frame(envelope(4, with_ram(ram_group(RAM[:3] + [(3, u(1 << 32)), RAM[4]])))),
+      "RAM source age above 32 bits: malformed")
+write("ram-snapshot-v1-noncanonical.hex",
+      frame(envelope(4, with_ram(ram_group(RAM[:1] + [(1, b"\x18\x05")] + RAM[2:])))),
+      "RAM used encoded with a needless extra byte: non-canonical, malformed")
+write("ram-snapshot-v1-duplicate-group.hex",
+      frame(envelope(4, with_ram(ram_group(RAM), extra_body=[(5, ram_group(RAM))]))),
+      "RAM group present twice in the snapshot body: malformed")
+write("ram-snapshot-v1-unknown-nested.hex",
+      frame(envelope(4, with_ram(ram_group(RAM + [(6, nest(3))])))),
+      "unknown RAM field nested three arrays deep: depth counts from the value, so accepted"
+      " (found by the parity gate: Rust once counted from the group map)")

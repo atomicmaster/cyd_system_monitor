@@ -33,6 +33,24 @@ resolved display concern, not an ordering key: evidence ordering uses boot
 identity plus monotonic sequence. A time correction records a Time
 Discontinuity and never rewrites earlier evidence.
 
+## Metric groups (C02)
+
+The snapshot body is a field map. CPU keeps keys `0`-`4` exactly as before;
+every further metric is an optional nested *group* map at a key `5` and up, so
+a decoder that predates a group skips it as an unknown optional key and the
+protocol stays 1.x. A group is all-or-nothing: when present, every field the
+group defines is required, unknown extra keys inside it are skipped (same
+bounds as anywhere), and a group appearing twice is malformed. The whole
+snapshot still travels in one frame of at most 2,048 bytes.
+
+| Key | Group | Fields |
+| --- | --- | --- |
+| 5 | RAM | `0` availability (0-4), `1` used bytes, `2` total bytes, `3` source age ms (32-bit), `4` freshness (0 fresh, 1 stale). Used is at most total; both are canonical unsigned 64-bit. |
+
+Physical RAM Occupied is physical total minus free pages
+(`docs/host-metrics.md`); the group carries the two byte counts, never a
+percentage, so the display chooses the presentation.
+
 ## Link handshake and pairing (TB02)
 
 The USB link is the board's UART bridge. Device output interleaves ASCII log

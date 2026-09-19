@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: CC0-1.0
+# unknown RAM field nested three arrays deep: depth counts from the value, so accepted (found by the parity gate: Rust once counted from the group map)
+0051a60001010002040350000102030405060708090a0b0c0d0e0f040105a60000011902d3021903e80300040405a60000011b0000000200000000021b00000004000000000318fa04000681818100a8bc56c5

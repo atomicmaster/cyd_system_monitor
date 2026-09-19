@@ -53,6 +53,20 @@ pub struct Envelope {
     pub utc_uncertainty_ms: Option<u32>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RamSnapshot {
+    pub availability: Availability,
+    pub used_bytes: u64,
+    pub total_bytes: u64,
+    pub source_age_ms: u32,
+    pub freshness: Freshness,
+}
+/// A complete snapshot: CPU plus each optional metric group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Snapshot {
+    pub cpu: CpuSnapshot,
+    pub ram: Option<RamSnapshot>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuSnapshot {
     pub availability: Availability,
     pub utilization_per_mille: u16,
@@ -249,6 +263,18 @@ pub fn crc32(bytes: &[u8]) -> u32 {
     !c
 }
 pub fn encode_cpu(envelope: &Envelope, cpu: &CpuSnapshot) -> Result<Vec<u8>, Error> {
+    encode_snapshot(envelope, cpu, None)
+}
+/// Encodes a complete snapshot: CPU at keys 0-4 and the RAM group at key 5
+/// when given.
+pub fn encode_snapshot(
+    envelope: &Envelope,
+    cpu: &CpuSnapshot,
+    ram: Option<&RamSnapshot>,
+) -> Result<Vec<u8>, Error> {
+    if ram.is_some_and(|r| r.used_bytes > r.total_bytes) {
+        return Err(Error::Malformed);
+    }
     let mut c =
         vec![0xa6 + envelope.utc_ms.is_some() as u8 + envelope.utc_uncertainty_ms.is_some() as u8];
     for (k, v) in [
@@ -265,7 +291,7 @@ pub fn encode_cpu(envelope: &Envelope, cpu: &CpuSnapshot) -> Result<Vec<u8>, Err
     uint(&mut c, 0, 4);
     uint(&mut c, 0, envelope.sequence as u64);
     uint(&mut c, 0, 5);
-    c.push(0xa5);
+    c.push(0xa5 + ram.is_some() as u8);
     for (k, v) in [
         (0, cpu.availability as u64),
         (1, cpu.utilization_per_mille as u64),
@@ -275,6 +301,20 @@ pub fn encode_cpu(envelope: &Envelope, cpu: &CpuSnapshot) -> Result<Vec<u8>, Err
     ] {
         uint(&mut c, 0, k);
         uint(&mut c, 0, v)
+    }
+    if let Some(ram) = ram {
+        uint(&mut c, 0, 5);
+        c.push(0xa5);
+        for (k, v) in [
+            (0, ram.availability as u64),
+            (1, ram.used_bytes),
+            (2, ram.total_bytes),
+            (3, ram.source_age_ms as u64),
+            (4, ram.freshness as u64),
+        ] {
+            uint(&mut c, 0, k);
+            uint(&mut c, 0, v)
+        }
     }
     if let Some(utc_ms) = envelope.utc_ms {
         uint(&mut c, 0, 6);
@@ -377,15 +417,23 @@ fn parse_envelope(frame: &[u8]) -> Result<(Envelope, &[u8]), Error> {
     Ok((envelope, body.ok_or(Error::Malformed)?))
 }
 
-fn decode_cpu_body(body: &[u8]) -> Result<CpuSnapshot, Error> {
+fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
     let mut p = 0;
     let count = read_uint(body, &mut p, 5).ok_or(Error::Malformed)?;
     if count > 8 {
         return Err(Error::Malformed);
     }
     let mut cpu = [None; 5];
+    let mut ram = None;
     for _ in 0..count {
         let q = read_uint(body, &mut p, 0).ok_or(Error::Malformed)? as usize;
+        if q == 5 {
+            if ram.is_some() {
+                return Err(Error::Malformed);
+            }
+            ram = Some(decode_ram_group(body, &mut p)?);
+            continue;
+        }
         // Unknown optional fields are skipped like any other bounded value.
         if q > 4 {
             skip_value(body, &mut p, 0)?;
@@ -407,7 +455,7 @@ fn decode_cpu_body(body: &[u8]) -> Result<CpuSnapshot, Error> {
         return Err(Error::Malformed);
     }
     let field = |q: usize| cpu[q].ok_or(Error::Malformed);
-    Ok(CpuSnapshot {
+    let cpu = CpuSnapshot {
         availability: match field(0)? {
             0 => Availability::Available,
             1 => Availability::Unsupported,
@@ -424,16 +472,67 @@ fn decode_cpu_body(body: &[u8]) -> Result<CpuSnapshot, Error> {
             _ => return Err(Error::Malformed),
         },
         configuration_revision: field(4)? as u32,
+    };
+    Ok(Snapshot { cpu, ram })
+}
+
+/// A metric group: five required fields, unknown extra keys skipped, values
+/// range-checked (mirrors the C++ `ReadRamGroup`).
+fn decode_ram_group(input: &[u8], p: &mut usize) -> Result<RamSnapshot, Error> {
+    let count = read_uint(input, p, 5).ok_or(Error::Malformed)?;
+    if count > 16 {
+        return Err(Error::Malformed);
+    }
+    let mut value = [None; 5];
+    for _ in 0..count {
+        let key = read_uint(input, p, 0).ok_or(Error::Malformed)? as usize;
+        if key > 4 {
+            skip_value(input, p, 0)?;
+            continue;
+        }
+        if value[key].is_some() {
+            return Err(Error::Malformed);
+        }
+        value[key] = Some(read_uint(input, p, 0).ok_or(Error::Malformed)?);
+    }
+    let field = |k: usize| value[k].ok_or(Error::Malformed);
+    let (used, total) = (field(1)?, field(2)?);
+    if used > total || field(3)? > u32::MAX.into() {
+        return Err(Error::Malformed);
+    }
+    Ok(RamSnapshot {
+        availability: match field(0)? {
+            0 => Availability::Available,
+            1 => Availability::Unsupported,
+            2 => Availability::Absent,
+            3 => Availability::TemporarilyUnavailable,
+            4 => Availability::Error,
+            _ => return Err(Error::Malformed),
+        },
+        used_bytes: used,
+        total_bytes: total,
+        source_age_ms: field(3)? as u32,
+        freshness: match field(4)? {
+            0 => Freshness::Fresh,
+            1 => Freshness::Stale,
+            _ => return Err(Error::Malformed),
+        },
     })
 }
 
-/// Decodes a complete CPU snapshot frame.
-pub fn decode_cpu(frame: &[u8]) -> Result<(Envelope, CpuSnapshot), Error> {
+/// Decodes a complete snapshot frame: CPU plus any RAM group.
+pub fn decode_snapshot(frame: &[u8]) -> Result<(Envelope, Snapshot), Error> {
     let (envelope, body) = parse_envelope(frame)?;
     if envelope.kind != MessageType::Snapshot {
         return Err(Error::Malformed);
     }
     Ok((envelope, decode_cpu_body(body)?))
+}
+
+/// Decodes a snapshot frame's CPU part; any RAM group is still validated.
+pub fn decode_cpu(frame: &[u8]) -> Result<(Envelope, CpuSnapshot), Error> {
+    let (envelope, snapshot) = decode_snapshot(frame)?;
+    Ok((envelope, snapshot.cpu))
 }
 
 fn message_type(value: u64) -> Result<MessageType, Error> {
@@ -462,8 +561,11 @@ fn bytes(input: &[u8], p: &mut usize, expected_len: usize) -> Result<Vec<u8>, Er
 // Unknown fields are permitted only where the core protocol says they are
 // optional. This recognises all definite CBOR values and bounds nesting so a
 // malformed extension cannot cause unbounded parser work.
-/// Skips a message body. A body's own map is not a nesting level: an unknown
-/// value's depth is counted from that value, wherever it sits.
+/// Skips a message body to find where it ends; the typed decoders then
+/// enforce the exact rules. A body's own map is not a nesting level, and
+/// neither is a metric group map directly inside it: an unknown value's depth
+/// is counted from that value, wherever it sits. Deliberately at least as
+/// permissive as any typed decoder, so it never rejects what they accept.
 fn skip_body(input: &[u8], p: &mut usize) -> Result<(), Error> {
     match input.get(*p).map(|first| first >> 5) {
         Some(5) => {
@@ -471,8 +573,20 @@ fn skip_body(input: &[u8], p: &mut usize) -> Result<(), Error> {
             if count > 16 {
                 return Err(Error::Malformed);
             }
-            for _ in 0..count * 2 {
+            for _ in 0..count {
                 skip_value(input, p, 0)?;
+                match input.get(*p).map(|first| first >> 5) {
+                    Some(5) => {
+                        let inner = read_uint(input, p, 5).ok_or(Error::Malformed)?;
+                        if inner > 16 {
+                            return Err(Error::Malformed);
+                        }
+                        for _ in 0..inner * 2 {
+                            skip_value(input, p, 0)?;
+                        }
+                    }
+                    _ => skip_value(input, p, 0)?,
+                }
             }
             Ok(())
         }
@@ -635,7 +749,7 @@ pub fn encode_control(envelope: &Envelope, body: &ControlBody) -> Result<Vec<u8>
 /// A decoded frame of any message type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
-    Snapshot(Envelope, CpuSnapshot),
+    Snapshot(Envelope, Snapshot),
     Control(Envelope, ControlBody),
 }
 
@@ -1146,6 +1260,41 @@ mod tests {
         assert_eq!(
             decode_control(&fixture("error-v1.hex")).unwrap().1,
             ControlBody::Error(vec![1, 2, 3])
+        );
+    }
+
+    #[test]
+    fn ram_group_round_trips_and_decodes_to_the_golden_values() {
+        let (_, golden) = decode_snapshot(&fixture("ram-snapshot-v1.hex")).unwrap();
+        let ram = golden.ram.expect("ram group");
+        assert_eq!(ram.used_bytes, 8 << 30);
+        assert_eq!(ram.total_bytes, 16 << 30);
+        assert_eq!(ram.source_age_ms, 250);
+        assert_eq!(ram.availability, Availability::Available);
+        assert_eq!(golden.cpu.utilization_per_mille, 723);
+        // Re-encoding the decoded snapshot reproduces the fixture bytes.
+        let (envelope, snapshot) = decode_snapshot(&fixture("ram-snapshot-v1.hex")).unwrap();
+        assert_eq!(
+            encode_snapshot(&envelope, &snapshot.cpu, snapshot.ram.as_ref()).unwrap(),
+            fixture("ram-snapshot-v1.hex")
+        );
+        // A CPU-only frame has no group.
+        assert_eq!(
+            decode_snapshot(&fixture("cpu-snapshot-v1.hex"))
+                .unwrap()
+                .1
+                .ram,
+            None
+        );
+        // The encoder refuses an impossible group.
+        let bad = RamSnapshot {
+            used_bytes: 2,
+            total_bytes: 1,
+            ..ram
+        };
+        assert_eq!(
+            encode_snapshot(&envelope, &snapshot.cpu, Some(&bad)),
+            Err(Error::Malformed)
         );
     }
 }

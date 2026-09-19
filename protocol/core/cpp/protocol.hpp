@@ -55,6 +55,15 @@ struct CpuSnapshot {
   Freshness freshness = Freshness::kFresh;
   uint32_t configuration_revision = 0;
 };
+// Physical RAM Occupied: total minus free pages, as two byte counts. The
+// display chooses the presentation; used never exceeds total.
+struct RamSnapshot {
+  Availability availability = Availability::kTemporarilyUnavailable;
+  uint64_t used_bytes = 0;
+  uint64_t total_bytes = 0;
+  uint32_t source_age_ms = 0;
+  Freshness freshness = Freshness::kFresh;
+};
 struct HelloBody {
   uint8_t supported_major = 1;
   uint8_t supported_minor = 0;
@@ -92,12 +101,19 @@ struct Decoded {
   Envelope envelope;
   CpuSnapshot cpu{};
   bool has_cpu = false;
+  // Optional metric groups (CORE_PROTOCOL.md "Metric groups"); absent when
+  // the sender did not include them.
+  RamSnapshot ram{};
+  bool has_ram = false;
 };
 
 uint32_t Crc32(std::span<const uint8_t> bytes);
 Error Encode(const Envelope &envelope, std::vector<uint8_t> *frame);
 Error EncodeCpuSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
                         std::vector<uint8_t> *frame);
+// A complete snapshot: CPU plus each optional metric group that is non-null.
+Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
+                     const RamSnapshot *ram, std::vector<uint8_t> *frame);
 Error Decode(std::span<const uint8_t> frame, Decoded *result);
 const char *ErrorName(Error error);
 

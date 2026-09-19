@@ -54,3 +54,17 @@ hello-unknown-body-nested|hello-v1-unknown-body-nested.hex|control|none
 hello-unknown-body-too-deep|hello-v1-unknown-body-too-deep.hex|control|malformed
 any-hello-unknown-body-field|hello-v1-unknown-body-field.hex|any|none
 any-cpu-unknown-body-nested|cpu-snapshot-v1-unknown-body-nested.hex|any|none
+ram-golden|ram-snapshot-v1.hex|cpu|none
+ram-max-u64|ram-snapshot-v1-max-u64.hex|cpu|none
+ram-used-exceeds-total|ram-snapshot-v1-used-exceeds-total.hex|cpu|malformed
+ram-missing-field|ram-snapshot-v1-missing-field.hex|cpu|malformed
+ram-duplicate-key|ram-snapshot-v1-duplicate-key.hex|cpu|malformed
+ram-not-a-map|ram-snapshot-v1-not-a-map.hex|cpu|malformed
+ram-unknown-field|ram-snapshot-v1-unknown-field.hex|cpu|none
+ram-unknown-too-deep|ram-snapshot-v1-unknown-too-deep.hex|cpu|malformed
+ram-bad-availability|ram-snapshot-v1-bad-availability.hex|cpu|malformed
+ram-bad-freshness|ram-snapshot-v1-bad-freshness.hex|cpu|malformed
+ram-age-overflow|ram-snapshot-v1-age-overflow.hex|cpu|malformed
+ram-noncanonical|ram-snapshot-v1-noncanonical.hex|cpu|malformed
+ram-duplicate-group|ram-snapshot-v1-duplicate-group.hex|cpu|malformed
+ram-unknown-nested|ram-snapshot-v1-unknown-nested.hex|cpu|none
