@@ -100,3 +100,55 @@ outcome (`none`, `bad-crc`, `unsupported-major`, `malformed`, `truncated`,
 produced by the codecs; the compatibility and malformed vectors are produced by
 `protocol/tools/gen_vectors.py`, which assembles bytes independently of either
 codec. `./dev run protocol -- decode <fixture>` inspects any of them.
+
+## Decoding rules both codecs share
+
+These were settled by the parity gate below; each has a fixture row in
+`parity-matrix.txt` and a matching entry in the `any`/`cpu`/`control` decoders.
+
+- **Order of rejection:** frame length/CRC, then the envelope map (at most 16
+  entries, strictly increasing keys), evaluated in key order.
+- **Major first:** major is envelope key 0. A value other than 1 is
+  `unsupported-major` immediately; nothing after it is interpreted, because a
+  future major may change the layout. A repeated or misordered key is
+  `malformed` before any version error.
+- **Message type before body:** an unknown message type is `malformed`
+  whatever the body. A non-snapshot body over 512 bytes is `too-large`. A
+  Snapshot body must be a field map with every CPU field present.
+- **Unknown optional keys** are skipped in the envelope, the snapshot body, and
+  every control body (keys above the type's last known key: Hello 5, Pair 2,
+  Command 1, CommandReply 2). A skipped value is an integer, string, or
+  array/map of at most 16 items; its nesting is counted from that value (a
+  body's own map is not a level), so up to 3 arrays deep is accepted and 4 is
+  `malformed`. Tags, floats, simple values, and indefinite lengths are outside
+  the profile.
+- **No trailing bytes** after the envelope map or a body.
+
+## Protocol change gate
+
+Any change to the C++ codec (`protocol/core/cpp/`), the Rust codec
+(`host/protocol/`), the schema, or a fixture is not done until the two codecs
+have been analyzed against each other:
+
+1. Run `./dev check protocol` (also run by the firmware and host lanes).
+   It ends with `protocol/tools/parity_diff.py`, which feeds one deterministic
+   corpus (every fixture, byte-level and structure-aware mutations, extension
+   entries with every CBOR value kind, and fragmented/damaged byte streams;
+   about 180,000 inputs) to both codecs and compares the outcome, every decoded
+   field, re-encoded bytes, and stream-resynchronization results.
+2. Any `MISMATCH` is a misalignment. **Test first:** add the input as a
+   fixture (`protocol/tools/gen_vectors.py`) with a row in `parity-matrix.txt`,
+   and confirm it fails. Decide which side is wrong from this document (or
+   amend this document with the decision), then fix the codec. Never fix a
+   mismatch without its fixture.
+3. A misalignment found by reading code rather than by the corpus gets the same
+   treatment, and its mutation class should be added to the corpus generator so
+   the gate can find its siblings.
+4. Do not mark a protocol ticket or section Done until the gate reports
+   `0 mismatch(es)`; record the summary line (inputs, seed, mismatches) and run
+   at least two extra seeds (`./dev run protocol -- parity --seed 2`) in the
+   ticket's handoff.
+5. Behavior only one codec exercises (framing helpers, session gates) still
+   needs a shared row in `session-parity-matrix.txt` or a `FrameStream` case in
+   the corpus.
+

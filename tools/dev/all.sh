@@ -5,6 +5,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 _lanes() { echo firmware simulator host macos protocol; }
 
 _for_each_lane() {
+  export CYD_IN_ALL=1
   local command="$1"
   local lane script failed=0
   for lane in $(_lanes); do

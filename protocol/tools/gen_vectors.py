@@ -86,3 +86,68 @@ write("hello-v1-wrong-body.hex", frame(envelope(1, uint(4, 1) + u(1))),
       "Hello whose body is an array, not a map")
 write("error-v1.hex", frame(envelope(7, uint(2, 3) + b"\x01\x02\x03")),
       "Error carrying a 3-byte opaque diagnostic")
+
+# Found by protocol/tools/parity_diff.py (differential gate): each was a
+# C++/Rust disagreement or an unguarded rule, written down before the fix.
+cbor = body_of_env = envelope(4, CPU)
+write("cpu-snapshot-v1-trailing-envelope-bytes.hex", frame(cbor + b"\x00"),
+      "bytes remain after the envelope map: malformed, not a version error")
+write("cpu-decoder-hello-kind.hex", frame(envelope(1, CPU)),
+      "type Hello carrying a snapshot-shaped body, fed to the snapshot decoder")
+write("snapshot-v2-unknown-body.hex",
+      frame(envelope(4, uint(3, 6) + b"future", major=2)),
+      "major 2 with a body layout this decoder cannot know: unsupported-major, body never read")
+write("hello-v2-unknown-body.hex",
+      frame(envelope(1, uint(3, 6) + b"future", major=2)),
+      "major 2 Hello with an unknown body layout: unsupported-major, body never read")
+write("error-v1-oversized-body.hex", frame(envelope(7, uint(2, 600) + bytes(600))),
+      "Error with a 600-byte body exceeds the 512-byte non-snapshot limit: too-large")
+
+write("cpu-snapshot-v1-duplicate-major.hex",
+      frame(envelope(4, CPU, keys=[(0, u(1)), (0, u(2)), (1, u(0)), (2, u(4)),
+                                   (3, uint(2, 16) + SESSION), (4, u(1)), (5, CPU)])),
+      "envelope key 0 repeated with a different major: malformed key order beats the version error")
+CPU_UNKNOWN = uint(5, 6) + kv([(0, u(0)), (1, u(723)), (2, u(1000)), (3, u(0)), (4, u(4)),
+                               (9, uint(4, 2) + u(1) + uint(3, 1) + b"x")])
+write("cpu-snapshot-v1-unknown-body-field.hex", frame(envelope(4, CPU_UNKNOWN)),
+      "unknown optional snapshot-body field 9 holding [1, \"x\"]: skipped like any bounded value")
+write("error-v1-kind-unknown.hex",
+      frame(envelope(9, uint(2, 600) + bytes(600))),
+      "unknown message type 9 with an oversized body: malformed type, not a size error")
+
+write("cpu-snapshot-v1-bytes-body.hex", frame(envelope(4, uint(2, 3) + b"\x01\x02\x03")),
+      "Snapshot whose body is a byte string, not a field map: malformed, never a CPU-less snapshot")
+
+# Control bodies skip unknown optional keys like every other map; nesting depth
+# is counted from the unknown value itself, wherever it sits.
+PAIR = uint(5, 3) + kv([(0, uint(2, 16) + bytes([0x11] * 16)),
+                        (1, uint(2, 16) + bytes([0x22] * 16)), (2, u(123456))])
+def with_unknown(body, key, value):
+    return bytes([body[0] + 1]) + body[1:] + uint(0, key) + value
+ARRAY = uint(4, 2) + u(1) + uint(3, 1) + b"x"
+write("hello-v1-unknown-body-field.hex",
+      frame(envelope(1, with_unknown(HELLO, 9, ARRAY))),
+      "Hello with unknown optional body key 9 holding an array: skipped")
+write("pair-v1-unknown-body-field.hex",
+      frame(envelope(3, with_unknown(PAIR, 3, ARRAY))),
+      "Pair with unknown optional body key 3 holding an array: skipped")
+CMD = uint(5, 2) + kv([(0, u(42)), (1, u(2))])
+CMD_REPLY = uint(5, 3) + kv([(0, u(42)), (1, u(2)), (2, u(1))])
+write("command-v1-unknown-body-field.hex",
+      frame(envelope(5, with_unknown(CMD, 3, ARRAY))),
+      "Command with unknown optional body key 3 holding an array: skipped")
+write("command-reply-v1-unknown-body-field.hex",
+      frame(envelope(6, with_unknown(CMD_REPLY, 4, u(7)))),
+      "CommandReply with unknown optional body key 4 holding an integer: skipped")
+write("cpu-snapshot-v1-unknown-body-nested.hex",
+      frame(envelope(4, with_unknown(CPU, 9, nest(3)))),
+      "unknown snapshot-body field nested three arrays deep: at the depth limit, accepted")
+write("cpu-snapshot-v1-unknown-body-too-deep.hex",
+      frame(envelope(4, with_unknown(CPU, 9, nest(4)))),
+      "unknown snapshot-body field nested four arrays deep: over the limit, malformed")
+write("hello-v1-unknown-body-nested.hex",
+      frame(envelope(1, with_unknown(HELLO, 9, nest(3)))),
+      "unknown Hello-body field nested three arrays deep: accepted")
+write("hello-v1-unknown-body-too-deep.hex",
+      frame(envelope(1, with_unknown(HELLO, 9, nest(4)))),
+      "unknown Hello-body field nested four arrays deep: malformed")

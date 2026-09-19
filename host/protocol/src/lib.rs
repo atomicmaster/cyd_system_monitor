@@ -293,19 +293,23 @@ pub fn encode_cpu(envelope: &Envelope, cpu: &CpuSnapshot) -> Result<Vec<u8>, Err
     f.extend(crc32(&c).to_be_bytes());
     Ok(f)
 }
-pub fn decode_cpu(f: &[u8]) -> Result<(Envelope, CpuSnapshot), Error> {
-    if f.len() < 7 {
+/// The one envelope parser behind every decoder (and the C++ `Decode`'s
+/// envelope rules): frame integrity, canonical strictly-increasing keys,
+/// major-first version check, bounded non-snapshot bodies, no trailing bytes.
+/// Returns the envelope and the still-encoded body for the type's decoder.
+fn parse_envelope(frame: &[u8]) -> Result<(Envelope, &[u8]), Error> {
+    if frame.len() < 7 {
         return Err(Error::Truncated);
     }
-    let n = u16::from_be_bytes([f[0], f[1]]) as usize;
-    if n > MAX_FRAME_BYTES - 2 {
+    let length = u16::from_be_bytes([frame[0], frame[1]]) as usize;
+    if length > MAX_FRAME_BYTES - 2 {
         return Err(Error::TooLarge);
     }
-    if n + 2 != f.len() {
+    if length + 2 != frame.len() {
         return Err(Error::Truncated);
     }
-    let c = &f[2..f.len() - 4];
-    if crc32(c) != u32::from_be_bytes(f[f.len() - 4..].try_into().unwrap()) {
+    let c = &frame[2..frame.len() - 4];
+    if crc32(c) != u32::from_be_bytes(frame[frame.len() - 4..].try_into().unwrap()) {
         return Err(Error::BadCrc);
     }
     let mut p = 0;
@@ -313,161 +317,123 @@ pub fn decode_cpu(f: &[u8]) -> Result<(Envelope, CpuSnapshot), Error> {
     if count > 16 {
         return Err(Error::Malformed);
     }
-    let (
-        mut major,
-        mut minor,
-        mut kind,
-        mut session,
-        mut sequence,
-        mut utc_ms,
-        mut utc_uncertainty_ms,
-    ) = (None, None, None, None, None, None, None);
-    let mut cpu = [None; 5];
-    let mut previous_key = None;
+    let byte = |value: u64| u8::try_from(value).map_err(|_| Error::Malformed);
+    let word = |value: u64| u32::try_from(value).map_err(|_| Error::Malformed);
+    let (mut major, mut minor, mut kind) = (None, None, None);
+    let (mut session, mut sequence, mut body) = (None, None, None);
+    let (mut utc_ms, mut uncertainty) = (None, None);
+    let mut previous = None;
     for _ in 0..count {
-        let k = read_uint(c, &mut p, 0).ok_or(Error::Malformed)?;
-        // Canonical maps have strictly increasing keys, so a repeat or a
+        let key = read_uint(c, &mut p, 0).ok_or(Error::Malformed)?;
+        // Canonical maps have strictly increasing keys: a repeat or a
         // reordering is malformed.
-        if previous_key.is_some_and(|previous| k <= previous) {
+        if previous.is_some_and(|old| key <= old) {
             return Err(Error::Malformed);
         }
-        previous_key = Some(k);
-        match k {
+        previous = Some(key);
+        let mut uint = || read_uint(c, &mut p, 0).ok_or(Error::Malformed);
+        match key {
             0 => {
-                major = Some(
-                    read_uint(c, &mut p, 0)
-                        .ok_or(Error::Malformed)?
-                        .try_into()
-                        .map_err(|_| Error::Malformed)?,
-                )
+                let value = byte(uint()?)?;
+                // Major is the first envelope key; a future major may change
+                // everything after it, so nothing after it is interpreted.
+                if value != 1 {
+                    return Err(Error::UnsupportedMajor);
+                }
+                major = Some(value);
             }
-            1 => {
-                minor = Some(
-                    read_uint(c, &mut p, 0)
-                        .ok_or(Error::Malformed)?
-                        .try_into()
-                        .map_err(|_| Error::Malformed)?,
-                )
-            }
-            2 => {
-                kind = Some(
-                    read_uint(c, &mut p, 0)
-                        .ok_or(Error::Malformed)?
-                        .try_into()
-                        .map_err(|_| Error::Malformed)?,
-                )
-            }
+            1 => minor = Some(byte(uint()?)?),
+            2 => kind = Some(byte(uint()?)?),
             3 => {
-                let len = read_uint(c, &mut p, 2).ok_or(Error::Malformed)?;
-                if len != 16 || p + 16 > c.len() {
-                    return Err(Error::Malformed);
-                }
-                session = Some(c[p..p + 16].try_into().unwrap());
-                p += 16
+                session = Some(bytes(c, &mut p, 16)?.try_into().unwrap());
             }
-            4 => {
-                sequence = Some(
-                    read_uint(c, &mut p, 0)
-                        .ok_or(Error::Malformed)?
-                        .try_into()
-                        .map_err(|_| Error::Malformed)?,
-                )
-            }
+            4 => sequence = Some(word(uint()?)?),
             5 => {
-                let field_count = read_uint(c, &mut p, 5).ok_or(Error::Malformed)?;
-                if field_count > 8 {
-                    return Err(Error::Malformed);
+                let kind = message_type(kind.ok_or(Error::Malformed)? as u64)?;
+                let start = p;
+                skip_body(c, &mut p)?;
+                if kind != MessageType::Snapshot && p - start > 512 {
+                    return Err(Error::TooLarge);
                 }
-                for _ in 0..field_count {
-                    let q = read_uint(c, &mut p, 0).ok_or(Error::Malformed)? as usize;
-                    // Extension fields in this first body are scalar optional
-                    // values; consumers which do not know them retain no data.
-                    if q > 4 {
-                        read_uint(c, &mut p, 0).ok_or(Error::Malformed)?;
-                        continue;
-                    }
-                    if cpu[q].is_some() {
-                        return Err(Error::Malformed);
-                    }
-                    let value = read_uint(c, &mut p, 0).ok_or(Error::Malformed)?;
-                    if ((q == 0 || q == 3) && value > u8::MAX.into())
-                        || (q == 1 && value > 1000)
-                        || ((q == 2 || q == 4) && value > u32::MAX.into())
-                    {
-                        return Err(Error::Malformed);
-                    }
-                    cpu[q] = Some(value)
-                }
+                body = Some(&c[start..p]);
             }
-            6 => utc_ms = Some(read_uint(c, &mut p, 0).ok_or(Error::Malformed)?),
-            7 => {
-                utc_uncertainty_ms = Some(
-                    read_uint(c, &mut p, 0)
-                        .ok_or(Error::Malformed)?
-                        .try_into()
-                        .map_err(|_| Error::Malformed)?,
-                )
-            }
+            6 => utc_ms = Some(uint()?),
+            7 => uncertainty = Some(word(uint()?)?),
             _ => skip_value(c, &mut p, 0)?,
         }
     }
-    if p != c.len() || major != Some(1) {
-        return Err(if major.is_some() {
-            Error::UnsupportedMajor
-        } else {
-            Error::Malformed
-        });
+    if p != c.len() || major.is_none() {
+        return Err(Error::Malformed);
     }
-    let kind = match kind.ok_or(Error::Malformed)? {
-        1 => MessageType::Hello,
-        2 => MessageType::HelloReply,
-        3 => MessageType::Pair,
-        4 => MessageType::Snapshot,
-        5 => MessageType::Command,
-        6 => MessageType::CommandReply,
-        7 => MessageType::Error,
-        _ => return Err(Error::Malformed),
+    let envelope = Envelope {
+        major: 1,
+        minor: minor.ok_or(Error::Malformed)?,
+        kind: message_type(kind.ok_or(Error::Malformed)? as u64)?,
+        session: session.ok_or(Error::Malformed)?,
+        sequence: sequence.ok_or(Error::Malformed)?,
+        utc_ms,
+        utc_uncertainty_ms: uncertainty,
     };
-    let availability = match cpu[0].ok_or(Error::Malformed)? {
-        0 => Availability::Available,
-        1 => Availability::Unsupported,
-        2 => Availability::Absent,
-        3 => Availability::TemporarilyUnavailable,
-        4 => Availability::Error,
-        _ => return Err(Error::Malformed),
-    };
-    let freshness = match cpu[3].ok_or(Error::Malformed)? {
-        0 => Freshness::Fresh,
-        1 => Freshness::Stale,
-        _ => return Err(Error::Malformed),
-    };
-    Ok((
-        Envelope {
-            major: 1,
-            minor: minor.ok_or(Error::Malformed)?,
-            kind,
-            session: session.ok_or(Error::Malformed)?,
-            sequence: sequence.ok_or(Error::Malformed)?,
-            utc_ms,
-            utc_uncertainty_ms,
+    Ok((envelope, body.ok_or(Error::Malformed)?))
+}
+
+fn decode_cpu_body(body: &[u8]) -> Result<CpuSnapshot, Error> {
+    let mut p = 0;
+    let count = read_uint(body, &mut p, 5).ok_or(Error::Malformed)?;
+    if count > 8 {
+        return Err(Error::Malformed);
+    }
+    let mut cpu = [None; 5];
+    for _ in 0..count {
+        let q = read_uint(body, &mut p, 0).ok_or(Error::Malformed)? as usize;
+        // Unknown optional fields are skipped like any other bounded value.
+        if q > 4 {
+            skip_value(body, &mut p, 0)?;
+            continue;
+        }
+        if cpu[q].is_some() {
+            return Err(Error::Malformed);
+        }
+        let value = read_uint(body, &mut p, 0).ok_or(Error::Malformed)?;
+        if ((q == 0 || q == 3) && value > u8::MAX.into())
+            || (q == 1 && value > 1000)
+            || ((q == 2 || q == 4) && value > u32::MAX.into())
+        {
+            return Err(Error::Malformed);
+        }
+        cpu[q] = Some(value);
+    }
+    if p != body.len() {
+        return Err(Error::Malformed);
+    }
+    let field = |q: usize| cpu[q].ok_or(Error::Malformed);
+    Ok(CpuSnapshot {
+        availability: match field(0)? {
+            0 => Availability::Available,
+            1 => Availability::Unsupported,
+            2 => Availability::Absent,
+            3 => Availability::TemporarilyUnavailable,
+            4 => Availability::Error,
+            _ => return Err(Error::Malformed),
         },
-        CpuSnapshot {
-            availability,
-            utilization_per_mille: cpu[1]
-                .ok_or(Error::Malformed)?
-                .try_into()
-                .map_err(|_| Error::Malformed)?,
-            source_age_ms: cpu[2]
-                .ok_or(Error::Malformed)?
-                .try_into()
-                .map_err(|_| Error::Malformed)?,
-            freshness,
-            configuration_revision: cpu[4]
-                .ok_or(Error::Malformed)?
-                .try_into()
-                .map_err(|_| Error::Malformed)?,
+        utilization_per_mille: field(1)? as u16,
+        source_age_ms: field(2)? as u32,
+        freshness: match field(3)? {
+            0 => Freshness::Fresh,
+            1 => Freshness::Stale,
+            _ => return Err(Error::Malformed),
         },
-    ))
+        configuration_revision: field(4)? as u32,
+    })
+}
+
+/// Decodes a complete CPU snapshot frame.
+pub fn decode_cpu(frame: &[u8]) -> Result<(Envelope, CpuSnapshot), Error> {
+    let (envelope, body) = parse_envelope(frame)?;
+    if envelope.kind != MessageType::Snapshot {
+        return Err(Error::Malformed);
+    }
+    Ok((envelope, decode_cpu_body(body)?))
 }
 
 fn message_type(value: u64) -> Result<MessageType, Error> {
@@ -496,6 +462,24 @@ fn bytes(input: &[u8], p: &mut usize, expected_len: usize) -> Result<Vec<u8>, Er
 // Unknown fields are permitted only where the core protocol says they are
 // optional. This recognises all definite CBOR values and bounds nesting so a
 // malformed extension cannot cause unbounded parser work.
+/// Skips a message body. A body's own map is not a nesting level: an unknown
+/// value's depth is counted from that value, wherever it sits.
+fn skip_body(input: &[u8], p: &mut usize) -> Result<(), Error> {
+    match input.get(*p).map(|first| first >> 5) {
+        Some(5) => {
+            let count = read_uint(input, p, 5).ok_or(Error::Malformed)?;
+            if count > 16 {
+                return Err(Error::Malformed);
+            }
+            for _ in 0..count * 2 {
+                skip_value(input, p, 0)?;
+            }
+            Ok(())
+        }
+        _ => skip_value(input, p, 0),
+    }
+}
+
 fn skip_value(input: &[u8], p: &mut usize, depth: u8) -> Result<(), Error> {
     if depth >= 4 {
         return Err(Error::Malformed);
@@ -648,119 +632,33 @@ pub fn encode_control(envelope: &Envelope, body: &ControlBody) -> Result<Vec<u8>
     encode_frame(envelope, &c)
 }
 
+/// A decoded frame of any message type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Message {
+    Snapshot(Envelope, CpuSnapshot),
+    Control(Envelope, ControlBody),
+}
+
+/// Decodes any frame, choosing the body decoder from the envelope's type.
+pub fn decode(frame: &[u8]) -> Result<Message, Error> {
+    let (envelope, body) = parse_envelope(frame)?;
+    if envelope.kind == MessageType::Snapshot {
+        let cpu = decode_cpu_body(body)?;
+        Ok(Message::Snapshot(envelope, cpu))
+    } else {
+        let control = decode_control_body(envelope.kind, body)?;
+        Ok(Message::Control(envelope, control))
+    }
+}
+
 /// Decodes a non-snapshot control frame, including its typed body.
 pub fn decode_control(frame: &[u8]) -> Result<(Envelope, ControlBody), Error> {
-    if frame.len() < 7 {
-        return Err(Error::Truncated);
-    }
-    let length = u16::from_be_bytes([frame[0], frame[1]]) as usize;
-    if length > MAX_FRAME_BYTES - 2 {
-        return Err(Error::TooLarge);
-    }
-    if length + 2 != frame.len() {
-        return Err(Error::Truncated);
-    }
-    let c = &frame[2..frame.len() - 4];
-    if crc32(c) != u32::from_be_bytes(frame[frame.len() - 4..].try_into().unwrap()) {
-        return Err(Error::BadCrc);
-    }
-    let mut p = 0;
-    let count = read_uint(c, &mut p, 5).ok_or(Error::Malformed)?;
-    if count > 16 {
+    let (envelope, body) = parse_envelope(frame)?;
+    if envelope.kind == MessageType::Snapshot {
         return Err(Error::Malformed);
     }
-    let (
-        mut major,
-        mut minor,
-        mut kind,
-        mut session,
-        mut sequence,
-        mut utc_ms,
-        mut uncertainty,
-        mut body,
-    ) = (None, None, None, None, None, None, None, None);
-    let mut prior = None;
-    for _ in 0..count {
-        let key = read_uint(c, &mut p, 0).ok_or(Error::Malformed)?;
-        if prior.is_some_and(|old| key <= old) {
-            return Err(Error::Malformed);
-        }
-        prior = Some(key);
-        match key {
-            0 => {
-                major = Some(
-                    read_uint(c, &mut p, 0)
-                        .ok_or(Error::Malformed)?
-                        .try_into()
-                        .map_err(|_| Error::Malformed)?,
-                )
-            }
-            1 => {
-                minor = Some(
-                    read_uint(c, &mut p, 0)
-                        .ok_or(Error::Malformed)?
-                        .try_into()
-                        .map_err(|_| Error::Malformed)?,
-                )
-            }
-            2 => {
-                kind = Some(message_type(
-                    read_uint(c, &mut p, 0).ok_or(Error::Malformed)?,
-                )?)
-            }
-            3 => session = Some(bytes(c, &mut p, 16)?.try_into().unwrap()),
-            4 => {
-                sequence = Some(
-                    read_uint(c, &mut p, 0)
-                        .ok_or(Error::Malformed)?
-                        .try_into()
-                        .map_err(|_| Error::Malformed)?,
-                )
-            }
-            5 => {
-                if body.is_some() {
-                    return Err(Error::Malformed);
-                }
-                let start = p;
-                skip_value(c, &mut p, 0)?;
-                if p - start > 512 {
-                    return Err(Error::TooLarge);
-                }
-                body = Some(&c[start..p]);
-            }
-            6 => utc_ms = Some(read_uint(c, &mut p, 0).ok_or(Error::Malformed)?),
-            7 => {
-                uncertainty = Some(
-                    read_uint(c, &mut p, 0)
-                        .ok_or(Error::Malformed)?
-                        .try_into()
-                        .map_err(|_| Error::Malformed)?,
-                )
-            }
-            _ => skip_value(c, &mut p, 0)?,
-        }
-    }
-    if p != c.len() {
-        return Err(Error::Malformed);
-    }
-    if major != Some(1) {
-        return Err(if major.is_some() {
-            Error::UnsupportedMajor
-        } else {
-            Error::Malformed
-        });
-    }
-    let envelope = Envelope {
-        major: 1,
-        minor: minor.ok_or(Error::Malformed)?,
-        kind: kind.ok_or(Error::Malformed)?,
-        session: session.ok_or(Error::Malformed)?,
-        sequence: sequence.ok_or(Error::Malformed)?,
-        utc_ms,
-        utc_uncertainty_ms: uncertainty,
-    };
-    let body = decode_control_body(envelope.kind, body.ok_or(Error::Malformed)?)?;
-    Ok((envelope, body))
+    let control = decode_control_body(envelope.kind, body)?;
+    Ok((envelope, control))
 }
 
 fn op(value: u64) -> Result<CommandOperation, Error> {
@@ -788,19 +686,31 @@ fn decode_control_body(kind: MessageType, c: &[u8]) -> Result<ControlBody, Error
         }
         return Ok(ControlBody::Error(c[p..].to_vec()));
     }
+    // Keys above a type's last known key are unknown optional fields.
+    let known_max = match kind {
+        MessageType::Hello | MessageType::HelloReply => 5,
+        MessageType::Pair | MessageType::CommandReply => 2,
+        MessageType::Command => 1,
+        _ => return Err(Error::Malformed),
+    };
     let count = read_uint(c, &mut p, 5).ok_or(Error::Malformed)?;
-    if count > 6 {
+    if count > 16 {
         return Err(Error::Malformed);
     }
     let mut fields: [Option<u64>; 6] = [None; 6];
     let mut identities: [Option<[u8; 16]>; 2] = [None, None];
     let mut prior = None;
     for _ in 0..count {
-        let key = read_uint(c, &mut p, 0).ok_or(Error::Malformed)? as usize;
-        if key >= 6 || prior.is_some_and(|old| key <= old) {
+        let key = read_uint(c, &mut p, 0).ok_or(Error::Malformed)?;
+        if prior.is_some_and(|old| key <= old) {
             return Err(Error::Malformed);
         }
         prior = Some(key);
+        if key > known_max {
+            skip_value(c, &mut p, 0)?;
+            continue;
+        }
+        let key = key as usize;
         if kind == MessageType::Pair && key < 2 {
             identities[key] = Some(bytes(c, &mut p, 16)?.try_into().unwrap());
         } else {
@@ -904,6 +814,7 @@ mod tests {
             let actual = match fields[2] {
                 "cpu" => decode_cpu(&fixture(fields[1])).map(|_| ()),
                 "control" => decode_control(&fixture(fields[1])).map(|_| ()),
+                "any" => decode(&fixture(fields[1])).map(|_| ()),
                 other => panic!("unknown decoder {other}"),
             };
             match fields[3] {

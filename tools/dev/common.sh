@@ -54,3 +54,17 @@ idf_missing_hint() {
     echo "install ESP-IDF and 'source \$IDF_PATH/export.sh' (https://docs.espressif.com/projects/esp-idf)"
   fi
 }
+
+# Differential C++/Rust protocol parity gate (protocol/tools/parity_diff.py).
+# Every lane that compiles or changes a protocol codec runs it, so a codec
+# change cannot pass its own lane with the two implementations misaligned.
+# Under `./dev check all` only the protocol lane runs it, once.
+run_parity_gate() {
+  if [[ "${CYD_IN_ALL:-}" == "1" && "${1:-}" != "protocol" ]]; then
+    return 0
+  fi
+  require_tool python3 "install Python 3" || return 1
+  require_tool cargo "install Rust via https://rustup.rs" || return 1
+  require_tool cmake "brew install cmake" || return 1
+  python3 "$(dev_root)/protocol/tools/parity_diff.py"
+}

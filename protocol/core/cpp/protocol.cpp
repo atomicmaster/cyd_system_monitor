@@ -85,6 +85,21 @@ bool Skip(std::span<const uint8_t> in, std::size_t *p, int depth = 0) {
   }
   return false;
 }
+// A body's own map is not a nesting level: an unknown value's depth is counted
+// from that value, wherever it sits.
+bool SkipBody(std::span<const uint8_t> in, std::size_t *p) {
+  if (*p < in.size() && (in[*p] >> 5) == 5) {
+    uint64_t n;
+    if (!ReadUInt(in, p, 5, &n) || n > 16)
+      return false;
+    for (n *= 2; n > 0; --n) {
+      if (!Skip(in, p, 0))
+        return false;
+    }
+    return true;
+  }
+  return Skip(in, p, 0);
+}
 void Map(std::vector<uint8_t> *out, uint8_t fields) {
   out->push_back(static_cast<uint8_t>(0xa0 | fields));
 }
@@ -201,8 +216,14 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
 }
 bool ReadControlBody(std::span<const uint8_t> c, std::size_t *p, Envelope *e) {
   uint64_t count;
-  if (!ReadUInt(c, p, 5, &count) || count > 6)
+  if (!ReadUInt(c, p, 5, &count) || count > 16)
     return false;
+  // Keys above a type's last known key are unknown optional fields.
+  const uint64_t known_max =
+      e->type == MessageType::kHello || e->type == MessageType::kHelloReply ? 5
+      : e->type == MessageType::kPair || e->type == MessageType::kCommandReply
+          ? 2
+          : 1;
   uint64_t previous = UINT64_MAX;
   bool fields[6] = {};
   HelloBody hello;
@@ -210,10 +231,14 @@ bool ReadControlBody(std::span<const uint8_t> c, std::size_t *p, Envelope *e) {
   CommandBody command;
   for (uint64_t i = 0; i < count; ++i) {
     uint64_t key, value;
-    if (!ReadUInt(c, p, 0, &key) || (i && key <= previous) || key > 5 ||
-        fields[key])
+    if (!ReadUInt(c, p, 0, &key) || (i && key <= previous))
       return false;
     previous = key;
+    if (key > known_max) {
+      if (!Skip(c, p))
+        return false;
+      continue;
+    }
     fields[key] = true;
     if ((e->type == MessageType::kPair) && (key == 0 || key == 1)) {
       std::vector<uint8_t> identity;
@@ -353,6 +378,19 @@ Error Decode(std::span<const uint8_t> f, Decoded *r) {
       return Error::kMalformed;
     got[k] = true;
     uint64_t v;
+    if (k == 5 && (static_cast<uint8_t>(d.envelope.type) <
+                       static_cast<uint8_t>(MessageType::kHello) ||
+                   static_cast<uint8_t>(d.envelope.type) >
+                       static_cast<uint8_t>(MessageType::kError)))
+      return Error::kMalformed; // Unknown message type: its body is unknowable.
+    if (k == 5 && d.envelope.type != MessageType::kSnapshot) {
+      // Every non-snapshot body is bounded (512 bytes) before it is read.
+      std::size_t end = p;
+      if (!SkipBody(c, &end))
+        return Error::kMalformed;
+      if (end - p > 512)
+        return Error::kTooLarge;
+    }
     if (k == 3) {
       std::vector<uint8_t> b;
       if (!ReadBytes(c, &p, &b) || b.size() != 16)
@@ -420,6 +458,10 @@ Error Decode(std::span<const uint8_t> f, Decoded *r) {
         return Error::kMalformed;
       if ((k == 0 || k == 1 || k == 2) && v > 0xff)
         return Error::kMalformed;
+      // Major is the first envelope key; a future major may change everything
+      // after it, so nothing after it is interpreted.
+      if (k == 0 && v != 1)
+        return Error::kUnsupportedMajor;
       if (k == 4 && v > UINT32_MAX)
         return Error::kMalformed;
       if (k == 0)
@@ -442,13 +484,13 @@ Error Decode(std::span<const uint8_t> f, Decoded *r) {
   if (p != c.size() || !got[0] || !got[1] || !got[2] || !got[3] || !got[4] ||
       !got[5])
     return Error::kMalformed;
-  if (d.envelope.version.major != 1)
-    return Error::kUnsupportedMajor;
   if (static_cast<uint8_t>(d.envelope.type) <
           static_cast<uint8_t>(MessageType::kHello) ||
       static_cast<uint8_t>(d.envelope.type) >
           static_cast<uint8_t>(MessageType::kError))
     return Error::kMalformed;
+  if (d.envelope.type == MessageType::kSnapshot && !d.has_cpu)
+    return Error::kMalformed; // A snapshot body is a field map, nothing else.
   *r = std::move(d);
   return Error::kNone;
 }

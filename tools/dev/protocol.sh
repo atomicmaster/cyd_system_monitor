@@ -43,10 +43,18 @@ check() {
   ctest --test-dir "$cpp_test_dir/build" --output-on-failure
 
   (cd "$(_protocol_dir)/generated/rust" && cargo test)
+
+  # The change gate: both codecs must agree on every input in the corpus.
+  run_parity_gate protocol
 }
 
 run() {
   if [[ "${1:-}" == "--" ]]; then shift; fi
+  if [[ "${1:-}" == "parity" ]]; then
+    shift
+    python3 "$(_protocol_dir)/tools/parity_diff.py" "$@"
+    return
+  fi
   if [[ "${1:-}" == "decode" && -n "${2:-}" ]]; then
     python3 "$(_protocol_dir)/tools/decode.py" "$2"
     return

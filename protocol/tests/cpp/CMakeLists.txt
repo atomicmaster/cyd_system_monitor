@@ -21,6 +21,9 @@ target_link_libraries(protocol_core_tests PRIVATE protocol_core)
 target_compile_definitions(protocol_core_tests PRIVATE
   CYD_PROTOCOL_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../fixtures")
 
+add_executable(protocol_parity_cli parity_cli.cpp)
+target_link_libraries(protocol_parity_cli PRIVATE protocol_core)
+
 enable_testing()
 add_test(NAME protocol_generated_tests COMMAND protocol_generated_tests)
 add_test(NAME protocol_core_tests COMMAND protocol_core_tests)

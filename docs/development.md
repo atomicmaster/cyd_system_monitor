@@ -125,6 +125,7 @@ without depending on ignored vendor downloads.
   real ESP-IDF v5.3.2 `idf.py build` producing a flashable
   `cyd_system_monitor_firmware.bin` (199588 bytes; 81% of the smallest app
   partition free) and a passing `idf.py size` report.
+- **Protocol parity gate:** `./dev check protocol` (and the firmware and host lanes) end with `protocol/tools/parity_diff.py`, which fails if the C++ and Rust codecs disagree on any corpus input; `./dev run protocol -- parity [--seed N]` runs it alone.
 - **Formatting/tests:** `./dev check {firmware,simulator,host,macos,protocol}`
   pass locally, including `cargo fmt --check`, `cargo clippy -D warnings`, and
   `cargo test` for host and the generated protocol crate, plus a

@@ -23,6 +23,7 @@ check() {
     cargo clippy --all-targets -- -D warnings
     cargo test
   )
+  run_parity_gate host
 }
 
 run() {
