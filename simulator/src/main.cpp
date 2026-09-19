@@ -65,9 +65,12 @@ int main(int argc, char** argv) {
   if (scenario == "cpu-replay") {
     return simulator::scenarios::RunCpuReplay();
   }
+  if (scenario == "metric-cards") {
+    return simulator::scenarios::RunMetricCards();
+  }
   std::fprintf(stderr,
                "usage: simulator <scenario>\n"
                "  scenario: smoke | display-smoke | calibration | peripherals | capacity | "
-               "protocol-replay | cpu-lifecycle | cpu-replay\n");
+               "protocol-replay | cpu-lifecycle | cpu-replay | metric-cards\n");
   return 2;
 }

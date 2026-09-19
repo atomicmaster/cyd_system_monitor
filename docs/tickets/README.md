@@ -4,7 +4,7 @@
 
 This is the repository-local MVP backlog. The [implementation plan](../../IMPLEMENTATION_PLAN.md) defines milestone acceptance; ticket prerequisites define the order in which work can start. A tracer bullet carries one observable behavior through the required layers. Toolchains, contract foundations, and measurement gates are identified separately rather than presented as user features.
 
-**C01, TB01 and TB02 are done**; the first working Host path (agreed snapshot bytes, shared display state under replay, a physically paired Mac showing live CPU with stale/reconnect behavior) is complete. C02 is next. The remaining tickets are specified or outlined below.
+**C01, TB01, TB02 and C02 are done**; the first working Host path (agreed snapshot bytes, shared display state under replay, a physically paired Mac showing live CPU with stale/reconnect behavior) is complete. TB03–TB09 are next. The remaining tickets are specified or outlined below.
 
 ## Start here
 
@@ -78,7 +78,7 @@ The dependency column repeats each ticket's prerequisite links for navigation. E
 | [C01](C01.md) | Define and exercise the first USB snapshot contract | Executable | [F08](F08.md) |
 | [TB01](TB01.md) | Replay a CPU snapshot into the shared display model | Executable | [C01](C01.md) |
 | [TB02](TB02.md) | Pair a Mac and display live CPU over USB | Executable | [TB01](TB01.md) |
-| [C02](C02.md) | Publish the extension interfaces for parallel feature slices | Outline | [TB02](TB02.md) |
+| [C02](C02.md) | Publish the extension interfaces for parallel feature slices | Executable | [TB02](TB02.md) |
 | [TB03](TB03.md) | Display Physical RAM Occupied with truthful availability | Outline | [C02](C02.md) |
 | [TB04](TB04.md) | Display root storage capacity and disk activity | Outline | [C02](C02.md) |
 | [TB05](TB05.md) | Display network rates and Host WiFi coverage | Outline | [C02](C02.md) |

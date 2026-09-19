@@ -44,6 +44,47 @@ impl<T> MetricSample<T> {
     }
 }
 
+/// One Host metric collector. The session loop calls `collect` once per
+/// second with a monotonic clock and puts the result in the next complete
+/// snapshot; a collector never opens ports, blocks on slow sources, or
+/// decides how its value is displayed. A slow source (a subprocess, a
+/// permission prompt) keeps its own cache and returns the last sample with
+/// its age, or an unavailable sample, rather than stalling this call.
+pub trait Collector {
+    type Reading;
+    fn collect(&mut self, now_ms: u64) -> MetricSample<Self::Reading>;
+}
+
+/// Physical RAM Occupied as two byte counts (total minus free pages).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RamReading {
+    pub used_bytes: u64,
+    pub total_bytes: u64,
+}
+
+/// A collector that replays a fixed script, one entry per call and then the
+/// last entry forever. Fixture adapter for scenarios and tests.
+pub struct ScriptedCollector<T: Clone> {
+    script: Vec<MetricSample<T>>,
+    next: usize,
+}
+
+impl<T: Clone> ScriptedCollector<T> {
+    pub fn new(script: Vec<MetricSample<T>>) -> Self {
+        assert!(!script.is_empty(), "a script needs at least one sample");
+        Self { script, next: 0 }
+    }
+}
+
+impl<T: Clone> Collector for ScriptedCollector<T> {
+    type Reading = T;
+    fn collect(&mut self, _now_ms: u64) -> MetricSample<T> {
+        let sample = self.script[self.next.min(self.script.len() - 1)].clone();
+        self.next += 1;
+        sample
+    }
+}
+
 /// Cumulative CPU tick counters as reported by the OS (Mach
 /// `HOST_CPU_LOAD_INFO`: 32-bit counters, so a decrease means a reset).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,5 +226,26 @@ mod tests {
         s.sample(ticks(0, 0, 0, 0), 0);
         s.reset();
         assert_eq!(s.sample(ticks(10, 0, 10, 0), 1000).value, None);
+    }
+
+    #[test]
+    fn scripted_collectors_replay_then_hold_the_last_sample() {
+        let mut ram = ScriptedCollector::new(vec![
+            MetricSample::unavailable(MetricAvailability::TemporarilyUnavailable),
+            MetricSample::available(RamReading {
+                used_bytes: 8,
+                total_bytes: 16,
+            }),
+        ]);
+        assert_eq!(ram.collect(0).value, None);
+        let second = ram.collect(1000);
+        assert_eq!(
+            second.value,
+            Some(RamReading {
+                used_bytes: 8,
+                total_bytes: 16
+            })
+        );
+        assert_eq!(ram.collect(2000), second, "the last sample is held");
     }
 }

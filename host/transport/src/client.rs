@@ -5,8 +5,9 @@
 //! events out, so it is testable without a serial port.
 
 use protocol::{
-    decode, encode_control, encode_cpu, CommandBody, CommandOperation, CommandResult, ControlBody,
-    CpuSnapshot, Envelope, Error, FrameStream, HelloBody, Message, MessageType, PairBody,
+    decode, encode_control, encode_snapshot, CommandBody, CommandOperation, CommandResult,
+    ControlBody, CpuSnapshot, Envelope, Error, FrameStream, HelloBody, Message, MessageType,
+    PairBody, RamSnapshot,
 };
 
 const ZERO: [u8; 16] = [0; 16];
@@ -207,15 +208,21 @@ impl HostClient {
         self.sequence
     }
 
-    /// A complete CPU snapshot; only valid once paired.
-    pub fn snapshot(&mut self, cpu: &CpuSnapshot, utc_ms: Option<u64>) -> Option<Vec<u8>> {
+    /// A complete snapshot: CPU plus each optional metric group. Only valid
+    /// once paired.
+    pub fn snapshot(
+        &mut self,
+        cpu: &CpuSnapshot,
+        ram: Option<&RamSnapshot>,
+        utc_ms: Option<u64>,
+    ) -> Option<Vec<u8>> {
         if self.phase != Phase::Live {
             return None;
         }
         let sequence = self.next_sequence();
         let mut envelope = self.envelope(MessageType::Snapshot, self.session, sequence);
         envelope.utc_ms = utc_ms;
-        encode_cpu(&envelope, cpu).ok()
+        encode_snapshot(&envelope, cpu, ram).ok()
     }
 
     /// A command frame and the identity to match its reply against. Reusing

@@ -32,6 +32,14 @@ set(_fd_generator "${CMAKE_CURRENT_LIST_DIR}/../tools/generate_profile_header.py
 # this file's scope and early-scan safety.
 include("${CMAKE_CURRENT_LIST_DIR}/calibration/CMakeLists.txt")
 
+# Every file in src/cards/ is one registered metric card (see
+# include/firmware/domain/card_registry.def); the glob keeps feature tickets
+# from all editing this list. No CONFIGURE_DEPENDS: ESP-IDF's early
+# requirements scan runs this file in script mode, where it is invalid, so a
+# newly added card file is picked up on the next CMake configure (re-run
+# `./dev build`, or touch this file).
+file(GLOB _fd_card_sources "${CMAKE_CURRENT_LIST_DIR}/src/cards/*.cpp")
+
 set(_fd_sources
     "src/geometry_check.cpp"
     "src/reset_reason.cpp"
@@ -44,7 +52,9 @@ set(_fd_sources
     "src/link_view.cpp"
     "src/cpu_view.cpp"
     "src/cpu_replay.cpp"
+    "src/card_registry.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../protocol/core/cpp/protocol.cpp"
+    ${_fd_card_sources}
     "${FIRMWARE_DOMAIN_CALIBRATION_SOURCES}")
 
 if(ESP_PLATFORM)

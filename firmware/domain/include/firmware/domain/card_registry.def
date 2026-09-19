@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// The registered metric cards, in display order: CYD_CARD(id, MakeFunction).
+// One line per feature; the function is defined in
+// firmware/domain/src/cards/<id>_card.cpp (picked up by a CMake glob).
+// Adding a metric edits this file by exactly one line and touches nothing
+// else that is shared.
+CYD_CARD(cpu, MakeCpuCard)
+CYD_CARD(ram, MakeRamCard)

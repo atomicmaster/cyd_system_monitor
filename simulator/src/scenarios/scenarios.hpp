@@ -42,4 +42,10 @@ int RunCpuLifecycle();
 // checkpoint line with simulator/scenarios/cpu-replay.expected.
 int RunCpuReplay();
 
+// Feeds snapshots with and without the RAM group through HostFeed and prints
+// every registered metric card (firmware/domain/card_registry.def) at each
+// step, compared with simulator/scenarios/metric-cards.expected. Matches
+// C02's `./dev run simulator -- metric-cards`.
+int RunMetricCards();
+
 }  // namespace simulator::scenarios

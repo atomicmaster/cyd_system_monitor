@@ -8,7 +8,7 @@
 //   TICK <ms>      advance the clock, then tick
 //   UNPAIR         local unpair
 // After each command: zero or more "OUT <hex>" frames, then one
-// "STATE phase=<n> paired=<0|1> seen=<0|1> cpu=<per-mille> code=<n|->" line.
+// "STATE phase=<n> paired=<0|1> seen=<0|1> cpu=<per-mille> ram=<used>/<total>|- code=<n|->" line.
 #include <cstdio>
 #include <iostream>
 #include <sstream>
@@ -78,8 +78,15 @@ int main() {
       std::printf("\n");
     }
     const auto& state = link.state();
-    std::printf("STATE phase=%d paired=%d seen=%d cpu=%u code=", static_cast<int>(link.phase()),
+    std::printf("STATE phase=%d paired=%d seen=%d cpu=%u ram=", static_cast<int>(link.phase()),
                 link.paired() ? 1 : 0, state.has_seen_host ? 1 : 0, state.cpu.value_per_mille);
+    if (state.ram.has_data) {
+      std::printf("%llu/%llu", static_cast<unsigned long long>(state.ram.used_bytes),
+                  static_cast<unsigned long long>(state.ram.total_bytes));
+    } else {
+      std::printf("-");
+    }
+    std::printf(" code=");
     if (const auto code = link.pending_code()) {
       std::printf("%u\n", *code);
     } else {

@@ -20,9 +20,21 @@ struct HostMetricState {
   uint64_t source_time_ms = 0;
   uint64_t received_at_ms = 0;
 };
+// Physical RAM Occupied (C02's first metric group). Absent until a snapshot
+// carries the group; freshness follows the same 3 s rule as CPU.
+struct RamMetricState {
+  bool has_data = false;
+  protocol::Availability availability = protocol::Availability::kTemporarilyUnavailable;
+  protocol::Freshness freshness = protocol::Freshness::kFresh;
+  uint64_t used_bytes = 0;
+  uint64_t total_bytes = 0;
+  uint64_t source_time_ms = 0;
+  uint64_t received_at_ms = 0;
+};
 struct HostState {
   ConnectionState connection = ConnectionState::kNegotiating;
   HostMetricState cpu{};
+  RamMetricState ram{};
   uint64_t host_last_seen_ms = 0;
   bool has_seen_host = false;  // false on cold boot: last-seen is unknown, not zero
   bool time_available = false;

@@ -10,7 +10,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use protocol::{
     encode_control, Availability, CommandOperation, CommandResult, ControlBody, CpuSnapshot,
-    Envelope, Freshness, HelloBody, MessageType,
+    Envelope, Freshness, HelloBody, MessageType, RamSnapshot,
 };
 use transport::client::{Event, HostClient, Phase, Refusal};
 
@@ -32,6 +32,7 @@ struct State {
     paired: bool,
     seen: bool,
     cpu: u32,
+    ram: Option<(u64, u64)>,
     code: Option<u32>,
 }
 
@@ -124,6 +125,9 @@ fn parse_state(rest: &str) -> State {
         paired: field("paired") == "1",
         seen: field("seen") == "1",
         cpu: field("cpu").parse().unwrap(),
+        ram: field("ram")
+            .split_once('/')
+            .map(|(u, t)| (u.parse().unwrap(), t.parse().unwrap())),
         code: field("code").parse().ok(),
     }
 }
@@ -187,7 +191,7 @@ fn first_pairing_needs_touch_then_live_data_flows() {
     ));
     assert_eq!(client.phase(), Phase::PairSent);
     assert!(
-        client.snapshot(&snapshot(1), None).is_none(),
+        client.snapshot(&snapshot(1), None, None).is_none(),
         "no data before pairing"
     );
 
@@ -202,7 +206,7 @@ fn first_pairing_needs_touch_then_live_data_flows() {
     assert!(state.paired);
     assert_eq!(state.phase, OPEN);
 
-    let frame = client.snapshot(&snapshot(437), None).unwrap();
+    let frame = client.snapshot(&snapshot(437), None, None).unwrap();
     let (_, state) = device.push(&frame);
     assert!(state.seen);
     assert_eq!(state.cpu, 437);
@@ -215,7 +219,7 @@ fn paired_host_reconnects_without_touch_on_a_new_session() {
     handshake(&mut device, &mut first);
     let (frames, _) = device.command("CONFIRM 1");
     deliver(&mut first, &frames);
-    let (_, state) = device.push(&first.snapshot(&snapshot(300), None).unwrap());
+    let (_, state) = device.push(&first.snapshot(&snapshot(300), None, None).unwrap());
     assert_eq!(state.cpu, 300);
 
     let mut second = HostClient::new(HOST, Some(DEVICE), CODE, SESSION_B);
@@ -226,9 +230,9 @@ fn paired_host_reconnects_without_touch_on_a_new_session() {
     }));
 
     // The previous session's snapshots are rejected; the new one's are not.
-    let (_, state) = device.push(&first.snapshot(&snapshot(999), None).unwrap());
+    let (_, state) = device.push(&first.snapshot(&snapshot(999), None, None).unwrap());
     assert_eq!(state.cpu, 300);
-    let (_, state) = device.push(&second.snapshot(&snapshot(650), None).unwrap());
+    let (_, state) = device.push(&second.snapshot(&snapshot(650), None, None).unwrap());
     assert_eq!(state.cpu, 650);
 }
 
@@ -266,7 +270,7 @@ fn a_second_host_is_refused_by_a_paired_device() {
     let (events, state) = handshake(&mut device, &mut stranger);
     assert!(events.contains(&Event::Refused(Refusal::NotPairedWithYou)));
     assert!(state.paired);
-    assert!(stranger.snapshot(&snapshot(1), None).is_none());
+    assert!(stranger.snapshot(&snapshot(1), None, None).is_none());
 }
 
 #[test]
@@ -338,4 +342,30 @@ fn unpair_and_calibration_reset_are_idempotent() {
     );
     assert!(!state.paired);
     assert_eq!(state.phase, NEGOTIATED);
+}
+
+#[test]
+fn a_ram_group_reaches_the_firmware_state_and_may_stop_being_sent() {
+    let mut device = Device::spawn();
+    let mut client = HostClient::new(HOST, None, CODE, SESSION_A);
+    handshake(&mut device, &mut client);
+    let (frames, _) = device.command("CONFIRM 1");
+    deliver(&mut client, &frames);
+
+    let ram = RamSnapshot {
+        availability: Availability::Available,
+        used_bytes: 8 << 30,
+        total_bytes: 16 << 30,
+        source_age_ms: 250,
+        freshness: Freshness::Fresh,
+    };
+    let frame = client.snapshot(&snapshot(400), Some(&ram), None).unwrap();
+    let (_, state) = device.push(&frame);
+    assert_eq!((state.cpu, state.ram), (400, Some((8 << 30, 16 << 30))));
+
+    // A later snapshot without the group keeps the last RAM reading (it
+    // goes stale on its own clock) while CPU updates.
+    let frame = client.snapshot(&snapshot(500), None, None).unwrap();
+    let (_, state) = device.push(&frame);
+    assert_eq!((state.cpu, state.ram), (500, Some((8 << 30, 16 << 30))));
 }

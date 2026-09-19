@@ -3,12 +3,82 @@
 //! CPU load from the public Mach `host_statistics(HOST_CPU_LOAD_INFO)`
 //! call. No root helper is involved.
 
-use metrics::CpuTicks;
+use metrics::{Collector, CpuSampler, CpuTicks, MetricAvailability, MetricSample};
 
 /// Read cumulative CPU ticks, or `None` if the kernel call fails or this
 /// is not macOS.
 pub fn read_ticks() -> Option<CpuTicks> {
     imp::read_ticks()
+}
+
+/// The CPU collector: Mach tick counters through `CpuSampler`. The tick source
+/// is a plain function so tests can script it.
+pub struct CpuCollector {
+    source: fn() -> Option<CpuTicks>,
+    sampler: CpuSampler,
+}
+
+impl CpuCollector {
+    pub fn new() -> Self {
+        Self::with_source(read_ticks)
+    }
+    pub fn with_source(source: fn() -> Option<CpuTicks>) -> Self {
+        Self {
+            source,
+            sampler: CpuSampler::default(),
+        }
+    }
+}
+
+impl Default for CpuCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Collector for CpuCollector {
+    type Reading = u16;
+    /// Per mille; a failed read is an explicit error, never a zero.
+    fn collect(&mut self, now_ms: u64) -> MetricSample<u16> {
+        match (self.source)() {
+            Some(ticks) => self.sampler.sample(ticks, now_ms),
+            None => {
+                self.sampler.reset();
+                MetricSample::unavailable(MetricAvailability::Error)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod collector_tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_read_is_an_error_and_forces_a_new_baseline() {
+        let mut cpu = CpuCollector::with_source(|| None);
+        let failed = cpu.collect(0);
+        assert_eq!(failed.availability, MetricAvailability::Error);
+        assert_eq!(failed.value, None);
+    }
+
+    #[test]
+    fn the_collector_yields_a_rate_from_two_reads() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static CALLS: AtomicU32 = AtomicU32::new(0);
+        fn ticks() -> Option<CpuTicks> {
+            let n = CALLS.fetch_add(1, Ordering::SeqCst);
+            Some(CpuTicks {
+                user: 30 * n,
+                system: 0,
+                idle: 70 * n,
+                nice: 0,
+            })
+        }
+        let mut cpu = CpuCollector::with_source(ticks);
+        assert_eq!(cpu.collect(0).value, None, "first sample is a baseline");
+        assert_eq!(cpu.collect(1000).value, Some(300));
+    }
 }
 
 #[cfg(target_os = "macos")]

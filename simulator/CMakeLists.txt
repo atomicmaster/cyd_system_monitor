@@ -46,6 +46,7 @@ add_executable(simulator
   src/scenarios/protocol_replay_scenario.cpp
   src/scenarios/cpu_lifecycle_scenario.cpp
   src/scenarios/cpu_replay_scenario.cpp
+  src/scenarios/metric_cards_scenario.cpp
   src/fixtures.cpp)
 target_link_libraries(simulator PRIVATE firmware_domain firmware_ui lvgl)
 target_compile_features(simulator PRIVATE cxx_std_20)

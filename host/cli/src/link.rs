@@ -7,7 +7,8 @@ use std::io;
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use metrics::{CpuSampler, MetricAvailability};
+use metrics::{Collector, MetricAvailability};
+use platform_macos::cpu::CpuCollector;
 use protocol::{Availability, CommandOperation, CommandResult, CpuSnapshot, Freshness};
 use transport::client::{Event, HostClient, Phase, Refusal};
 use transport::serial::SerialPort;
@@ -135,16 +136,13 @@ impl Link {
 
     /// Sends one snapshot per second forever; returns only on a link error.
     pub fn serve(&mut self) -> Result<(), LinkError> {
-        let mut sampler = CpuSampler::default();
+        let mut cpu_collector = CpuCollector::new();
         let epoch = Instant::now();
         let mut next = Instant::now();
         let mut buf = [0u8; 512];
         loop {
             let now_ms = epoch.elapsed().as_millis() as u64;
-            let sample = match platform_macos::cpu::read_ticks() {
-                Some(ticks) => sampler.sample(ticks, now_ms),
-                None => metrics::MetricSample::unavailable(MetricAvailability::Error),
-            };
+            let sample = cpu_collector.collect(now_ms);
             let snapshot = CpuSnapshot {
                 availability: match sample.availability {
                     MetricAvailability::Available => Availability::Available,
@@ -162,7 +160,7 @@ impl Link {
             };
             let frame = self
                 .client
-                .snapshot(&snapshot, Some(utc_ms()))
+                .snapshot(&snapshot, None, Some(utc_ms()))
                 .ok_or(LinkError::Timeout("sending: the link is no longer paired"))?;
             self.port.write_all(&frame)?;
             match sample.value {
