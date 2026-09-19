@@ -7,10 +7,10 @@ Rust workspace for the macOS per-user LaunchAgent and CLI.
 ```text
 host/
 ├── daemon/          cyd-hostd: LaunchAgent skeleton, no external contact yet
-├── cli/             cyd-host: pairing/diagnostics/configuration commands
+├── cli/             cyd-host: run (pair + live CPU), unpair, reset-calibration, forget
 ├── metrics/         portable Host Metric seam (MetricAvailability, MetricSample)
 ├── platform-macos/  macOS collector/permission/service-management adapter home
-├── transport/       USB discovery, pairing, and session transport (TB02)
+├── transport/       HostClient handshake/pairing state machine and serial port (TB02)
 └── protocol/        Host-side codec home, wrapping protocol/generated/rust
 ```
 

@@ -31,7 +31,7 @@ check() {
 
 # Runs a diagnostic case on a connected board:
 #   ./dev run hardware -- <case> --port <path>
-#     case: display-smoke | calibration | peripherals | capacity | cpu-replay
+#     case: display-smoke | calibration | peripherals | capacity | cpu-replay | paired-cpu
 #
 # Unlike the simulator (which builds a separate scenario binary per case
 # because it has no operator to drive it interactively), the real board
@@ -71,7 +71,7 @@ run() {
   done
 
   if [[ -z "$case_name" ]]; then
-    echo "error: 'run hardware' requires a case: display-smoke | calibration | peripherals | capacity | cpu-replay" >&2
+    echo "error: 'run hardware' requires a case: display-smoke | calibration | peripherals | capacity | cpu-replay | paired-cpu" >&2
     return 1
   fi
   if [[ -z "$port" ]]; then
@@ -94,6 +94,16 @@ run() {
     (cd "$(dev_root)/firmware" && idf.py -p "$port" flash) || return 1
     python3 "$(dev_root)/tools/hardware/cpu_replay_capture.py" --port "$port" \
       --out "$(dev_root)/firmware/build/cpu-replay-capture.log"
+    return
+  fi
+
+  if [[ "$case_name" == "paired-cpu" ]]; then
+    # TB02: flash, then run the foreground Host producer against the board.
+    # Operator steps (pairing touch, stop/restart, unplug, sleep/wake) are in
+    # docs/tickets/TB02.md; this leaves the producer running until Ctrl-C.
+    echo "Flashing the image, then starting the Host producer on '$port' (exclusive board session)."
+    (cd "$(dev_root)/firmware" && idf.py -p "$port" flash) || return 1
+    (cd "$(dev_root)/host" && cargo run --quiet --bin cyd-host -- run --port "$port")
     return
   fi
 

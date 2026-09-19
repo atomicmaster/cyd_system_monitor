@@ -154,3 +154,13 @@ without depending on ignored vendor downloads.
   Apple Silicon macOS" constraint in F02 is about the developer's local
   bootstrap, not the CI runner; every other job stays on `macos-15` because
   that is where developers actually work.
+
+## Paired CPU session (TB02)
+
+```sh
+./dev run hardware -- paired-cpu --port /dev/cu.usbserial-XXXX   # flash, then run the Host producer
+cd host && cargo run --bin cyd-host -- run --port /dev/cu.usbserial-XXXX
+cyd-host unpair|reset-calibration --port ...                       # recovery commands
+```
+
+First pairing needs a touch on the display within 60 s; see `docs/tickets/TB02.md` for the operator steps.
