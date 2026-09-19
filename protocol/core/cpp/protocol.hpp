@@ -13,7 +13,7 @@ namespace cyd::protocol {
 
 // The first production USB slice is deliberately small.  All later metric
 // fields are optional extensions; the Host always sends a complete snapshot.
-constexpr std::size_t kMaxFrameBytes = 1024;
+constexpr std::size_t kMaxFrameBytes = 2048;
 constexpr std::size_t kSessionIdBytes = 16;
 
 enum class Error {

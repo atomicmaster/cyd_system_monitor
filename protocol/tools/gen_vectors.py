@@ -55,6 +55,9 @@ snap = frame(envelope(4, CPU))
 write("cpu-snapshot-v1-unknown-nested.hex",
       frame(envelope(4, CPU, [(8, uint(4, 2) + uint(4, 2) + u(1) + u(2) + uint(4, 2) + u(3) + u(4))])),
       "unknown optional key 8 holding [[1,2],[3,4]]: skipped, snapshot applies")
+write("cpu-snapshot-v1-large-unknown.hex",
+      frame(envelope(4, CPU, [(8, uint(2, 1100) + bytes(1100))])),
+      "unknown optional key 8 holding 1,100 bytes: a ~1.2 KB frame, over the old 1,024 cap")
 write("cpu-snapshot-v1-too-deep.hex",
       frame(envelope(4, CPU, [(8, nest(4))])),
       "unknown optional key 8 nested four arrays deep: over the skip limit")
@@ -74,8 +77,8 @@ write("cpu-snapshot-v1-zero-length.hex", frame(b"\x00" * 5, length=0),
 write("cpu-snapshot-v1-trailing-byte.hex", snap + b"\x00",
       "one byte beyond the declared length")
 write("cpu-snapshot-v1-truncated.hex", snap[:-1], "final CRC byte missing")
-write("cpu-snapshot-v1-oversized-length.hex", frame(envelope(4, CPU), length=1024),
-      "declared length 1024 exceeds the 1022-byte limit")
+write("cpu-snapshot-v1-oversized-length.hex", frame(envelope(4, CPU), length=2048),
+      "declared length 2048 exceeds the 2046-byte limit")
 write("hello-reply-v1.hex", frame(envelope(2, HELLO)), "HelloReply, minor 0")
 write("hello-v1-incompatible-major.hex", frame(envelope(1, HELLO, major=2)),
       "Hello from major 2: reply with Error, apply nothing")

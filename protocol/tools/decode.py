@@ -15,7 +15,7 @@ def main():
     wire = fixture_bytes(sys.argv[1])
     if len(wire) < 7: print("error: truncated"); return 1
     size = int.from_bytes(wire[:2], "big")
-    if size > 1022 or size + 2 != len(wire): print("error: bad length"); return 1
+    if size > 2046 or size + 2 != len(wire): print("error: bad length"); return 1
     cbor, crc = wire[2:-4], int.from_bytes(wire[-4:], "big")
     if zlib.crc32(cbor) != crc: print("error: bad-crc"); return 1
     print(f"frame: {len(wire)} bytes, crc32: {crc:08x}")

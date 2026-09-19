@@ -25,3 +25,4 @@ hello-reply-v1|hello-reply-v1.hex|control|none
 hello-incompatible-major|hello-v1-incompatible-major.hex|control|unsupported-major
 hello-wrong-body|hello-v1-wrong-body.hex|control|malformed
 error-v1|error-v1.hex|control|none
+cpu-large-unknown|cpu-snapshot-v1-large-unknown.hex|cpu|none

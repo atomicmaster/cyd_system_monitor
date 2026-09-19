@@ -110,7 +110,7 @@ bool RunStreamTests(const std::vector<uint8_t> &good) {
   }
   {
     // Garbage (including a plausible-but-wrong length) then a good frame.
-    std::vector<uint8_t> wire = {0xff, 0xff, 0x00, 0x00, 0x04};
+    std::vector<uint8_t> wire = {0xff, 0xff, 0x00, 0x00, 0x08};
     wire.insert(wire.end(), good.begin(), good.end());
     FrameStream stream;
     FrameStream::Result result;
@@ -123,7 +123,7 @@ bool RunStreamTests(const std::vector<uint8_t> &good) {
   }
   {
     // A CRC-damaged frame is skipped.  Rescanning its bytes can find a
-    // plausible length that waits for up to 1,022 bytes, so recovery is
+    // plausible length that waits for up to 2,046 bytes, so recovery is
     // bounded by that much later traffic rather than immediate.
     auto damaged = good;
     damaged[10] ^= 0x40;
@@ -131,7 +131,7 @@ bool RunStreamTests(const std::vector<uint8_t> &good) {
     FrameStream::Result result;
     stream.Push(damaged);
     int recovered = 0;
-    for (int i = 0; i < 40; ++i) {
+    for (int i = 0; i < 80; ++i) {
       stream.Push(good);
       while (stream.Next(&result)) {
         if (result.error != Error::kNone)
@@ -139,7 +139,7 @@ bool RunStreamTests(const std::vector<uint8_t> &good) {
         ++recovered;
       }
     }
-    if (recovered < 30 || stream.dropped_bytes() == 0)
+    if (recovered < 60 || stream.dropped_bytes() == 0)
       return false;
   }
   {
@@ -310,7 +310,7 @@ int main() {
       cyd::protocol::Error::kMalformed)
     return 10;
   auto oversized = frame;
-  oversized[0] = 0x04;
+  oversized[0] = 0x08;
   oversized[1] = 0x00;
   if (cyd::protocol::Decode(oversized, &decoded) !=
       cyd::protocol::Error::kTooLarge)

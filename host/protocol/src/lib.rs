@@ -8,7 +8,7 @@ pub use protocol_generated::Smoke;
 
 /// Bounded versioned-CBOR-over-USB core shared semantically with the
 /// firmware codec. Frames are `u16-be length | CBOR | CRC32-be`.
-pub const MAX_FRAME_BYTES: usize = 1024;
+pub const MAX_FRAME_BYTES: usize = 2048;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     Truncated,
@@ -958,7 +958,7 @@ mod tests {
         incompatible[end - 4..].copy_from_slice(&crc.to_be_bytes());
         assert_eq!(decode_cpu(&incompatible), Err(Error::UnsupportedMajor));
         let mut oversized = f.clone();
-        oversized[..2].copy_from_slice(&1024u16.to_be_bytes());
+        oversized[..2].copy_from_slice(&2048u16.to_be_bytes());
         assert_eq!(decode_cpu(&oversized), Err(Error::TooLarge));
         let mut invalid_availability = f.clone();
         // The canonical vector's CPU availability is the value at offset 32.
@@ -1154,28 +1154,28 @@ mod tests {
         );
 
         let mut stream = FrameStream::default();
-        let mut wire = vec![0xff, 0xff, 0, 0, 4];
+        let mut wire = vec![0xff, 0xff, 0, 0, 8];
         wire.extend(&good);
         stream.push(&wire);
         assert_eq!(stream.next_frame(), Some(good.clone()));
         assert_eq!(stream.next_frame(), None);
 
         // A damaged frame is skipped. Rescanning its bytes can find a
-        // plausible length that waits for up to 1,022 bytes, so recovery is
+        // plausible length that waits for up to 2,046 bytes, so recovery is
         // bounded by that much later traffic rather than immediate.
         let mut damaged = good.clone();
         damaged[10] ^= 0x40;
         let mut stream = FrameStream::default();
         stream.push(&damaged);
         let mut recovered = 0;
-        for _ in 0..40 {
+        for _ in 0..80 {
             stream.push(&good);
             while let Some(frame) = stream.next_frame() {
                 assert!(decode_cpu(&frame).is_ok());
                 recovered += 1;
             }
         }
-        assert!(recovered >= 30 && stream.dropped_bytes() > 0, "{recovered}");
+        assert!(recovered >= 60 && stream.dropped_bytes() > 0, "{recovered}");
 
         // Valid length and CRC, rejected body: consumed whole, then resumes.
         let bad = fixture("cpu-snapshot-v1-incompatible-major.hex");

@@ -2,7 +2,7 @@
 
 # M2 USB protocol core
 
-Frames are bounded to 1,024 bytes: a two-byte big-endian frame length,
+Frames are bounded to 2,048 bytes: a two-byte big-endian frame length,
 canonical CBOR, then a big-endian IEEE CRC-32 over the CBOR bytes. The length
 includes CBOR and CRC but not itself. A bad length, CRC, duplicate known key,
 unknown required value, unsupported major, or nesting beyond the decoder limit
@@ -66,13 +66,13 @@ remain intentionally uncommitted until M5/M6 measurements.
 
 Both codecs provide the same `FrameStream`. Bytes may arrive in any
 fragmentation. At the buffer start it reads the length: a length under 5 or
-over 1,022 discards one byte; an incomplete frame waits; a complete frame with
+over 2,046 discards one byte; an incomplete frame waits; a complete frame with
 a bad CRC discards one byte. A frame with a valid length and CRC but a rejected
 body (unsupported major, malformed CBOR, wrong body) is consumed whole and its
 error is reported, so a bad message never desynchronizes the stream. Resync
-after corruption can be delayed while a false length waits for up to 1,022
-bytes, so recovery is bounded by that much later traffic (about 22 seconds of
-snapshots at 1 Hz worst case); the Host silence rule (15 seconds) already
+after corruption can be delayed while a false length waits for up to 2,046
+bytes, so recovery is bounded by that much later traffic (about 2 seconds of
+snapshots at 1 Hz and ~1 KB each); the Host silence rule (15 seconds) already
 covers that window.
 
 Unknown optional values are skipped only when they are unsigned/negative
