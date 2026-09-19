@@ -31,6 +31,9 @@ target_link_libraries(firmware_domain_host_state_tests PRIVATE firmware_domain)
 add_executable(firmware_domain_host_link_tests test_host_link.cpp)
 target_link_libraries(firmware_domain_host_link_tests PRIVATE firmware_domain)
 
+add_executable(link_cli link_cli.cpp)
+target_link_libraries(link_cli PRIVATE firmware_domain)
+
 enable_testing()
 add_test(NAME firmware_domain_tests COMMAND firmware_domain_tests)
 add_test(NAME firmware_domain_calibration_tests COMMAND firmware_domain_calibration_tests)

@@ -1,0 +1,245 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Host side of the negotiated link (see `protocol/CORE_PROTOCOL.md`,
+//! "Link handshake and pairing"). Pure state machine: bytes in, frames and
+//! events out, so it is testable without a serial port.
+
+use protocol::{
+    decode, encode_control, encode_cpu, CommandBody, CommandOperation, CommandResult, ControlBody,
+    CpuSnapshot, Envelope, Error, FrameStream, HelloBody, Message, MessageType, PairBody,
+};
+
+const ZERO: [u8; 16] = [0; 16];
+
+/// The device's reason for refusing the Host (one-byte `Error` body).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    Incompatible,
+    NotPairedWithYou,
+    Declined,
+    BadRequest,
+    Unknown(u8),
+}
+
+impl Refusal {
+    fn from_body(body: &[u8]) -> Refusal {
+        match body.first() {
+            Some(1) => Refusal::Incompatible,
+            Some(2) => Refusal::NotPairedWithYou,
+            Some(3) => Refusal::Declined,
+            Some(4) => Refusal::BadRequest,
+            Some(other) => Refusal::Unknown(*other),
+            None => Refusal::Unknown(0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Idle,
+    HelloSent,
+    /// Pair sent; a first pairing waits here for the touch confirmation.
+    PairSent,
+    Live,
+    Refused(Refusal),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    /// HelloReply received; carries the device's supported version.
+    Negotiated {
+        device_major: u8,
+        device_minor: u8,
+    },
+    /// Pair confirmed; snapshots may now be sent. Carries the device identity
+    /// to persist for later reconnects.
+    Paired {
+        device_identity: [u8; 16],
+    },
+    Refused(Refusal),
+    CommandReply {
+        command_identity: u32,
+        operation: CommandOperation,
+        result: CommandResult,
+    },
+}
+
+#[derive(Debug, Default)]
+pub struct Output {
+    /// Frames to write to the device, in order.
+    pub frames: Vec<Vec<u8>>,
+    pub events: Vec<Event>,
+}
+
+pub struct HostClient {
+    host: [u8; 16],
+    known_device: Option<[u8; 16]>,
+    code: u32,
+    session: [u8; 16],
+    phase: Phase,
+    stream: FrameStream,
+    sequence: u32,
+    next_command: u32,
+    minor: u8,
+}
+
+impl HostClient {
+    /// `code` is the six-digit matching code shown to the operator;
+    /// `session` is the fresh random identity for this connection.
+    pub fn new(
+        host: [u8; 16],
+        known_device: Option<[u8; 16]>,
+        code: u32,
+        session: [u8; 16],
+    ) -> Self {
+        Self {
+            host,
+            known_device,
+            code,
+            session,
+            phase: Phase::Idle,
+            stream: FrameStream::default(),
+            sequence: 0,
+            next_command: 1,
+            minor: 0,
+        }
+    }
+
+    pub fn phase(&self) -> Phase {
+        self.phase
+    }
+
+    fn envelope(&mut self, kind: MessageType, session: [u8; 16], sequence: u32) -> Envelope {
+        Envelope {
+            major: 1,
+            minor: self.minor,
+            kind,
+            session,
+            sequence,
+            utc_ms: None,
+            utc_uncertainty_ms: None,
+        }
+    }
+
+    /// The opening `Hello`. `utc_ms` lets the device show wall-clock time.
+    pub fn start(&mut self, utc_ms: Option<u64>) -> Result<Vec<u8>, Error> {
+        self.phase = Phase::HelloSent;
+        let envelope = self.envelope(MessageType::Hello, ZERO, 1);
+        encode_control(
+            &envelope,
+            &ControlBody::Hello(HelloBody {
+                supported_major: 1,
+                supported_minor: 0,
+                capabilities: 0,
+                configuration_revision: 0,
+                utc_ms,
+                utc_uncertainty_ms: None,
+            }),
+        )
+    }
+
+    /// Feeds bytes from the device (frames interleaved with log text).
+    pub fn receive(&mut self, bytes: &[u8]) -> Output {
+        self.stream.push(bytes);
+        let mut out = Output::default();
+        while let Some(frame) = self.stream.next_frame() {
+            if let Ok(message) = decode(&frame) {
+                self.handle(message, &mut out);
+            }
+        }
+        out
+    }
+
+    fn handle(&mut self, message: Message, out: &mut Output) {
+        let Message::Control(envelope, body) = message else {
+            return;
+        };
+        match (self.phase, body) {
+            (Phase::HelloSent, ControlBody::HelloReply(reply)) => {
+                self.minor = 0;
+                out.events.push(Event::Negotiated {
+                    device_major: reply.supported_major,
+                    device_minor: reply.supported_minor,
+                });
+                let intended = self.known_device.unwrap_or(ZERO);
+                let pair = self.envelope(MessageType::Pair, self.session, 2);
+                if let Ok(frame) = encode_control(
+                    &pair,
+                    &ControlBody::Pair(PairBody {
+                        pairing_identity: self.host,
+                        intended_peer_identity: intended,
+                        matching_code: self.code,
+                    }),
+                ) {
+                    out.frames.push(frame);
+                    self.phase = Phase::PairSent;
+                }
+            }
+            (Phase::PairSent, ControlBody::Pair(pair))
+                if envelope.session == self.session
+                    && pair.intended_peer_identity == self.host
+                    && pair.matching_code == self.code =>
+            {
+                self.phase = Phase::Live;
+                self.sequence = 0;
+                out.events.push(Event::Paired {
+                    device_identity: pair.pairing_identity,
+                });
+            }
+            (Phase::HelloSent | Phase::PairSent, ControlBody::Error(body)) => {
+                let refusal = Refusal::from_body(&body);
+                self.phase = Phase::Refused(refusal);
+                out.events.push(Event::Refused(refusal));
+            }
+            (Phase::Live, ControlBody::CommandReply(reply)) if envelope.session == self.session => {
+                out.events.push(Event::CommandReply {
+                    command_identity: reply.command_identity,
+                    operation: reply.operation,
+                    result: reply.result,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    fn next_sequence(&mut self) -> u32 {
+        self.sequence += 1;
+        self.sequence
+    }
+
+    /// A complete CPU snapshot; only valid once paired.
+    pub fn snapshot(&mut self, cpu: &CpuSnapshot, utc_ms: Option<u64>) -> Option<Vec<u8>> {
+        if self.phase != Phase::Live {
+            return None;
+        }
+        let sequence = self.next_sequence();
+        let mut envelope = self.envelope(MessageType::Snapshot, self.session, sequence);
+        envelope.utc_ms = utc_ms;
+        encode_cpu(&envelope, cpu).ok()
+    }
+
+    /// A command frame and the identity to match its reply against. Reusing
+    /// the returned identity with `retry_command` is an idempotent retry.
+    pub fn command(&mut self, operation: CommandOperation) -> Option<(u32, Vec<u8>)> {
+        let identity = self.next_command;
+        self.next_command += 1;
+        self.retry_command(identity, operation)
+            .map(|frame| (identity, frame))
+    }
+
+    pub fn retry_command(&mut self, identity: u32, operation: CommandOperation) -> Option<Vec<u8>> {
+        if self.phase != Phase::Live {
+            return None;
+        }
+        let sequence = self.next_sequence();
+        let envelope = self.envelope(MessageType::Command, self.session, sequence);
+        encode_control(
+            &envelope,
+            &ControlBody::Command(CommandBody {
+                command_identity: identity,
+                operation,
+            }),
+        )
+        .ok()
+    }
+}

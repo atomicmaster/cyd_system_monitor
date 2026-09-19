@@ -17,6 +17,12 @@ build() {
 
 check() {
   require_tool cargo "install Rust via https://rustup.rs" || return 1
+  # The link-parity tests drive the real firmware HostLink through link_cli.
+  require_tool cmake "brew install cmake" || return 1
+  require_tool ninja "brew install ninja" || return 1
+  local link_dir="$(dev_root)/firmware/domain/tests"
+  cmake -S "$link_dir" -B "$link_dir/build" -G Ninja >/dev/null
+  cmake --build "$link_dir/build" --target link_cli
   (
     cd "$(_host_dir)"
     cargo fmt --check

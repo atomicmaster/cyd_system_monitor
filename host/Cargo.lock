@@ -35,3 +35,6 @@ version = "0.0.0"
 [[package]]
 name = "transport"
 version = "0.0.0"
+dependencies = [
+ "protocol",
+]
