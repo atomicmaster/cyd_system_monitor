@@ -9,3 +9,9 @@ publish.workspace = true
 [[bin]]
 name = "cyd-host"
 path = "src/main.rs"
+
+[dependencies]
+metrics = { path = "../metrics" }
+platform-macos = { path = "../platform-macos" }
+protocol = { path = "../protocol" }
+transport = { path = "../transport" }

@@ -28,6 +28,7 @@
 #include "led/led.hpp"
 #include "microsd/microsd.hpp"
 #include "nvs/calibration_store.hpp"
+#include "nvs/pairing_store.hpp"
 #include "radio/controller_probe.hpp"
 #include "usb/host_serial.hpp"
 
@@ -432,7 +433,15 @@ void RunClearCalibration() {
   firmware::platform::esp32::nvs::ClearCalibrationRecord();
 }
 
+// Recovery for a lost or broken paired Mac: forgets the stored Host so any
+// Mac can pair again. The negotiated Unpair command is the normal path.
+void RunUnpair() {
+  ESP_LOGI(kTag, "received DEV:UNPAIR: forgetting the paired Host");
+  firmware::platform::esp32::nvs::NvsPairingStore().ClearPairedHost();
+}
+
 constexpr Command kCommands[] = {
+    {"DEV:UNPAIR", RunUnpair},
     {"DEV:CLEAR_CALIBRATION", RunClearCalibration},
     {"DEV:LED_TEST", RunLedTest},
     {"DEV:AUDIO_TEST", RunAudioTest},

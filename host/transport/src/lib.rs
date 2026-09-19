@@ -5,3 +5,4 @@
 //! each open serial ports.
 
 pub mod client;
+pub mod serial;
