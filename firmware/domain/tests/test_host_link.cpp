@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "firmware/domain/host_link.hpp"
+#include "firmware/domain/link_view.hpp"
 
 using namespace firmware::domain;
 namespace proto = cyd::protocol;
@@ -295,6 +296,29 @@ int main() {
     clock.now += 4000;
     link.Tick();
     CHECK(link.state().connection == ConnectionState::kStale);
+  }
+
+  {  // The About view shows versions, pairing status, and refusal causes.
+    Clock clock;
+    Store store;
+    HostLink link(clock, store, 1);
+    auto view = MakeLinkView(link, link.paired());
+    CHECK(view.about == "Supported: 1.0\nHost: none\nNegotiated: none\nNot paired");
+    CHECK(!view.prompt_visible && view.fault.empty());
+    Pairing(link, S1, H);
+    view = MakeLinkView(link, link.paired());
+    CHECK(view.prompt_visible && view.prompt == "Pair with this Mac?\nCode 123456");
+    CHECK(view.about.find("Host: 1.0") != std::string::npos);
+    link.ConfirmPairing(true);
+    view = MakeLinkView(link, link.paired());
+    CHECK(!view.prompt_visible && view.about.find("Paired") != std::string::npos);
+    Clock c2;
+    Store s2;
+    HostLink bad(c2, s2, 1);
+    bad.Push(Hello(2, 0));
+    view = MakeLinkView(bad, false);
+    CHECK(view.fault == "Incompatible protocol: Host data rejected");
+    CHECK(view.about.find("Host: 2.0") != std::string::npos);
   }
 
   if (g_failures != 0) {

@@ -23,6 +23,8 @@ idf_component_register(
     "../expansion/expansion.cpp"
     "../reset_reason/reset_reason.cpp"
     "../nvs/calibration_store.cpp"
+    "../nvs/pairing_store.cpp"
+    "../usb/host_serial.cpp"
     "../dev_console/dev_console.cpp"
     "../capacity/capacity_probe.cpp"
     "../capacity/cpu_load.cpp"

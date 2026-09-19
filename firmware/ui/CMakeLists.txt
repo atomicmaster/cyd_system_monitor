@@ -10,7 +10,8 @@ set(_fu_sources
     "src/diagnostic/diagnostic_screen.cpp"
     "src/calibration/calibration_flow.cpp"
     "src/capacity/capacity_slice.cpp"
-    "src/system/cpu/cpu_card.cpp")
+    "src/system/cpu/cpu_card.cpp"
+    "src/system/link/link_screen.cpp")
 
 if(ESP_PLATFORM)
   # Keep the production LVGL allocation pool at 64 KiB, but make an

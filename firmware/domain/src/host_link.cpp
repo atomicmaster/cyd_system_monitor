@@ -2,6 +2,7 @@
 #include "firmware/domain/host_link.hpp"
 
 #include <algorithm>
+#include <utility>
 
 namespace firmware::domain {
 

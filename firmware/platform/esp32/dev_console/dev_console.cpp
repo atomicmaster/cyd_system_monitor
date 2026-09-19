@@ -29,6 +29,7 @@
 #include "microsd/microsd.hpp"
 #include "nvs/calibration_store.hpp"
 #include "radio/controller_probe.hpp"
+#include "usb/host_serial.hpp"
 
 namespace firmware::platform::esp32::dev_console {
 
@@ -445,6 +446,7 @@ constexpr Command kCommands[] = {
     {"DEV:PARTITION_WRITE_TEST", RunPartitionWriteTest},
     {"DEV:SERIAL_RX_TEST", RunSerialRxTest},
     {"DEV:CPU_REPLAY", RunCpuReplayRequest},
+    {"CYD:LINK", usb::EnterLinkMode},
 };
 
 // UART0 is already owned by ESP-IDF's console/log VFS layer (ESP_LOGI,
@@ -464,6 +466,16 @@ void DevConsoleTask(void* /*arg*/) {
 
   for (;;) {
     const int ch = getchar();
+    if (usb::LinkModeActive()) {
+      // Negotiated link: every byte is protocol data. Poll at the smallest
+      // real delay so the UART FIFO never overruns (see RunSerialRxTest).
+      if (ch == EOF) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+      } else {
+        usb::OnRxByte(static_cast<uint8_t>(ch));
+      }
+      continue;
+    }
     if (ch == EOF) {
       // No console input driver configured, or a transient read error:
       // don't spin.

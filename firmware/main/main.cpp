@@ -14,20 +14,27 @@
 #include "capacity/capacity_probe.hpp"
 #include "dev_console/dev_console.hpp"
 #include "esp_log.h"
+#include "esp_random.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "firmware/domain/calibration/calibration.hpp"
 #include "firmware/domain/cpu_replay.hpp"
 #include "firmware/domain/cpu_view.hpp"
 #include "firmware/domain/generated/profile.hpp"
+#include "firmware/domain/host_link.hpp"
+#include "firmware/domain/link_view.hpp"
 #include "firmware/domain/profile_check.hpp"
 #include "firmware/ui/calibration/calibration_flow.hpp"
 #include "firmware/ui/capacity/capacity_slice.hpp"
 #include "firmware/ui/diagnostic/diagnostic_screen.hpp"
 #include "firmware/ui/system/cpu/cpu_card.hpp"
+#include "firmware/ui/system/link/link_screen.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs/calibration_store.hpp"
+#include "nvs/pairing_store.hpp"
 #include "radio/controller_probe.hpp"
+#include "usb/host_serial.hpp"
 
 namespace {
 
@@ -87,8 +94,22 @@ struct CpuReplaySession {
   explicit CpuReplaySession(lv_obj_t* parent) : screen(parent) { replay.Start(); }
 };
 
+// TB02's negotiated Host link: the board side of pairing and live CPU over
+// the USB-serial bridge. Created when the Host sends "CYD:LINK". The screen
+// exists only when the diagnostic screen was showing (calibrated touch is
+// what makes the pairing prompt answerable).
+struct LinkSession {
+  EspClock clock;
+  nvs::NvsPairingStore store;
+  firmware::domain::HostLink link{clock, store, esp_random()};
+  std::optional<firmware::ui::system::LinkScreen> screen;
+  int64_t last_draw_us = 0;
+  int64_t restart_at_us = 0;  // set by a calibration-reset command
+};
+
 AppState g_app;
 std::optional<CpuReplaySession> g_cpu_replay;
+std::optional<LinkSession> g_link;
 
 // LVGL's own widget click/gesture detection (LV_EVENT_CLICKED, used by
 // recalibrate_button below) only ever fires for input fed through a
@@ -270,6 +291,54 @@ void PumpCpuReplay() {
     g_cpu_replay.reset();
     g_app.touch_was_pressed = false;
     ShowDiagnosticScreen();
+  }
+}
+
+void StartLinkSession() {
+  g_link.emplace();
+  g_link->link.SetCalibrationResetHandler([] {
+    // Clear now, restart shortly after the reply has been written so the
+    // board comes back into guided calibration.
+    nvs::ClearCalibrationRecord();
+    g_link->restart_at_us = esp_timer_get_time() + 300'000;
+    return true;
+  });
+  if (g_app.board.display == nullptr || g_app.calibration.has_value() ||
+      g_app.capacity_slice.has_value() || g_cpu_replay.has_value() ||
+      g_app.diagnostic.root == nullptr) {
+    return;  // no screen: the link still runs, an unanswered prompt times out
+  }
+  lv_obj_delete(g_app.diagnostic.root);
+  g_app.diagnostic = {};
+  g_link->screen.emplace(lv_display_get_screen_active(g_app.board.display),
+                         [](bool accepted) { g_link->link.ConfirmPairing(accepted); });
+}
+
+void PumpLink() {
+  if (!firmware::platform::esp32::usb::LinkModeActive()) {
+    return;
+  }
+  if (!g_link.has_value()) {
+    StartLinkSession();
+  }
+  namespace usb = firmware::platform::esp32::usb;
+  uint8_t buffer[256];
+  while (const size_t n = usb::Read(buffer, sizeof(buffer))) {
+    g_link->link.Push({buffer, n});
+  }
+  g_link->link.Tick();
+  for (const auto& frame : g_link->link.TakeOutgoing()) {
+    usb::Write(frame);
+  }
+  if (g_link->restart_at_us != 0 && esp_timer_get_time() >= g_link->restart_at_us) {
+    esp_restart();
+  }
+  const int64_t now_us = esp_timer_get_time();
+  if (g_link->screen.has_value() && now_us - g_link->last_draw_us >= 100'000) {
+    g_link->last_draw_us = now_us;
+    g_link->screen->Update(
+        firmware::domain::MakeCpuView(g_link->link.state(), g_link->clock.NowMs()),
+        firmware::domain::MakeLinkView(g_link->link, g_link->link.paired()));
   }
 }
 
@@ -456,6 +525,7 @@ extern "C" void app_main(void) {
   for (;;) {
     PumpTouch();
     PumpCpuReplay();
+    PumpLink();
     PumpTouchDiagnostics();
     const uint32_t sleep_ms = lv_timer_handler();
     const uint32_t clamped_sleep_ms =
