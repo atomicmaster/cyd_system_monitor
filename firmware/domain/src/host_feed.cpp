@@ -5,7 +5,10 @@ namespace firmware::domain {
 
 void HostFeed::StartSession(const std::array<uint8_t, protocol::kSessionIdBytes>& session) {
   session_.Reset(session);
+  session_open_ = true;
 }
+
+void HostFeed::ApplyHostUtc(uint64_t utc_ms) { reducer_.SetUtcAnchor(utc_ms, clock_.NowMs()); }
 
 void HostFeed::Push(std::span<const uint8_t> bytes) {
   stream_.Push(bytes);
@@ -29,9 +32,18 @@ void HostFeed::Drain() {
     if (result.error != protocol::Error::kNone) {
       ++stats_.rejected;
       stats_.last_error = result.error;
+      if (control_handler_) control_handler_(result);
       continue;
     }
-    if (result.decoded.envelope.type != protocol::MessageType::kSnapshot) continue;
+    if (result.decoded.envelope.type != protocol::MessageType::kSnapshot) {
+      if (control_handler_) control_handler_(result);
+      continue;
+    }
+    if (explicit_session_ && !session_open_) {
+      ++stats_.rejected;
+      stats_.last_error = protocol::Error::kWrongSession;
+      continue;
+    }
     const auto gate = session_.Accept(result.decoded);
     if (gate != protocol::Error::kNone) {
       ++stats_.rejected;

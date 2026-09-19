@@ -40,6 +40,7 @@ set(_fd_sources
     "src/capacity.cpp"
     "src/host_state.cpp"
     "src/host_feed.cpp"
+    "src/host_link.cpp"
     "src/cpu_view.cpp"
     "src/cpu_replay.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../protocol/core/cpp/protocol.cpp"

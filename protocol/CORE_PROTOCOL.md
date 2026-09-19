@@ -33,6 +33,34 @@ resolved display concern, not an ordering key: evidence ordering uses boot
 identity plus monotonic sequence. A time correction records a Time
 Discontinuity and never rewrites earlier evidence.
 
+## Link handshake and pairing (TB02)
+
+The USB link is the board's UART bridge. Device output interleaves ASCII log
+lines with frames; a log byte can never start a frame because a frame's first
+byte (the high length byte) is at most `0x07`, so the host framer resyncs past
+log text. Host bytes are frames only once the Host has sent the text line
+`CYD:LINK` (which leaves the ASCII dev console for the negotiated link).
+
+1. `Hello` (Host, session all-zero) carries supported version, capabilities,
+   configuration revision, and Host UTC. The device answers `HelloReply` with
+   its own supported version/capabilities/revision. A different major is
+   answered with `Error` (body: one byte, `1` incompatible) and nothing is
+   applied.
+2. `Pair` (Host, session all-zero) carries the Host identity, the intended
+   device identity (all-zero on first pairing), and the matching code (six
+   digits, chosen by the Host and shown in its terminal). An unpaired device
+   shows the code and waits for touch confirmation; a paired device accepts a
+   `Pair` whose Host identity matches the stored one without a touch and
+   answers `Error` (body byte `2`, not paired with you) to any other Host.
+   Declined or timed-out confirmation answers `Error` (body byte `3`).
+3. On acceptance the device answers `Pair` (its identity, the Host identity,
+   the same code) whose envelope session is the fresh session identity the
+   Host chose in its own `Pair` envelope. Both sides then use that session
+   with sequence restarting at one. Snapshots for any other session, or sent
+   before a session exists, are rejected.
+4. Unpair is a `Command` (operation `1`) inside a session; the device forgets
+   the Host identity, closes the session, and replies. Retained state stays.
+
 ## Control bodies
 
 Control-message bodies are canonical CBOR maps; they remain bounded by the
