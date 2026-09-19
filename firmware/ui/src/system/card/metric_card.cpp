@@ -25,6 +25,7 @@ void FadeTo(lv_obj_t* object, lv_opa_t target) {
 MetricCard::MetricCard(lv_obj_t* parent, int32_t width, int32_t height) {
   root_ = lv_obj_create(parent);
   lv_obj_set_size(root_, width, height);
+  lv_obj_remove_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_flex_flow(root_, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(root_, 4, 0);
   lv_obj_set_style_pad_row(root_, 2, 0);

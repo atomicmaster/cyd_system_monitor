@@ -36,6 +36,7 @@ LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision,
 
   prompt_panel_ = lv_obj_create(parent);
   lv_obj_set_size(prompt_panel_, 296, 150);
+  lv_obj_remove_flag(prompt_panel_, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_center(prompt_panel_);
   lv_obj_add_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN);
   prompt_label_ = lv_label_create(prompt_panel_);

@@ -94,6 +94,12 @@ int RunSettings() {
   link.Update(domain::CpuView{.connection = "Connected", .clock = "17:13"}, {}, domain::LinkView{});
   RenderOnce();
   result.Expect(!link.settings_panel().visible(), "settings are closed until the bar is tapped");
+  // Fixed layout: none of these may scroll, so a drag on the bar moves nothing.
+  for (lv_obj_t* fixed : {link.system().status_bar(), lv_obj_get_parent(link.system().status_bar()),
+                          link.settings_panel().panel()}) {
+    result.Expect(!lv_obj_has_flag(fixed, LV_OBJ_FLAG_SCROLLABLE),
+                  "the status bar, its container, and the settings panel are not scrollable");
+  }
   Click(link.system().status_bar());
   result.Expect(link.settings_panel().visible() && link.settings_panel().settings().show_zone,
                 "tapping the status bar opens settings with the current values");

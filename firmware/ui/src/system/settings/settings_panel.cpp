@@ -57,6 +57,7 @@ struct SettingsPanelEvents {
 lv_obj_t* SettingsPanel::AddRow(const char* text, lv_obj_t** control, bool is_switch) {
   lv_obj_t* row = lv_obj_create(panel_);
   lv_obj_set_size(row, LV_PCT(100), 34);
+  lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_pad_all(row, 2, 0);
   lv_obj_set_style_border_width(row, 0, 0);
   lv_obj_t* label = lv_label_create(row);
@@ -74,6 +75,7 @@ SettingsPanel::SettingsPanel(lv_obj_t* parent, ChangeCallback on_change)
     : on_change_(std::move(on_change)) {
   panel_ = lv_obj_create(parent);
   lv_obj_set_size(panel_, 308, 232);
+  lv_obj_remove_flag(panel_, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_center(panel_);
   lv_obj_set_flex_flow(panel_, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(panel_, 4, 0);
