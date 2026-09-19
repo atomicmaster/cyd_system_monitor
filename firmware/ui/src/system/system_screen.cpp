@@ -14,11 +14,20 @@ SystemScreen::SystemScreen(lv_obj_t* parent) {
   lv_obj_set_style_pad_all(root_, 4, 0);
   lv_obj_set_style_pad_row(root_, 4, 0);
 
-  lv_obj_t* bar_row = lv_obj_create(root_);
+  bar_row_ = lv_obj_create(root_);
+  lv_obj_t* bar_row = bar_row_;
   lv_obj_set_size(bar_row, LV_PCT(100), 28);
   lv_obj_set_flex_flow(bar_row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(bar_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
+  lv_obj_add_flag(bar_row, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(
+      bar_row,
+      [](lv_event_t* e) {
+        auto* self = static_cast<SystemScreen*>(lv_event_get_user_data(e));
+        if (self->on_status_tap_) self->on_status_tap_();
+      },
+      LV_EVENT_CLICKED, this);
   connection_label_ = lv_label_create(bar_row);
   clock_label_ = lv_label_create(bar_row);
 

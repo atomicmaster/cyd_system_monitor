@@ -31,6 +31,9 @@ target_link_libraries(firmware_domain_host_state_tests PRIVATE firmware_domain)
 add_executable(firmware_domain_host_link_tests test_host_link.cpp)
 target_link_libraries(firmware_domain_host_link_tests PRIVATE firmware_domain)
 
+add_executable(firmware_domain_display_settings_tests test_display_settings.cpp)
+target_link_libraries(firmware_domain_display_settings_tests PRIVATE firmware_domain)
+
 add_executable(link_cli link_cli.cpp)
 target_link_libraries(link_cli PRIVATE firmware_domain)
 
@@ -42,3 +45,4 @@ add_test(NAME firmware_domain_feasibility_tests COMMAND firmware_domain_feasibil
 add_test(NAME firmware_domain_capacity_tests COMMAND firmware_domain_capacity_tests)
 add_test(NAME firmware_domain_host_state_tests COMMAND firmware_domain_host_state_tests)
 add_test(NAME firmware_domain_host_link_tests COMMAND firmware_domain_host_link_tests)
+add_test(NAME firmware_domain_display_settings_tests COMMAND firmware_domain_display_settings_tests)

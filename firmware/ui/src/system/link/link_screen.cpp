@@ -21,8 +21,10 @@ void LinkScreen::MakeButton(const char* text, lv_align_t align, Target* target) 
       LV_EVENT_CLICKED, target);
 }
 
-LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision)
-    : system_(parent), on_decision_(std::move(on_decision)) {
+LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision,
+                       SettingsPanel::ChangeCallback on_settings,
+                       const firmware::domain::DisplaySettings& initial)
+    : system_(parent), settings_(initial), on_decision_(std::move(on_decision)) {
   about_label_ = lv_label_create(parent);
   lv_obj_set_pos(about_label_, 8, 136);
   lv_obj_set_width(about_label_, 304);
@@ -42,6 +44,17 @@ LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision)
   decline_target_ = {this, false};
   MakeButton("Confirm", LV_ALIGN_BOTTOM_LEFT, &confirm_target_);
   MakeButton("Decline", LV_ALIGN_BOTTOM_RIGHT, &decline_target_);
+
+  settings_panel_ = std::make_unique<SettingsPanel>(
+      parent,
+      [this, on_settings = std::move(on_settings)](const firmware::domain::DisplaySettings& s) {
+        settings_ = s;
+        if (on_settings) on_settings(s);
+      });
+  system_.SetStatusBarTapCallback([this]() {
+    // The pairing prompt has priority: it must never be hidden behind settings.
+    if (lv_obj_has_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN)) settings_panel_->Show(settings_);
+  });
 }
 
 LinkScreen::~LinkScreen() {
@@ -49,6 +62,7 @@ LinkScreen::~LinkScreen() {
   if (about_label_ != nullptr) lv_obj_delete(about_label_);
   if (fault_label_ != nullptr) lv_obj_delete(fault_label_);
   if (prompt_panel_ != nullptr) lv_obj_delete(prompt_panel_);
+  settings_panel_.reset();
 }
 
 void LinkScreen::Update(const firmware::domain::CpuView& status,
@@ -58,6 +72,7 @@ void LinkScreen::Update(const firmware::domain::CpuView& status,
   lv_label_set_text(about_label_, link.about.c_str());
   lv_label_set_text(fault_label_, link.fault.c_str());
   if (link.prompt_visible) {
+    settings_panel_->Hide();
     lv_label_set_text(prompt_label_, link.prompt.c_str());
     lv_obj_remove_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN);
   } else {

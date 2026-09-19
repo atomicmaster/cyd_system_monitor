@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#include <cstring>
+#include <optional>
+
+#include "../expect.hpp"
+#include "../lvgl_env.hpp"
+#include "firmware/domain/link_view.hpp"
+#include "firmware/ui/system/link/link_screen.hpp"
+#include "firmware/ui/system/settings/settings_panel.hpp"
+#include "scenarios.hpp"
+
+namespace simulator::scenarios {
+namespace {
+
+namespace domain = firmware::domain;
+namespace ui = firmware::ui::system;
+
+bool Checked(lv_obj_t* sw) { return lv_obj_has_state(sw, LV_STATE_CHECKED); }
+bool Disabled(lv_obj_t* button) { return lv_obj_has_state(button, LV_STATE_DISABLED); }
+
+void Toggle(lv_obj_t* sw) {
+  if (Checked(sw)) {
+    lv_obj_remove_state(sw, LV_STATE_CHECKED);
+  } else {
+    lv_obj_add_state(sw, LV_STATE_CHECKED);
+  }
+  lv_obj_send_event(sw, LV_EVENT_VALUE_CHANGED, nullptr);
+}
+
+void Click(lv_obj_t* object) { lv_obj_send_event(object, LV_EVENT_CLICKED, nullptr); }
+
+}  // namespace
+
+// The clock settings panel and how it is reached: tapping the status bar.
+int RunSettings() {
+  ScenarioResult result;
+  lv_obj_t* screen = InitLvglHeadless();
+
+  // --- the panel on its own ---
+  int changes = 0;
+  domain::DisplaySettings last;
+  ui::SettingsPanel panel(screen, [&](const domain::DisplaySettings& s) {
+    ++changes;
+    last = s;
+  });
+  result.Expect(!panel.visible(), "the panel starts hidden");
+  panel.Show({});
+  RenderOnce();
+  result.Expect(panel.visible(), "Show makes the panel visible");
+  result.Expect(Checked(panel.use_24h_switch()) && !Checked(panel.show_zone_switch()) &&
+                    !Checked(panel.manual_zone_switch()),
+                "defaults: 24-hour on, zone hidden, following the Mac");
+  result.Expect(std::strstr(lv_label_get_text(panel.offset_label()), "Follows the Mac") != nullptr,
+                "with no manual zone the offset row says it follows the Mac");
+  result.Expect(Disabled(panel.offset_up_button()) && Disabled(panel.offset_down_button()),
+                "offset buttons are disabled while following the Mac");
+
+  Click(panel.offset_up_button());
+  result.Expect(changes == 0, "a disabled offset button changes nothing");
+
+  Toggle(panel.use_24h_switch());
+  result.Expect(changes == 1 && !last.use_24h, "turning 24-hour off reports 12-hour");
+  Toggle(panel.show_zone_switch());
+  result.Expect(changes == 2 && last.show_zone, "turning Show timezone on reports it");
+
+  Toggle(panel.manual_zone_switch());
+  result.Expect(changes == 3 && last.manual_zone && last.manual_offset_minutes == 0,
+                "turning the manual zone on starts at UTC");
+  result.Expect(std::strcmp(lv_label_get_text(panel.offset_label()), "UTC") == 0,
+                "the offset row reads UTC");
+  result.Expect(!Disabled(panel.offset_up_button()) && !Disabled(panel.offset_down_button()),
+                "offset buttons are enabled for a manual zone");
+
+  for (int i = 0; i < 3; ++i) Click(panel.offset_up_button());
+  result.Expect(last.manual_offset_minutes == 45, "three +15m taps give +45 minutes");
+  result.Expect(std::strcmp(lv_label_get_text(panel.offset_label()), "UTC+0:45") == 0,
+                "the offset row reads UTC+0:45");
+  for (int i = 0; i < 24; ++i) Click(panel.offset_down_button());
+  result.Expect(last.manual_offset_minutes == -315 &&
+                    std::strcmp(lv_label_get_text(panel.offset_label()), "UTC-5:15") == 0,
+                "stepping down crosses zero to UTC-5:15");
+  for (int i = 0; i < 100; ++i) Click(panel.offset_down_button());
+  result.Expect(last.manual_offset_minutes == domain::kMinOffsetMinutes,
+                "the offset stops at UTC-12");
+
+  Click(panel.done_button());
+  result.Expect(!panel.visible(), "Done hides the panel");
+
+  // --- reached through the status bar of the link screen ---
+  std::optional<domain::DisplaySettings> saved;
+  ui::LinkScreen link(
+      screen, [](bool) {}, [&](const domain::DisplaySettings& s) { saved = s; },
+      domain::DisplaySettings{.show_zone = true});
+  link.Update(domain::CpuView{.connection = "Connected", .clock = "17:13"}, {}, domain::LinkView{});
+  RenderOnce();
+  result.Expect(!link.settings_panel().visible(), "settings are closed until the bar is tapped");
+  Click(link.system().status_bar());
+  result.Expect(link.settings_panel().visible() && link.settings_panel().settings().show_zone,
+                "tapping the status bar opens settings with the current values");
+  Toggle(link.settings_panel().show_zone_switch());
+  result.Expect(saved.has_value() && !saved->show_zone && !link.settings().show_zone,
+                "a change reaches the persistence callback and the screen's own settings");
+  Click(link.settings_panel().done_button());
+
+  // A pending pairing prompt has priority over settings.
+  domain::LinkView prompt;
+  prompt.prompt_visible = true;
+  prompt.prompt = "Pair with this Mac?\nCode 123456";
+  link.Update(domain::CpuView{}, {}, prompt);
+  Click(link.system().status_bar());
+  result.Expect(!link.settings_panel().visible(), "settings do not open over a pairing prompt");
+  domain::LinkView none;
+  link.Update(domain::CpuView{}, {}, none);
+  Click(link.system().status_bar());
+  result.Expect(link.settings_panel().visible(), "settings open again once the prompt is gone");
+  link.Update(domain::CpuView{}, {}, prompt);
+  result.Expect(!link.settings_panel().visible(),
+                "a prompt arriving closes an open settings panel");
+  return result.Finish("simulator settings");
+}
+
+}  // namespace simulator::scenarios

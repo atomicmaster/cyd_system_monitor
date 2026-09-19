@@ -65,6 +65,9 @@ int main(int argc, char** argv) {
   if (scenario == "cpu-replay") {
     return simulator::scenarios::RunCpuReplay();
   }
+  if (scenario == "settings") {
+    return simulator::scenarios::RunSettings();
+  }
   if (scenario == "system-screen") {
     return simulator::scenarios::RunSystemScreen();
   }
@@ -74,6 +77,6 @@ int main(int argc, char** argv) {
   std::fprintf(stderr,
                "usage: simulator <scenario>\n"
                "  scenario: smoke | display-smoke | calibration | peripherals | capacity | "
-               "protocol-replay | cpu-lifecycle | cpu-replay | metric-cards | system-screen\n");
+               "protocol-replay | cpu-lifecycle | cpu-replay | metric-cards | system-screen | settings\n");
   return 2;
 }

@@ -38,16 +38,32 @@ const char* NoteText(protocol::Availability availability) {
   return "";
 }
 
-// "HH:MM UTC" when the Host gave no offset (or UTC itself), else the Host's
-// local time with its offset: "17:13 UTC-5", "03:43 UTC+5:30".
-std::string ClockText(const HostState& state, uint64_t now_ms) {
+// The clock text. The offset is the manual one if chosen, else the Host's own;
+// with neither, the time is UTC and says so, so it can never pass as local.
+// Otherwise the zone suffix follows the setting: "5:13 PM", "17:13 UTC-5".
+std::string ClockText(const HostState& state, uint64_t now_ms, const DisplaySettings& settings) {
   if (!state.time_available) return "Time unavailable";
   const uint64_t elapsed =
       now_ms >= state.utc_anchor_monotonic_ms ? now_ms - state.utc_anchor_monotonic_ms : 0;
-  const int64_t offset_minutes = state.has_utc_offset ? state.utc_offset_minutes : 0;
+  const bool known_zone = settings.manual_zone || state.has_utc_offset;
+  const int64_t offset_minutes = settings.manual_zone
+                                     ? settings.manual_offset_minutes
+                                     : (state.has_utc_offset ? state.utc_offset_minutes : 0);
   const int64_t local_seconds =
       static_cast<int64_t>((state.utc_anchor_ms + elapsed) / 1000) + offset_minutes * 60;
   const int64_t seconds_of_day = ((local_seconds % 86400) + 86400) % 86400;
+  const unsigned hour = static_cast<unsigned>(seconds_of_day / 3600);
+  const unsigned minute = static_cast<unsigned>(seconds_of_day / 60 % 60);
+
+  char time[16];
+  if (settings.use_24h) {
+    std::snprintf(time, sizeof time, "%02u:%02u", hour, minute);
+  } else {
+    std::snprintf(time, sizeof time, "%u:%02u %s", hour % 12 == 0 ? 12 : hour % 12, minute,
+                  hour < 12 ? "AM" : "PM");
+  }
+  if (known_zone && !settings.show_zone) return time;
+
   char zone[16] = "UTC";
   if (offset_minutes != 0) {
     const int64_t magnitude = offset_minutes < 0 ? -offset_minutes : offset_minutes;
@@ -59,18 +75,15 @@ std::string ClockText(const HostState& state, uint64_t now_ms) {
                     static_cast<int>(magnitude / 60), static_cast<int>(magnitude % 60));
     }
   }
-  char text[32];
-  std::snprintf(text, sizeof text, "%02u:%02u %s", static_cast<unsigned>(seconds_of_day / 3600),
-                static_cast<unsigned>(seconds_of_day / 60 % 60), zone);
-  return text;
+  return std::string(time) + " " + zone;
 }
 
 }  // namespace
 
-CpuView MakeCpuView(const HostState& state, uint64_t now_ms) {
+CpuView MakeCpuView(const HostState& state, uint64_t now_ms, const DisplaySettings& settings) {
   CpuView view;
   view.connection = ConnectionText(state.connection);
-  view.clock = ClockText(state, now_ms);
+  view.clock = ClockText(state, now_ms, settings);
   const bool measured =
       state.has_seen_host && state.cpu.availability == protocol::Availability::kAvailable;
   if (!measured) {

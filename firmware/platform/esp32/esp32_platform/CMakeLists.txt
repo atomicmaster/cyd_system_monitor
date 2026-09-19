@@ -24,6 +24,7 @@ idf_component_register(
     "../reset_reason/reset_reason.cpp"
     "../nvs/calibration_store.cpp"
     "../nvs/pairing_store.cpp"
+    "../nvs/display_settings_store.cpp"
     "../usb/host_serial.cpp"
     "../dev_console/dev_console.cpp"
     "../capacity/capacity_probe.cpp"

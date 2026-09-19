@@ -53,4 +53,9 @@ int RunMetricCards();
 // TB03's `./dev run simulator -- system-screen`.
 int RunSystemScreen();
 
+// Drives the clock settings panel (24-hour, show timezone, manual zone and
+// offset stepping) and its entry point on the status bar, including the
+// pairing prompt taking priority. Matches `./dev run simulator -- settings`.
+int RunSettings();
+
 }  // namespace simulator::scenarios

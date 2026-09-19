@@ -50,6 +50,7 @@ set(_fd_sources
     "src/host_feed.cpp"
     "src/host_link.cpp"
     "src/link_view.cpp"
+    "src/display_settings.cpp"
     "src/cpu_view.cpp"
     "src/cpu_replay.cpp"
     "src/card_registry.cpp"

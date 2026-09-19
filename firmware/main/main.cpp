@@ -34,6 +34,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs/calibration_store.hpp"
+#include "nvs/display_settings_store.hpp"
 #include "nvs/pairing_store.hpp"
 #include "radio/controller_probe.hpp"
 #include "usb/host_serial.hpp"
@@ -312,8 +313,11 @@ void StartLinkSession() {
   }
   lv_obj_delete(g_app.diagnostic.root);
   g_app.diagnostic = {};
-  g_link->screen.emplace(lv_display_get_screen_active(g_app.board.display),
-                         [](bool accepted) { g_link->link.ConfirmPairing(accepted); });
+  g_link->screen.emplace(
+      lv_display_get_screen_active(g_app.board.display),
+      [](bool accepted) { g_link->link.ConfirmPairing(accepted); },
+      [](const firmware::domain::DisplaySettings& settings) { nvs::SaveDisplaySettings(settings); },
+      nvs::LoadDisplaySettings());
 }
 
 void PumpLink() {
@@ -342,7 +346,8 @@ void PumpLink() {
     const auto& state = g_link->link.state();
     std::vector<firmware::domain::MetricCardView> cards;
     for (const auto& card : firmware::domain::Cards()) cards.push_back(card.make(state, now_ms));
-    g_link->screen->Update(firmware::domain::MakeCpuView(state, now_ms), cards,
+    g_link->screen->Update(firmware::domain::MakeCpuView(state, now_ms, g_link->screen->settings()),
+                           cards,
                            firmware::domain::MakeLinkView(g_link->link, g_link->link.paired()));
   }
 }

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 
+#include "firmware/domain/display_settings.hpp"
 #include "firmware/domain/host_state.hpp"
 
 namespace firmware::domain {
@@ -20,6 +21,8 @@ struct CpuView {
   uint16_t bar_per_mille = 0;  // 0 when there is no value; check has_value
 };
 
-CpuView MakeCpuView(const HostState& state, uint64_t now_ms);
+// `settings` only changes how the clock is written, never what is measured.
+CpuView MakeCpuView(const HostState& state, uint64_t now_ms,
+                    const DisplaySettings& settings = DisplaySettings{});
 
 }  // namespace firmware::domain
