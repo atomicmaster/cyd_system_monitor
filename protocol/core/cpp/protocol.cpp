@@ -493,6 +493,12 @@ void FrameStream::Push(std::span<const uint8_t> bytes) {
   buffer_.insert(buffer_.end(), bytes.begin(), bytes.end());
 }
 
+void FrameStream::DropLeadingByte() {
+  if (buffer_.empty()) return;
+  buffer_.erase(buffer_.begin());
+  ++dropped_bytes_;
+}
+
 bool FrameStream::Next(Result *result) {
   // Smallest possible frame: 2 length + 1 CBOR + 4 CRC.
   while (buffer_.size() >= 2) {

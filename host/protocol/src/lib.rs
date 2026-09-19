@@ -108,6 +108,14 @@ impl FrameStream {
     pub fn buffered_bytes(&self) -> usize {
         self.buffer.len()
     }
+    /// Gives up on a stalled partial frame: discards one byte so the caller
+    /// can rescan with `next_frame`. For use after an idle gap in the stream.
+    pub fn drop_leading_byte(&mut self) {
+        if !self.buffer.is_empty() {
+            self.buffer.remove(0);
+            self.dropped_bytes += 1;
+        }
+    }
     /// Returns the next complete frame's bytes, or `None` if more input is
     /// needed. Decode the returned frame with `decode_cpu`/`decode_control`.
     pub fn next_frame(&mut self) -> Option<Vec<u8>> {
@@ -1161,8 +1169,8 @@ mod tests {
         assert_eq!(stream.next_frame(), None);
 
         // A damaged frame is skipped. Rescanning its bytes can find a
-        // plausible length that waits for up to 2,046 bytes, so recovery is
-        // bounded by that much later traffic rather than immediate.
+        // plausible length that waits for up to 2,046 bytes; the adapter's
+        // idle gap (`drop_leading_byte`) clears that, so here more traffic does.
         let mut damaged = good.clone();
         damaged[10] ^= 0x40;
         let mut stream = FrameStream::default();

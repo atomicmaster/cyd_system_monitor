@@ -123,8 +123,8 @@ bool RunStreamTests(const std::vector<uint8_t> &good) {
   }
   {
     // A CRC-damaged frame is skipped.  Rescanning its bytes can find a
-    // plausible length that waits for up to 2,046 bytes, so recovery is
-    // bounded by that much later traffic rather than immediate.
+    // plausible length that waits for up to 2,046 bytes; the adapter's idle
+    // gap (HostFeed::Tick) is what clears that, so here more traffic does.
     auto damaged = good;
     damaged[10] ^= 0x40;
     FrameStream stream;

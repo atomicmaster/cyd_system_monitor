@@ -12,10 +12,11 @@ void HostStateReducer::ApplySnapshot(const protocol::Decoded& decoded, uint64_t 
   state_.cpu.source_time_ms = resolved_source_time_ms;
   state_.cpu.received_at_ms = now_ms;
   state_.host_last_seen_ms = now_ms;
+  state_.has_seen_host = true;
   state_.configuration_revision = decoded.cpu.configuration_revision;
 }
 void HostStateReducer::Advance(uint64_t now_ms) {
-  if (state_.connection == ConnectionState::kIncompatible || state_.host_last_seen_ms == 0) return;
+  if (state_.connection == ConnectionState::kIncompatible || !state_.has_seen_host) return;
   const uint64_t age = now_ms - state_.host_last_seen_ms;
   if (age >= 15000)
     state_.connection = ConnectionState::kDisconnected;
@@ -26,6 +27,11 @@ void HostStateReducer::Advance(uint64_t now_ms) {
 }
 void HostStateReducer::MarkIncompatible() { state_.connection = ConnectionState::kIncompatible; }
 void HostStateReducer::CorrectTime() { state_.time_available = true; }
+void HostStateReducer::SetUtcAnchor(uint64_t utc_ms, uint64_t monotonic_ms) {
+  state_.time_available = true;
+  state_.utc_anchor_ms = utc_ms;
+  state_.utc_anchor_monotonic_ms = monotonic_ms;
+}
 void Acknowledge(AlertEpisode* episode) {
   if (episode) episode->acknowledged = true;
 }

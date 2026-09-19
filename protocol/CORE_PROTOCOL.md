@@ -71,9 +71,10 @@ a bad CRC discards one byte. A frame with a valid length and CRC but a rejected
 body (unsupported major, malformed CBOR, wrong body) is consumed whole and its
 error is reported, so a bad message never desynchronizes the stream. Resync
 after corruption can be delayed while a false length waits for up to 2,046
-bytes, so recovery is bounded by that much later traffic (about 2 seconds of
-snapshots at 1 Hz and ~1 KB each); the Host silence rule (15 seconds) already
-covers that window.
+bytes. Byte-count alone is not a good recovery bound, so the receiving adapter
+also abandons a partial frame after 250 ms without new bytes (the Host writes
+each frame in one burst): `DropLeadingByte()` discards one byte and the caller
+rescans. `HostFeed::Tick` does this in firmware/simulator.
 
 Unknown optional values are skipped only when they are unsigned/negative
 integers, byte/text strings, or arrays/maps of at most 16 items nested fewer

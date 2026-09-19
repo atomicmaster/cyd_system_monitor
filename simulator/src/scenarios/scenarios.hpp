@@ -31,4 +31,10 @@ int RunCapacity();
 // consulted, making reconnect/time-discontinuity expectations reproducible.
 int RunProtocolReplay();
 
+// Replays CPU snapshot bytes through HostFeed (framing, decode, session gate,
+// reducer) with a scripted clock into the CPU screen, asserting each step's
+// text against simulator/scenarios/cpu-lifecycle.expected. Matches TB01's
+// `./dev run simulator -- cpu-lifecycle`.
+int RunCpuLifecycle();
+
 }  // namespace simulator::scenarios

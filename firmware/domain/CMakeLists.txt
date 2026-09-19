@@ -39,6 +39,8 @@ set(_fd_sources
     "src/feasibility.cpp"
     "src/capacity.cpp"
     "src/host_state.cpp"
+    "src/host_feed.cpp"
+    "src/cpu_view.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../protocol/core/cpp/protocol.cpp"
     "${FIRMWARE_DOMAIN_CALIBRATION_SOURCES}")
 

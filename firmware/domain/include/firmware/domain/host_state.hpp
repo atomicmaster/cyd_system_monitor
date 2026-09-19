@@ -24,7 +24,13 @@ struct HostState {
   ConnectionState connection = ConnectionState::kNegotiating;
   HostMetricState cpu{};
   uint64_t host_last_seen_ms = 0;
+  bool has_seen_host = false;  // false on cold boot: last-seen is unknown, not zero
   bool time_available = false;
+  // UTC anchor: Host-supplied UTC at a monotonic instant. Display-only; it is
+  // never an ordering key and is replaced (not applied retroactively) on a
+  // Time Discontinuity.
+  uint64_t utc_anchor_ms = 0;
+  uint64_t utc_anchor_monotonic_ms = 0;
   uint32_t boot_identity = 0;
   uint32_t configuration_revision = 0;
 };
@@ -37,6 +43,7 @@ class HostStateReducer {
   void Advance(uint64_t now_ms);
   void MarkIncompatible();
   void CorrectTime();  // Existing evidence is intentionally not rewritten.
+  void SetUtcAnchor(uint64_t utc_ms, uint64_t monotonic_ms);
   const HostState& state() const { return state_; }
 
  private:

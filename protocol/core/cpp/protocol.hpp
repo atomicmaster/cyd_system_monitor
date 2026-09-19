@@ -127,6 +127,9 @@ public:
   void Push(std::span<const uint8_t> bytes);
   // Returns false when more bytes are needed.
   bool Next(Result *result);
+  // Gives up on a stalled partial frame: discards one byte so the caller can
+  // rescan (call Next() again). For use after an idle gap in the byte stream.
+  void DropLeadingByte();
   std::size_t dropped_bytes() const { return dropped_bytes_; }
   std::size_t buffered_bytes() const { return buffer_.size(); }
 
