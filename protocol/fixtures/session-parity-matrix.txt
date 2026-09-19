@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: CC0-1.0
+# action|session-byte-0|sequence|expected
+accept|9|1|none
+accept|9|1|stale-sequence
+accept|10|1|wrong-session
+reset|10|0|none
+accept|10|1|none

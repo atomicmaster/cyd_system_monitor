@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: CC0-1.0
+# Canonical M2 golden vector: session 000102...0f, sequence 7, CPU 72.3%,
+# source age 1000 ms, available/fresh, configuration revision 4.
+002fa60001010002040350000102030405060708090a0b0c0d0e0f040705a50000011902d3021903e8030004046d8620df

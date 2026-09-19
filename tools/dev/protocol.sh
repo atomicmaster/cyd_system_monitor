@@ -40,12 +40,16 @@ check() {
   local cpp_test_dir="$(_protocol_dir)/tests/cpp"
   cmake -S "$cpp_test_dir" -B "$cpp_test_dir/build" -G Ninja
   cmake --build "$cpp_test_dir/build"
-  "$cpp_test_dir/build/protocol_generated_tests"
+  ctest --test-dir "$cpp_test_dir/build" --output-on-failure
 
   (cd "$(_protocol_dir)/generated/rust" && cargo test)
 }
 
 run() {
   if [[ "${1:-}" == "--" ]]; then shift; fi
+  if [[ "${1:-}" == "decode" && -n "${2:-}" ]]; then
+    python3 "$(_protocol_dir)/tools/decode.py" "$2"
+    return
+  fi
   _generate "$@"
 }

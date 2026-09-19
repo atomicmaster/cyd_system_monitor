@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: CC0-1.0
+# unknown optional key 8 holding a CBOR tag: outside the profile
+0032a70001010002040350000102030405060708090a0b0c0d0e0f040105a50000011902d3021903e80300040408c000d6c82975

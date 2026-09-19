@@ -7,6 +7,12 @@
 
 namespace protocol::generated {
 
+// From core.toml
+struct CpuSnapshot {
+  uint32_t sequence;
+  uint32_t configuration_revision;
+};
+
 // From smoke.toml
 struct Smoke {
   uint32_t sequence;

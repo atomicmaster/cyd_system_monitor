@@ -14,9 +14,12 @@ protocol/
 └── tests/cpp/         C++ consumer smoke test
 ```
 
-`schema/smoke.toml` is the M0 generation-tooling smoke fixture, not the
-product snapshot contract. C01 defines the first real USB message,
-golden byte vectors, and malformed-input cases on top of this tooling.
+`schema/smoke.toml` remains the M0 generation-tooling smoke fixture.
+`schema/core.toml`, [CORE_PROTOCOL.md](CORE_PROTOCOL.md), and
+`fixtures/` define the M2 bounded framed-CBOR CPU-snapshot foundation.
+The portable C++ codec is linked into `firmware/domain`; the independent Rust
+codec lives in `host/protocol`. Future schema fields must preserve the stated
+optional-field and frame-size rules.
 
 Licensing follows [CONTRIBUTING.md](../CONTRIBUTING.md): only `generated/cpp/`
 and `tests/cpp/` are Apache-2.0, since that is the protocol code actually
@@ -27,4 +30,5 @@ accordingly.
 ```sh
 ./dev build protocol   # regenerate generated/cpp and generated/rust
 ./dev check protocol   # fail on drift, then build+run both consumers
+./dev run protocol -- decode protocol/fixtures/cpu-snapshot-v1.hex
 ```

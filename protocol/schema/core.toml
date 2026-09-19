@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Product wire-contract metadata. Integer CBOR keys and exact canonical bytes
+# are specified in protocol/CORE_PROTOCOL.md; this file keeps generated type
+# ownership rooted in the language-neutral schema directory.
+
+[protocol]
+major = 1
+minor = 0
+max_frame_bytes = 1024
+framing = "u16-be-length | canonical-cbor | crc32-be"
+
+[[messages]]
+name = "CpuSnapshot"
+
+[[messages.fields]]
+name = "sequence"
+type = "u32"
+
+[[messages.fields]]
+name = "configuration_revision"
+type = "u32"

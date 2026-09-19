@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: CC0-1.0
+# name|fixture|decoder|expected-error
+# Both C++ and Rust load every row. Add malformed or compatibility vectors
+# here before changing either decoder.
+cpu-golden|cpu-snapshot-v1.hex|cpu|none
+cpu-bad-crc|cpu-snapshot-v1-bad-crc.hex|cpu|bad-crc
+cpu-incompatible-major|cpu-snapshot-v1-incompatible-major.hex|cpu|unsupported-major
+cpu-noncanonical|cpu-snapshot-v1-noncanonical.hex|cpu|malformed
+cpu-unknown-optional|cpu-snapshot-v1-unknown-optional.hex|cpu|none
+hello-v1|hello-v1.hex|control|none
+pair-v1|pair-v1.hex|control|none
+command-v1|command-v1.hex|control|none
+command-reply-v1|command-reply-v1.hex|control|none
+pair-five-digit-code|pair-v1-five-digit-code.hex|control|malformed
+cpu-unknown-nested|cpu-snapshot-v1-unknown-nested.hex|cpu|none
+cpu-too-deep|cpu-snapshot-v1-too-deep.hex|cpu|malformed
+cpu-tag|cpu-snapshot-v1-tag.hex|cpu|malformed
+cpu-duplicate-key|cpu-snapshot-v1-duplicate-key.hex|cpu|malformed
+cpu-missing-body|cpu-snapshot-v1-missing-body.hex|cpu|malformed
+cpu-zero-length|cpu-snapshot-v1-zero-length.hex|cpu|truncated
+cpu-trailing-byte|cpu-snapshot-v1-trailing-byte.hex|cpu|truncated
+cpu-truncated|cpu-snapshot-v1-truncated.hex|cpu|truncated
+cpu-oversized-length|cpu-snapshot-v1-oversized-length.hex|cpu|too-large
+hello-reply-v1|hello-reply-v1.hex|control|none
+hello-incompatible-major|hello-v1-incompatible-major.hex|control|unsupported-major
+hello-wrong-body|hello-v1-wrong-body.hex|control|malformed
+error-v1|error-v1.hex|control|none
