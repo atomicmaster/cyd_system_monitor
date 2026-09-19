@@ -16,4 +16,11 @@ namespace firmware::platform::esp32::dev_console {
 // board before that protocol exists.
 void StartDevConsole();
 
+// "DEV:CPU_REPLAY" asks the UI loop to replay the scripted CPU-snapshot
+// timeline (firmware::domain::CpuReplay) through HostFeed onto the CPU
+// screen, so TB01's physical display check needs no Mac collector. LVGL is not
+// thread-safe, so the console only raises a request; app_main's loop consumes
+// it and does all drawing. Returns true once per request.
+bool ConsumeCpuReplayRequest();
+
 }  // namespace firmware::platform::esp32::dev_console

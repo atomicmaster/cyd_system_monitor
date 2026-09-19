@@ -12,14 +12,18 @@
 
 #include "board_init.hpp"
 #include "capacity/capacity_probe.hpp"
+#include "dev_console/dev_console.hpp"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "firmware/domain/calibration/calibration.hpp"
+#include "firmware/domain/cpu_replay.hpp"
+#include "firmware/domain/cpu_view.hpp"
 #include "firmware/domain/generated/profile.hpp"
 #include "firmware/domain/profile_check.hpp"
 #include "firmware/ui/calibration/calibration_flow.hpp"
 #include "firmware/ui/capacity/capacity_slice.hpp"
 #include "firmware/ui/diagnostic/diagnostic_screen.hpp"
+#include "firmware/ui/system/cpu/cpu_card.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs/calibration_store.hpp"
@@ -66,7 +70,25 @@ struct AppState {
   std::optional<calibration::AffineTransform> active_transform;
 };
 
+// esp_timer supplies the monotonic clock the replay's HostFeed reads.
+class EspClock : public firmware::domain::MonotonicClock {
+ public:
+  uint64_t NowMs() const override { return static_cast<uint64_t>(esp_timer_get_time() / 1000); }
+};
+
+// TB01's board replay: the scripted CPU-snapshot timeline drawn on the CPU
+// screen (DEV:CPU_REPLAY). It borrows the display from the diagnostic screen
+// and hands it back when the script ends, so calibration and touch navigation
+// are untouched.
+struct CpuReplaySession {
+  EspClock clock;
+  firmware::domain::CpuReplay replay{clock, 1};
+  firmware::ui::system::CpuScreen screen;
+  explicit CpuReplaySession(lv_obj_t* parent) : screen(parent) { replay.Start(); }
+};
+
 AppState g_app;
+std::optional<CpuReplaySession> g_cpu_replay;
 
 // LVGL's own widget click/gesture detection (LV_EVENT_CLICKED, used by
 // recalibrate_button below) only ever fires for input fed through a
@@ -205,6 +227,50 @@ void AttachCapacityAdvanceHandler() {
   lv_obj_add_event_cb(
       g_app.capacity_slice->next_button(), [](lv_event_t*) { AdvanceCapacitySlice(); },
       LV_EVENT_CLICKED, nullptr);
+}
+
+void StartCpuReplay() {
+  if (g_app.board.display == nullptr || g_app.calibration.has_value() || g_cpu_replay.has_value() ||
+      g_app.capacity_slice.has_value()) {
+    ESP_LOGW(kTag, "cpu-replay: ignored (needs the diagnostic screen showing)");
+    return;
+  }
+  if (g_app.diagnostic.root != nullptr) {
+    lv_obj_delete(g_app.diagnostic.root);
+    g_app.diagnostic = {};
+  }
+  g_cpu_replay.emplace(lv_display_get_screen_active(g_app.board.display));
+  ESP_LOGI(kTag, "cpu-replay: begin");
+}
+
+// Draws each checkpoint the replay reports and logs the same line the
+// simulator's cpu-replay.expected holds, so a serial capture can be diffed.
+void PumpCpuReplay() {
+  if (firmware::platform::esp32::dev_console::ConsumeCpuReplayRequest()) {
+    StartCpuReplay();
+  }
+  if (!g_cpu_replay.has_value()) {
+    return;
+  }
+  const auto now_ms = g_cpu_replay->clock.NowMs();
+  bool checkpoint_hit = false;
+  while (const char* label = g_cpu_replay->replay.Poll()) {
+    const auto view = firmware::domain::MakeCpuView(g_cpu_replay->replay.feed().state(), now_ms);
+    g_cpu_replay->screen.Update(view);
+    ESP_LOGI(kTag, "cpu-replay: %s", firmware::domain::FormatCheckpoint(label, view).c_str());
+    checkpoint_hit = true;
+  }
+  if (!checkpoint_hit) {
+    // Keep the clock text and staleness fresh between checkpoints.
+    g_cpu_replay->screen.Update(
+        firmware::domain::MakeCpuView(g_cpu_replay->replay.feed().state(), now_ms));
+  }
+  if (g_cpu_replay->replay.done()) {
+    ESP_LOGI(kTag, "cpu-replay: done");
+    g_cpu_replay.reset();
+    g_app.touch_was_pressed = false;
+    ShowDiagnosticScreen();
+  }
 }
 
 void PersistAndShowDiagnostic(const calibration::AffineTransform& transform) {
@@ -389,6 +455,7 @@ extern "C" void app_main(void) {
   constexpr uint32_t kMaxLoopSleepMs = 20;
   for (;;) {
     PumpTouch();
+    PumpCpuReplay();
     PumpTouchDiagnostics();
     const uint32_t sleep_ms = lv_timer_handler();
     const uint32_t clamped_sleep_ms =

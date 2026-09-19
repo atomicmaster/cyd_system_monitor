@@ -31,7 +31,7 @@ check() {
 
 # Runs a diagnostic case on a connected board:
 #   ./dev run hardware -- <case> --port <path>
-#     case: display-smoke | calibration | peripherals | capacity
+#     case: display-smoke | calibration | peripherals | capacity | cpu-replay
 #
 # Unlike the simulator (which builds a separate scenario binary per case
 # because it has no operator to drive it interactively), the real board
@@ -71,7 +71,7 @@ run() {
   done
 
   if [[ -z "$case_name" ]]; then
-    echo "error: 'run hardware' requires a case: display-smoke | calibration | peripherals | capacity" >&2
+    echo "error: 'run hardware' requires a case: display-smoke | calibration | peripherals | capacity | cpu-replay" >&2
     return 1
   fi
   if [[ -z "$port" ]]; then
@@ -84,6 +84,18 @@ run() {
   fi
 
   require_tool idf.py "$(idf_missing_hint)" || return 1
+
+  if [[ "$case_name" == "cpu-replay" ]]; then
+    # TB01: flash, replay the scripted CPU timeline on the display, and diff
+    # the board's serial log against the simulator's expected transcript. The
+    # display itself is still checked by eye (dim at 3 s, Disconnected at 15 s,
+    # `Time unavailable` on cold boot); see docs/tickets/TB01.md.
+    echo "Flashing the image and replaying the CPU timeline on port '$port' (exclusive board session)."
+    (cd "$(dev_root)/firmware" && idf.py -p "$port" flash) || return 1
+    python3 "$(dev_root)/tools/hardware/cpu_replay_capture.py" --port "$port" \
+      --out "$(dev_root)/firmware/build/cpu-replay-capture.log"
+    return
+  fi
 
   echo "Flashing and monitoring the diagnostic image on port '$port', session case '$case_name'."
   echo "This requires an exclusively claimed, physically connected E32R28T board."

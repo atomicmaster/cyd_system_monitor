@@ -63,7 +63,6 @@ bool Skip(std::span<const uint8_t> in, std::size_t *p, int depth = 0) {
     return false;
   uint8_t h = in[*p];
   uint8_t m = h >> 5;
-  uint8_t a = h & 31;
   uint64_t n;
   if (m <= 1)
     return ReadUInt(in, p, m, &n);
@@ -254,8 +253,8 @@ bool ReadControlBody(std::span<const uint8_t> c, std::size_t *p, Envelope *e) {
     if ((e->type == MessageType::kHello ||
          e->type == MessageType::kHelloReply)) {
       if ((key < 2 && value > UINT8_MAX) ||
-          (key == 2 || key == 3) && value > UINT32_MAX ||
-          key == 5 && value > UINT32_MAX)
+          ((key == 2 || key == 3) && value > UINT32_MAX) ||
+          (key == 5 && value > UINT32_MAX))
         return false;
       if (key == 0)
         hello.supported_major = value;

@@ -62,9 +62,12 @@ int main(int argc, char** argv) {
   if (scenario == "cpu-lifecycle") {
     return simulator::scenarios::RunCpuLifecycle();
   }
+  if (scenario == "cpu-replay") {
+    return simulator::scenarios::RunCpuReplay();
+  }
   std::fprintf(stderr,
                "usage: simulator <scenario>\n"
                "  scenario: smoke | display-smoke | calibration | peripherals | capacity | "
-               "protocol-replay | cpu-lifecycle\n");
+               "protocol-replay | cpu-lifecycle | cpu-replay\n");
   return 2;
 }

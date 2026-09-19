@@ -41,6 +41,7 @@ set(_fd_sources
     "src/host_state.cpp"
     "src/host_feed.cpp"
     "src/cpu_view.cpp"
+    "src/cpu_replay.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../protocol/core/cpp/protocol.cpp"
     "${FIRMWARE_DOMAIN_CALIBRATION_SOURCES}")
 

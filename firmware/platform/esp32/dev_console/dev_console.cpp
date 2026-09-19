@@ -8,6 +8,7 @@
 #include "dev_console/dev_console.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 
@@ -413,6 +414,13 @@ void RunSerialRxTest() {
            static_cast<long long>(max_interval_us / 1000));
 }
 
+std::atomic<bool> g_cpu_replay_requested{false};
+
+void RunCpuReplayRequest() {
+  ESP_LOGI(kTag, "DEV:CPU_REPLAY: requested");
+  g_cpu_replay_requested.store(true);
+}
+
 struct Command {
   const char* line;
   void (*run)();
@@ -436,6 +444,7 @@ constexpr Command kCommands[] = {
     {"DEV:NVS_WRITE_TEST", RunNvsWriteTest},
     {"DEV:PARTITION_WRITE_TEST", RunPartitionWriteTest},
     {"DEV:SERIAL_RX_TEST", RunSerialRxTest},
+    {"DEV:CPU_REPLAY", RunCpuReplayRequest},
 };
 
 // UART0 is already owned by ESP-IDF's console/log VFS layer (ESP_LOGI,
@@ -493,6 +502,8 @@ void DevConsoleTask(void* /*arg*/) {
 }
 
 }  // namespace
+
+bool ConsumeCpuReplayRequest() { return g_cpu_replay_requested.exchange(false); }
 
 void StartDevConsole() {
   TaskHandle_t handle = nullptr;

@@ -37,4 +37,9 @@ int RunProtocolReplay();
 // `./dev run simulator -- cpu-lifecycle`.
 int RunCpuLifecycle();
 
+// Runs firmware::domain::CpuReplay's scripted timeline (the same one the board
+// replays on `DEV:CPU_REPLAY`) into the CPU screen and compares each
+// checkpoint line with simulator/scenarios/cpu-replay.expected.
+int RunCpuReplay();
+
 }  // namespace simulator::scenarios

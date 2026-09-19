@@ -12,6 +12,9 @@ target_compile_features(protocol_generated INTERFACE cxx_std_20)
 add_library(protocol_core STATIC ../../core/cpp/protocol.cpp)
 target_include_directories(protocol_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../../core/cpp")
 target_compile_features(protocol_core PUBLIC cxx_std_20)
+# The firmware build compiles this file with GCC -Werror; catch the same
+# class of warning in the protocol lane instead of at ESP-IDF build time.
+target_compile_options(protocol_core PRIVATE -Wall -Wextra -Werror)
 
 add_executable(protocol_generated_tests test_smoke.cpp)
 target_link_libraries(protocol_generated_tests PRIVATE protocol_generated)
