@@ -92,6 +92,8 @@ struct Envelope {
   // ordering key for retained evidence (boot identity + sequence are).
   std::optional<uint64_t> utc_ms;
   std::optional<uint32_t> utc_uncertainty_ms;
+  // Host local offset from UTC in minutes east (wire value biased by +1440).
+  std::optional<int16_t> local_offset_minutes;
   std::vector<uint8_t> body; // bounded opaque body for Error messages
   std::optional<HelloBody> hello;
   std::optional<PairBody> pair;

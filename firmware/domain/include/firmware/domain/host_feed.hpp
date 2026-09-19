@@ -48,7 +48,7 @@ class HostFeed {
   // major with an Error message).
   using ControlHandler = std::function<void(const protocol::FrameStream::Result&)>;
   void SetControlHandler(ControlHandler handler) { control_handler_ = std::move(handler); }
-  void ApplyHostUtc(uint64_t utc_ms);
+  void ApplyHostUtc(uint64_t utc_ms, std::optional<int16_t> local_offset_minutes = std::nullopt);
   void Push(std::span<const uint8_t> bytes);
   // Advances staleness and abandons a partial frame that has sat idle: the
   // Host writes each frame in one burst, so a gap means a false length (after

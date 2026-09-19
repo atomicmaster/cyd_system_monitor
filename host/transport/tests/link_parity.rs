@@ -285,6 +285,7 @@ fn incompatible_major_is_refused_and_nothing_is_applied() {
             sequence: 1,
             utc_ms: None,
             utc_uncertainty_ms: None,
+            local_offset_minutes: None,
         },
         &ControlBody::Hello(HelloBody {
             supported_major: 2,

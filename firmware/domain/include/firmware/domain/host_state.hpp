@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 #include "protocol.hpp"
 
@@ -43,6 +44,10 @@ struct HostState {
   // Time Discontinuity.
   uint64_t utc_anchor_ms = 0;
   uint64_t utc_anchor_monotonic_ms = 0;
+  // Host-supplied local offset (minutes east of UTC); absent from older Hosts,
+  // in which case the clock shows UTC.
+  bool has_utc_offset = false;
+  int16_t utc_offset_minutes = 0;
   uint32_t boot_identity = 0;
   uint32_t configuration_revision = 0;
 };
@@ -55,7 +60,8 @@ class HostStateReducer {
   void Advance(uint64_t now_ms);
   void MarkIncompatible();
   void CorrectTime();  // Existing evidence is intentionally not rewritten.
-  void SetUtcAnchor(uint64_t utc_ms, uint64_t monotonic_ms);
+  void SetUtcAnchor(uint64_t utc_ms, uint64_t monotonic_ms,
+                    std::optional<int16_t> local_offset_minutes = std::nullopt);
   const HostState& state() const { return state_; }
 
  private:

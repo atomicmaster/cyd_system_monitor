@@ -8,7 +8,9 @@ void HostFeed::StartSession(const std::array<uint8_t, protocol::kSessionIdBytes>
   session_open_ = true;
 }
 
-void HostFeed::ApplyHostUtc(uint64_t utc_ms) { reducer_.SetUtcAnchor(utc_ms, clock_.NowMs()); }
+void HostFeed::ApplyHostUtc(uint64_t utc_ms, std::optional<int16_t> local_offset_minutes) {
+  reducer_.SetUtcAnchor(utc_ms, clock_.NowMs(), local_offset_minutes);
+}
 
 void HostFeed::Push(std::span<const uint8_t> bytes) {
   stream_.Push(bytes);
@@ -54,7 +56,10 @@ void HostFeed::Drain() {
     // The sample is as old as the Host says it is, however late it arrived.
     const uint64_t age = result.decoded.cpu.source_age_ms;
     reducer_.ApplySnapshot(result.decoded, now, now >= age ? now - age : 0);
-    if (result.decoded.envelope.utc_ms) reducer_.SetUtcAnchor(*result.decoded.envelope.utc_ms, now);
+    if (result.decoded.envelope.utc_ms) {
+      reducer_.SetUtcAnchor(*result.decoded.envelope.utc_ms, now,
+                            result.decoded.envelope.local_offset_minutes);
+    }
     ++stats_.applied;
   }
 }

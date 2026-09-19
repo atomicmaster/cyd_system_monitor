@@ -173,7 +173,8 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
                  const RamSnapshot *ram, std::vector<uint8_t> *cbor) {
   cbor->clear();
   const uint8_t envelope_fields =
-      6 + e.utc_ms.has_value() + e.utc_uncertainty_ms.has_value();
+      6 + e.utc_ms.has_value() + e.utc_uncertainty_ms.has_value() +
+      e.local_offset_minutes.has_value();
   cbor->push_back(static_cast<uint8_t>(0xa0 | envelope_fields));
   UInt(cbor, 0, 0);
   UInt(cbor, 0, e.version.major);
@@ -226,6 +227,12 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
   if (e.utc_uncertainty_ms) {
     UInt(cbor, 0, 7);
     UInt(cbor, 0, *e.utc_uncertainty_ms);
+  }
+  if (e.local_offset_minutes) {
+    if (*e.local_offset_minutes < -1440 || *e.local_offset_minutes > 1440)
+      return Error::kMalformed;
+    UInt(cbor, 0, 8);
+    UInt(cbor, 0, static_cast<uint64_t>(*e.local_offset_minutes + 1440));
   }
   return cbor->size() + 6 <= kMaxFrameBytes ? Error::kNone : Error::kTooLarge;
 }
@@ -416,14 +423,14 @@ Error Decode(std::span<const uint8_t> f, Decoded *r) {
   if (!ReadUInt(c, &p, 5, &count) || count > 16)
     return Error::kMalformed;
   Decoded d;
-  bool got[8] = {};
+  bool got[9] = {};
   uint64_t previous_key = UINT64_MAX;
   for (uint64_t i = 0; i < count; i++) {
     uint64_t k;
     if (!ReadUInt(c, &p, 0, &k) || (i && k <= previous_key))
       return Error::kMalformed;
     previous_key = k;
-    if (k > 7) {
+    if (k > 8) {
       if (!Skip(c, &p))
         return Error::kMalformed;
       continue;
@@ -538,6 +545,11 @@ Error Decode(std::span<const uint8_t> f, Decoded *r) {
         if (v > UINT32_MAX)
           return Error::kMalformed;
         d.envelope.utc_uncertainty_ms = v;
+      }
+      if (k == 8) {
+        if (v > 2880)
+          return Error::kMalformed;
+        d.envelope.local_offset_minutes = static_cast<int16_t>(v) - 1440;
       }
     }
   }

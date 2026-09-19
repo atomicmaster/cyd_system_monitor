@@ -51,6 +51,8 @@ pub struct Envelope {
     pub sequence: u32,
     pub utc_ms: Option<u64>,
     pub utc_uncertainty_ms: Option<u32>,
+    /// The Host's local offset from UTC in minutes east (wire value biased by 1440).
+    pub local_offset_minutes: Option<i16>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RamSnapshot {
@@ -275,8 +277,11 @@ pub fn encode_snapshot(
     if ram.is_some_and(|r| r.used_bytes > r.total_bytes) {
         return Err(Error::Malformed);
     }
-    let mut c =
-        vec![0xa6 + envelope.utc_ms.is_some() as u8 + envelope.utc_uncertainty_ms.is_some() as u8];
+    let mut c = vec![
+        0xa6 + envelope.utc_ms.is_some() as u8
+            + envelope.utc_uncertainty_ms.is_some() as u8
+            + envelope.local_offset_minutes.is_some() as u8,
+    ];
     for (k, v) in [
         (0, envelope.major as u64),
         (1, envelope.minor as u64),
@@ -324,6 +329,13 @@ pub fn encode_snapshot(
         uint(&mut c, 0, 7);
         uint(&mut c, 0, utc_uncertainty_ms as u64);
     }
+    if let Some(offset) = envelope.local_offset_minutes {
+        if !(-1440..=1440).contains(&offset) {
+            return Err(Error::Malformed);
+        }
+        uint(&mut c, 0, 8);
+        uint(&mut c, 0, (offset + 1440) as u64);
+    }
     if c.len() + 6 > MAX_FRAME_BYTES {
         return Err(Error::TooLarge);
     }
@@ -361,7 +373,7 @@ fn parse_envelope(frame: &[u8]) -> Result<(Envelope, &[u8]), Error> {
     let word = |value: u64| u32::try_from(value).map_err(|_| Error::Malformed);
     let (mut major, mut minor, mut kind) = (None, None, None);
     let (mut session, mut sequence, mut body) = (None, None, None);
-    let (mut utc_ms, mut uncertainty) = (None, None);
+    let (mut utc_ms, mut uncertainty, mut offset) = (None, None, None);
     let mut previous = None;
     for _ in 0..count {
         let key = read_uint(c, &mut p, 0).ok_or(Error::Malformed)?;
@@ -399,6 +411,13 @@ fn parse_envelope(frame: &[u8]) -> Result<(Envelope, &[u8]), Error> {
             }
             6 => utc_ms = Some(uint()?),
             7 => uncertainty = Some(word(uint()?)?),
+            8 => {
+                let wire = uint()?;
+                if wire > 2880 {
+                    return Err(Error::Malformed);
+                }
+                offset = Some(wire as i16 - 1440);
+            }
             _ => skip_value(c, &mut p, 0)?,
         }
     }
@@ -413,6 +432,7 @@ fn parse_envelope(frame: &[u8]) -> Result<(Envelope, &[u8]), Error> {
         sequence: sequence.ok_or(Error::Malformed)?,
         utc_ms,
         utc_uncertainty_ms: uncertainty,
+        local_offset_minutes: offset,
     };
     Ok((envelope, body.ok_or(Error::Malformed)?))
 }
@@ -631,8 +651,11 @@ fn encode_frame(envelope: &Envelope, body: &[u8]) -> Result<Vec<u8>, Error> {
     if body.len() > 512 {
         return Err(Error::TooLarge);
     }
-    let mut c =
-        vec![0xa6 + envelope.utc_ms.is_some() as u8 + envelope.utc_uncertainty_ms.is_some() as u8];
+    let mut c = vec![
+        0xa6 + envelope.utc_ms.is_some() as u8
+            + envelope.utc_uncertainty_ms.is_some() as u8
+            + envelope.local_offset_minutes.is_some() as u8,
+    ];
     for (key, value) in [
         (0, envelope.major as u64),
         (1, envelope.minor as u64),
@@ -655,6 +678,13 @@ fn encode_frame(envelope: &Envelope, body: &[u8]) -> Result<Vec<u8>, Error> {
     if let Some(value) = envelope.utc_uncertainty_ms {
         uint(&mut c, 0, 7);
         uint(&mut c, 0, value as u64);
+    }
+    if let Some(offset) = envelope.local_offset_minutes {
+        if !(-1440..=1440).contains(&offset) {
+            return Err(Error::Malformed);
+        }
+        uint(&mut c, 0, 8);
+        uint(&mut c, 0, (offset + 1440) as u64);
     }
     if c.len() + 6 > MAX_FRAME_BYTES {
         return Err(Error::TooLarge);
@@ -955,6 +985,7 @@ mod tests {
             sequence: 7,
             utc_ms: None,
             utc_uncertainty_ms: None,
+            local_offset_minutes: None,
         };
         let c = CpuSnapshot {
             availability: Availability::Available,
@@ -1023,6 +1054,7 @@ mod tests {
             sequence: 1,
             utc_ms: None,
             utc_uncertainty_ms: None,
+            local_offset_minutes: None,
         }
     }
 
@@ -1232,6 +1264,7 @@ mod tests {
             sequence: 1,
             utc_ms: None,
             utc_uncertainty_ms: None,
+            local_offset_minutes: None,
         };
         let hello = HelloBody {
             supported_major: 1,

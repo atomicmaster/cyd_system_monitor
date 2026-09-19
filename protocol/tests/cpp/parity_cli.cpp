@@ -89,7 +89,7 @@ std::string Summary(p::Error error, const p::Decoded &d) {
   out << "ok " << KindName(e.type) << " v" << static_cast<int>(e.version.major)
       << '.' << static_cast<int>(e.version.minor)
       << " sess=" << Hex(e.session.data(), 16) << " seq=" << e.sequence
-      << " utc=" << Opt(e.utc_ms) << " unc=" << Opt(e.utc_uncertainty_ms)
+      << " utc=" << Opt(e.utc_ms) << " unc=" << Opt(e.utc_uncertainty_ms) << " off=" << Opt(e.local_offset_minutes)
       << " body=" << Body(d);
   return out.str();
 }

@@ -100,6 +100,7 @@ impl Link {
                 // Idempotent: harmless if the board is already in link mode.
                 port.write_all(b"CYD:LINK\n")?;
                 sleep(Duration::from_millis(150));
+                client.set_local_offset_minutes(platform_macos::time::local_offset_minutes());
                 port.write_all(&client.start(Some(utc_ms())).map_err(protocol_error)?)?;
                 last_hello = Some(Instant::now());
             }
@@ -162,6 +163,8 @@ impl Link {
                 source_age_ms: 0,
                 freshness: Freshness::Fresh,
             };
+            self.client
+                .set_local_offset_minutes(platform_macos::time::local_offset_minutes());
             let frame = self
                 .client
                 .snapshot(&snapshot, Some(&ram), Some(utc_ms()))

@@ -103,7 +103,7 @@ fn summary(result: &Result<Decoded, String>) -> String {
         ),
     };
     format!(
-        "ok {} v{}.{} sess={} seq={} utc={} unc={} body={}",
+        "ok {} v{}.{} sess={} seq={} utc={} unc={} off={} body={}",
         kind_name(envelope.kind),
         envelope.major,
         envelope.minor,
@@ -111,6 +111,7 @@ fn summary(result: &Result<Decoded, String>) -> String {
         envelope.sequence,
         opt(envelope.utc_ms),
         opt(envelope.utc_uncertainty_ms),
+        opt(envelope.local_offset_minutes),
         body
     )
 }

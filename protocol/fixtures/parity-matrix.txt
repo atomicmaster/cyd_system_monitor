@@ -68,3 +68,10 @@ ram-age-overflow|ram-snapshot-v1-age-overflow.hex|cpu|malformed
 ram-noncanonical|ram-snapshot-v1-noncanonical.hex|cpu|malformed
 ram-duplicate-group|ram-snapshot-v1-duplicate-group.hex|cpu|malformed
 ram-unknown-nested|ram-snapshot-v1-unknown-nested.hex|cpu|none
+offset-east|cpu-snapshot-v1-offset-east.hex|cpu|none
+offset-west|cpu-snapshot-v1-offset-west.hex|cpu|none
+offset-zero|cpu-snapshot-v1-offset-zero.hex|cpu|none
+offset-out-of-range|cpu-snapshot-v1-offset-out-of-range.hex|cpu|malformed
+offset-not-uint|cpu-snapshot-v1-offset-not-uint.hex|cpu|malformed
+offset-too-wide|cpu-snapshot-v1-offset-too-wide.hex|cpu|malformed
+hello-offset|hello-v1-offset.hex|control|none

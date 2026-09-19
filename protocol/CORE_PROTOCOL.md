@@ -10,7 +10,11 @@ is rejected without allocation beyond the frame limit.
 
 The CBOR envelope is an integer-key map: `0` major, `1` minor, `2` message
 type, `3` 16-byte session identity, `4` sequence, `5` body, optional `6` UTC
-milliseconds, and optional `7` UTC uncertainty in milliseconds. Types are
+milliseconds, optional `7` UTC uncertainty in milliseconds, and optional `8` the
+Host's local offset from UTC in minutes east, biased by +1440 so it is an
+unsigned integer (wire 1440 is UTC, 1740 is UTC+5, 1140 is UTC-5; above 2880 is
+malformed). The offset is display context like UTC itself; the Host sends it
+with every UTC value so daylight-saving changes follow the Host. Types are
 Hello, HelloReply, Pair, complete Snapshot, Command, CommandReply, and Error.
 UTC fields use canonical CBOR unsigned 64-bit integers when needed; they are
 correlation/display context, not an ordering key. Unknown envelope keys are

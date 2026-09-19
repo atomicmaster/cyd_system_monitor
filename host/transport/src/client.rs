@@ -82,6 +82,7 @@ pub struct HostClient {
     sequence: u32,
     next_command: u32,
     minor: u8,
+    local_offset_minutes: Option<i16>,
 }
 
 impl HostClient {
@@ -103,7 +104,15 @@ impl HostClient {
             sequence: 0,
             next_command: 1,
             minor: 0,
+            local_offset_minutes: None,
         }
+    }
+
+    /// The Host's local offset from UTC in minutes east, sent in every
+    /// envelope from now on so the display can show local time and follow
+    /// daylight-saving changes.
+    pub fn set_local_offset_minutes(&mut self, offset: Option<i16>) {
+        self.local_offset_minutes = offset;
     }
 
     pub fn phase(&self) -> Phase {
@@ -119,6 +128,7 @@ impl HostClient {
             sequence,
             utc_ms: None,
             utc_uncertainty_ms: None,
+            local_offset_minutes: self.local_offset_minutes,
         }
     }
 
@@ -248,5 +258,44 @@ impl HostClient {
             }),
         )
         .ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::{decode, Availability, Freshness};
+
+    #[test]
+    fn the_local_offset_rides_every_envelope_once_set() {
+        let mut client = HostClient::new([1; 16], None, 123_456, [2; 16]);
+        client.set_local_offset_minutes(Some(-300));
+        let hello = client.start(Some(1_700_000_000_000)).unwrap();
+        let Ok(Message::Control(envelope, _)) = decode(&hello) else {
+            panic!("hello")
+        };
+        assert_eq!(envelope.local_offset_minutes, Some(-300));
+
+        client.phase = Phase::Live;
+        let cpu = CpuSnapshot {
+            availability: Availability::Available,
+            utilization_per_mille: 1,
+            source_age_ms: 0,
+            freshness: Freshness::Fresh,
+            configuration_revision: 0,
+        };
+        client.set_local_offset_minutes(Some(60)); // daylight saving changed
+        let frame = client.snapshot(&cpu, None, Some(1)).unwrap();
+        let Ok(Message::Snapshot(envelope, _)) = decode(&frame) else {
+            panic!("snapshot")
+        };
+        assert_eq!(envelope.local_offset_minutes, Some(60));
+
+        client.set_local_offset_minutes(None);
+        let frame = client.snapshot(&cpu, None, Some(2)).unwrap();
+        let Ok(Message::Snapshot(envelope, _)) = decode(&frame) else {
+            panic!("snapshot")
+        };
+        assert_eq!(envelope.local_offset_minutes, None);
     }
 }

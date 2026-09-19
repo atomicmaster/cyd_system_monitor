@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <vector>
 
+#include "firmware/domain/cpu_view.hpp"
 #include "firmware/domain/host_link.hpp"
 #include "firmware/domain/link_view.hpp"
 
@@ -319,6 +320,32 @@ int main() {
     view = MakeLinkView(bad, false);
     CHECK(view.fault == "Incompatible protocol: Host data rejected");
     CHECK(view.about.find("Host: 2.0") != std::string::npos);
+  }
+
+  {  // The Host's offset arrives with its UTC (Hello and snapshots) and shows local time.
+    Clock clock;
+    Store store;
+    HostLink link(clock, store, 1);
+    proto::Envelope hello;
+    hello.type = proto::MessageType::kHello;
+    hello.sequence = 1;
+    hello.local_offset_minutes = -300;
+    hello.hello = proto::HelloBody{.supported_major = 1, .utc_ms = 1'700'000'000'000ULL};
+    link.Push(Frame(hello));
+    CHECK(MakeCpuView(link.state(), clock.now).clock == "17:13 UTC-5");
+    Pairing(link, S1, H);
+    link.ConfirmPairing(true);
+    proto::Envelope snap;
+    snap.type = proto::MessageType::kSnapshot;
+    snap.session = S1;
+    snap.sequence = 1;
+    snap.utc_ms = 1'700'003'600'000ULL;  // one hour later, now in UTC+1
+    snap.local_offset_minutes = 60;
+    proto::CpuSnapshot cpu{proto::Availability::kAvailable, 100, 0, proto::Freshness::kFresh, 0};
+    std::vector<uint8_t> wire;
+    CHECK(proto::EncodeSnapshot(snap, cpu, nullptr, &wire) == proto::Error::kNone);
+    link.Push(wire);
+    CHECK(MakeCpuView(link.state(), clock.now).clock == "00:13 UTC+1");
   }
 
   if (g_failures != 0) {

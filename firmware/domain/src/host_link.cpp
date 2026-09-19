@@ -70,7 +70,7 @@ void HostLink::OnHello(const protocol::Envelope& envelope) {
   diagnostics_.fault = LinkFault::kNone;
   diagnostics_.negotiated_minor = std::min(hello.supported_minor, diagnostics_.supported_minor);
   phase_ = LinkPhase::kNegotiated;
-  if (hello.utc_ms) feed_.ApplyHostUtc(*hello.utc_ms);
+  if (hello.utc_ms) feed_.ApplyHostUtc(*hello.utc_ms, envelope.local_offset_minutes);
 
   protocol::Envelope reply;
   reply.type = protocol::MessageType::kHelloReply;

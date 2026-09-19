@@ -38,14 +38,30 @@ const char* NoteText(protocol::Availability availability) {
   return "";
 }
 
+// "HH:MM UTC" when the Host gave no offset (or UTC itself), else the Host's
+// local time with its offset: "17:13 UTC-5", "03:43 UTC+5:30".
 std::string ClockText(const HostState& state, uint64_t now_ms) {
   if (!state.time_available) return "Time unavailable";
   const uint64_t elapsed =
       now_ms >= state.utc_anchor_monotonic_ms ? now_ms - state.utc_anchor_monotonic_ms : 0;
-  const uint64_t seconds_of_day = ((state.utc_anchor_ms + elapsed) / 1000) % 86400;
-  char text[16];
-  std::snprintf(text, sizeof text, "%02u:%02u UTC", static_cast<unsigned>(seconds_of_day / 3600),
-                static_cast<unsigned>(seconds_of_day / 60 % 60));
+  const int64_t offset_minutes = state.has_utc_offset ? state.utc_offset_minutes : 0;
+  const int64_t local_seconds =
+      static_cast<int64_t>((state.utc_anchor_ms + elapsed) / 1000) + offset_minutes * 60;
+  const int64_t seconds_of_day = ((local_seconds % 86400) + 86400) % 86400;
+  char zone[16] = "UTC";
+  if (offset_minutes != 0) {
+    const int64_t magnitude = offset_minutes < 0 ? -offset_minutes : offset_minutes;
+    if (magnitude % 60 == 0) {
+      std::snprintf(zone, sizeof zone, "UTC%c%d", offset_minutes < 0 ? '-' : '+',
+                    static_cast<int>(magnitude / 60));
+    } else {
+      std::snprintf(zone, sizeof zone, "UTC%c%d:%02d", offset_minutes < 0 ? '-' : '+',
+                    static_cast<int>(magnitude / 60), static_cast<int>(magnitude % 60));
+    }
+  }
+  char text[32];
+  std::snprintf(text, sizeof text, "%02u:%02u %s", static_cast<unsigned>(seconds_of_day / 3600),
+                static_cast<unsigned>(seconds_of_day / 60 % 60), zone);
   return text;
 }
 

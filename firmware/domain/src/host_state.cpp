@@ -39,8 +39,13 @@ void HostStateReducer::Advance(uint64_t now_ms) {
 }
 void HostStateReducer::MarkIncompatible() { state_.connection = ConnectionState::kIncompatible; }
 void HostStateReducer::CorrectTime() { state_.time_available = true; }
-void HostStateReducer::SetUtcAnchor(uint64_t utc_ms, uint64_t monotonic_ms) {
+void HostStateReducer::SetUtcAnchor(uint64_t utc_ms, uint64_t monotonic_ms,
+                                    std::optional<int16_t> local_offset_minutes) {
   state_.time_available = true;
+  // The Host repeats its offset with every UTC value, so a daylight-saving
+  // change or a timezone move follows it; an absent offset reverts to UTC.
+  state_.has_utc_offset = local_offset_minutes.has_value();
+  state_.utc_offset_minutes = local_offset_minutes.value_or(0);
   state_.utc_anchor_ms = utc_ms;
   state_.utc_anchor_monotonic_ms = monotonic_ms;
 }

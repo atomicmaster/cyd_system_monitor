@@ -53,17 +53,17 @@ def write(name, data, note):
 
 snap = frame(envelope(4, CPU))
 write("cpu-snapshot-v1-unknown-nested.hex",
-      frame(envelope(4, CPU, [(8, uint(4, 2) + uint(4, 2) + u(1) + u(2) + uint(4, 2) + u(3) + u(4))])),
-      "unknown optional key 8 holding [[1,2],[3,4]]: skipped, snapshot applies")
+      frame(envelope(4, CPU, [(9, uint(4, 2) + uint(4, 2) + u(1) + u(2) + uint(4, 2) + u(3) + u(4))])),
+      "unknown optional key 9 holding [[1,2],[3,4]]: skipped, snapshot applies")
 write("cpu-snapshot-v1-large-unknown.hex",
-      frame(envelope(4, CPU, [(8, uint(2, 1100) + bytes(1100))])),
-      "unknown optional key 8 holding 1,100 bytes: a ~1.2 KB frame, over the old 1,024 cap")
+      frame(envelope(4, CPU, [(9, uint(2, 1100) + bytes(1100))])),
+      "unknown optional key 9 holding 1,100 bytes: a ~1.2 KB frame, over the old 1,024 cap")
 write("cpu-snapshot-v1-too-deep.hex",
-      frame(envelope(4, CPU, [(8, nest(4))])),
-      "unknown optional key 8 nested four arrays deep: over the skip limit")
+      frame(envelope(4, CPU, [(9, nest(4))])),
+      "unknown optional key 9 nested four arrays deep: over the skip limit")
 write("cpu-snapshot-v1-tag.hex",
-      frame(envelope(4, CPU, [(8, b"\xc0\x00")])),
-      "unknown optional key 8 holding a CBOR tag: outside the profile")
+      frame(envelope(4, CPU, [(9, b"\xc0\x00")])),
+      "unknown optional key 9 holding a CBOR tag: outside the profile")
 write("cpu-snapshot-v1-duplicate-key.hex",
       frame(envelope(4, CPU, keys=[(0, u(1)), (0, u(1)), (1, u(0)), (2, u(4)),
                                    (3, uint(2, 16) + SESSION), (4, u(1)), (5, CPU)])),
@@ -210,3 +210,21 @@ write("ram-snapshot-v1-unknown-nested.hex",
       frame(envelope(4, with_ram(ram_group(RAM + [(6, nest(3))])))),
       "unknown RAM field nested three arrays deep: depth counts from the value, so accepted"
       " (found by the parity gate: Rust once counted from the group map)")
+
+# Local UTC offset (envelope key 8): minutes east of UTC, biased by +1440 so the
+# wire value is an unsigned integer. 1440 is UTC, 1740 is UTC+5, 1140 is UTC-5.
+write("cpu-snapshot-v1-offset-east.hex", frame(envelope(4, CPU, [(8, u(1740))])),
+      "local UTC offset +300 minutes (wire 1740): accepted")
+write("cpu-snapshot-v1-offset-west.hex", frame(envelope(4, CPU, [(8, u(1140))])),
+      "local UTC offset -300 minutes (wire 1140): accepted")
+write("cpu-snapshot-v1-offset-zero.hex", frame(envelope(4, CPU, [(8, u(1440))])),
+      "local UTC offset 0 (wire 1440): accepted")
+write("cpu-snapshot-v1-offset-out-of-range.hex", frame(envelope(4, CPU, [(8, u(2881))])),
+      "local UTC offset wire value 2881 is beyond UTC+24h: malformed")
+write("cpu-snapshot-v1-offset-not-uint.hex",
+      frame(envelope(4, CPU, [(8, uint(4, 1) + u(1))])),
+      "local UTC offset holding an array: malformed, not skipped as unknown")
+write("cpu-snapshot-v1-offset-too-wide.hex", frame(envelope(4, CPU, [(8, u(1 << 32))])),
+      "local UTC offset wider than 32 bits: malformed")
+write("hello-v1-offset.hex", frame(envelope(1, HELLO, [(8, u(1740))])),
+      "Hello carrying a local UTC offset in its envelope: accepted")
