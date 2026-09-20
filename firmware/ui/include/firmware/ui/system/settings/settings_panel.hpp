@@ -12,11 +12,17 @@ namespace firmware::ui::system {
 
 // The clock settings overlay: 24-hour or 12-hour, show or hide the timezone,
 // and follow the Mac's zone or use a fixed UTC offset. It renders and edits a
-// DisplaySettings value; persistence is the caller's, through `on_change`.
+// DisplaySettings value, and offers the recalibrate-touch and debug-screen entries; persistence is
+// the caller's, through `on_change`.
 class SettingsPanel {
  public:
   using ChangeCallback = std::function<void(const firmware::domain::DisplaySettings&)>;
-  SettingsPanel(lv_obj_t* parent, ChangeCallback on_change);
+  // Optional entries to screens outside the panel (touch recalibration, the debug landing screen).
+  struct Actions {
+    std::function<void()> on_recalibrate;
+    std::function<void()> on_debug;
+  };
+  SettingsPanel(lv_obj_t* parent, ChangeCallback on_change, Actions actions = {});
   ~SettingsPanel();
   SettingsPanel(const SettingsPanel&) = delete;
   SettingsPanel& operator=(const SettingsPanel&) = delete;
@@ -34,6 +40,8 @@ class SettingsPanel {
   lv_obj_t* offset_down_button() const { return offset_down_; }
   lv_obj_t* offset_up_button() const { return offset_up_; }
   lv_obj_t* done_button() const { return done_; }
+  lv_obj_t* recalibrate_button() const { return recalibrate_; }
+  lv_obj_t* debug_button() const { return debug_; }
 
  private:
   friend struct SettingsPanelEvents;
@@ -42,6 +50,7 @@ class SettingsPanel {
   lv_obj_t* AddRow(const char* text, lv_obj_t** control, bool is_switch);
 
   ChangeCallback on_change_;
+  Actions actions_;
   firmware::domain::DisplaySettings settings_;
   lv_obj_t* panel_ = nullptr;
   lv_obj_t* use_24h_switch_ = nullptr;
@@ -51,6 +60,8 @@ class SettingsPanel {
   lv_obj_t* offset_down_ = nullptr;
   lv_obj_t* offset_up_ = nullptr;
   lv_obj_t* done_ = nullptr;
+  lv_obj_t* recalibrate_ = nullptr;
+  lv_obj_t* debug_ = nullptr;
 };
 
 // "UTC-5", "UTC+5:45", "UTC" for the offset label.

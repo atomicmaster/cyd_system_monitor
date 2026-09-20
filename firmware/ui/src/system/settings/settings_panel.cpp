@@ -52,6 +52,14 @@ struct SettingsPanelEvents {
     if (p->settings_.manual_zone) p->Changed(domain::StepOffset(p->settings_, +1));
   }
   static void Done(lv_event_t* e) { Panel(e)->Hide(); }
+  static void Recalibrate(lv_event_t* e) {
+    auto* p = Panel(e);
+    if (p->actions_.on_recalibrate) p->actions_.on_recalibrate();
+  }
+  static void Debug(lv_event_t* e) {
+    auto* p = Panel(e);
+    if (p->actions_.on_debug) p->actions_.on_debug();
+  }
 };
 
 lv_obj_t* SettingsPanel::AddRow(const char* text, lv_obj_t** control, bool is_switch) {
@@ -71,8 +79,8 @@ lv_obj_t* SettingsPanel::AddRow(const char* text, lv_obj_t** control, bool is_sw
   return row;
 }
 
-SettingsPanel::SettingsPanel(lv_obj_t* parent, ChangeCallback on_change)
-    : on_change_(std::move(on_change)) {
+SettingsPanel::SettingsPanel(lv_obj_t* parent, ChangeCallback on_change, Actions actions)
+    : on_change_(std::move(on_change)), actions_(std::move(actions)) {
   panel_ = lv_obj_create(parent);
   lv_obj_set_size(panel_, 308, 232);
   lv_obj_remove_flag(panel_, LV_OBJ_FLAG_SCROLLABLE);
@@ -101,11 +109,24 @@ SettingsPanel::SettingsPanel(lv_obj_t* parent, ChangeCallback on_change)
   lv_obj_align(offset_up_, LV_ALIGN_RIGHT_MID, 0, 0);
   lv_label_set_text(lv_label_create(offset_up_), "+15m");
 
-  done_ = lv_button_create(panel_);
-  lv_obj_set_size(done_, LV_PCT(100), 40);
-  lv_obj_t* done_label = lv_label_create(done_);
-  lv_label_set_text(done_label, "Done");
-  lv_obj_center(done_label);
+  lv_obj_t* buttons = lv_obj_create(panel_);
+  lv_obj_set_size(buttons, LV_PCT(100), 44);
+  lv_obj_remove_flag(buttons, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_style_pad_all(buttons, 0, 0);
+  lv_obj_set_style_border_width(buttons, 0, 0);
+  lv_obj_set_flex_flow(buttons, LV_FLEX_FLOW_ROW);
+  lv_obj_set_style_pad_column(buttons, 4, 0);
+  const auto make_button = [buttons](const char* text) {
+    lv_obj_t* button = lv_button_create(buttons);
+    lv_obj_set_size(button, 96, 40);
+    lv_obj_t* label = lv_label_create(button);
+    lv_label_set_text(label, text);
+    lv_obj_center(label);
+    return button;
+  };
+  recalibrate_ = make_button("Recalibrate");
+  debug_ = make_button("Debug");
+  done_ = make_button("Done");
 
   lv_obj_add_event_cb(use_24h_switch_, SettingsPanelEvents::Use24h, LV_EVENT_VALUE_CHANGED, this);
   lv_obj_add_event_cb(show_zone_switch_, SettingsPanelEvents::ShowZone, LV_EVENT_VALUE_CHANGED,
@@ -115,6 +136,8 @@ SettingsPanel::SettingsPanel(lv_obj_t* parent, ChangeCallback on_change)
   lv_obj_add_event_cb(offset_down_, SettingsPanelEvents::OffsetDown, LV_EVENT_CLICKED, this);
   lv_obj_add_event_cb(offset_up_, SettingsPanelEvents::OffsetUp, LV_EVENT_CLICKED, this);
   lv_obj_add_event_cb(done_, SettingsPanelEvents::Done, LV_EVENT_CLICKED, this);
+  lv_obj_add_event_cb(recalibrate_, SettingsPanelEvents::Recalibrate, LV_EVENT_CLICKED, this);
+  lv_obj_add_event_cb(debug_, SettingsPanelEvents::Debug, LV_EVENT_CLICKED, this);
   Refresh();
 }
 

@@ -24,7 +24,8 @@ class LinkScreen {
   // (opened by tapping the status bar); persisting it is the caller's job.
   LinkScreen(lv_obj_t* parent, DecisionCallback on_decision,
              SettingsPanel::ChangeCallback on_settings,
-             const firmware::domain::DisplaySettings& initial);
+             const firmware::domain::DisplaySettings& initial,
+             SettingsPanel::Actions settings_actions = {});
   ~LinkScreen();
   LinkScreen(const LinkScreen&) = delete;
   LinkScreen& operator=(const LinkScreen&) = delete;

@@ -55,14 +55,13 @@ DiagnosticScreenHandles BuildDiagnosticScreen(lv_obj_t* parent,
   }
 
   if (touch_present) {
-    handles.recalibrate_button = lv_button_create(handles.root);
-    lv_obj_t* recalibrate_label = lv_label_create(handles.recalibrate_button);
-    lv_label_set_text(recalibrate_label, "Recalibrate touch");
-
     handles.capacity_slice_button = lv_button_create(handles.root);
     lv_obj_t* capacity_slice_label = lv_label_create(handles.capacity_slice_button);
     lv_label_set_text(capacity_slice_label, "Capacity slice");
   }
+
+  handles.back_button = lv_button_create(handles.root);
+  lv_label_set_text(lv_label_create(handles.back_button), "Back to monitor");
 
   return handles;
 }

@@ -23,7 +23,8 @@ void LinkScreen::MakeButton(const char* text, lv_align_t align, Target* target) 
 
 LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision,
                        SettingsPanel::ChangeCallback on_settings,
-                       const firmware::domain::DisplaySettings& initial)
+                       const firmware::domain::DisplaySettings& initial,
+                       SettingsPanel::Actions settings_actions)
     : system_(parent), settings_(initial), on_decision_(std::move(on_decision)) {
   about_label_ = lv_label_create(parent);
   lv_obj_set_pos(about_label_, 8, 136);
@@ -51,7 +52,8 @@ LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision,
       [this, on_settings = std::move(on_settings)](const firmware::domain::DisplaySettings& s) {
         settings_ = s;
         if (on_settings) on_settings(s);
-      });
+      },
+      std::move(settings_actions));
   system_.SetStatusBarTapCallback([this]() {
     // The pairing prompt has priority: it must never be hidden behind settings.
     if (lv_obj_has_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN)) settings_panel_->Show(settings_);

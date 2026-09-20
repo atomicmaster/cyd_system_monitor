@@ -9,6 +9,7 @@
 // physical hardware.
 #include <cstdlib>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "board_init.hpp"
@@ -110,6 +111,11 @@ struct LinkSession {
   int64_t restart_at_us = 0;  // set by a calibration-reset command
 };
 
+// Settings-panel buttons request a screen change here; PumpLink runs it after
+// LVGL's event dispatch, because the change deletes the button being clicked.
+enum class PendingAction { kNone, kRecalibrate, kDebug };
+PendingAction g_pending_action = PendingAction::kNone;
+
 AppState g_app;
 std::optional<CpuReplaySession> g_cpu_replay;
 std::optional<LinkSession> g_link;
@@ -158,41 +164,21 @@ void TouchIndevReadCb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
 // below and AdvanceCapacitySlice (defined after ShowDiagnosticScreen, so it
 // can call back into it on exit) both need this before its own definition.
 void AttachCapacityAdvanceHandler();
+void ShowMonitorScreen();
 
 void ShowDiagnosticScreen() {
   lv_obj_t* screen = lv_display_get_screen_active(g_app.board.display);
   g_app.diagnostic = ui_diagnostic::BuildDiagnosticScreen(screen, g_app.diagnostic_state);
-  if (g_app.diagnostic.recalibrate_button != nullptr) {
-    // DIAGNOSTIC, pending physical F06 evidence: logs the button's actual
-    // on-screen bounds once, to compare against "indev press: ... ->
-    // screen_x/y" log lines and tell a coordinate-mapping problem (tap
-    // lands outside these bounds) apart from LVGL never detecting the
-    // press at all (button bounds look right, but neither this nor
-    // LV_EVENT_CLICKED below ever logs).
-    lv_obj_update_layout(g_app.diagnostic.recalibrate_button);
-    ESP_LOGI(kTag, "recalibrate_button bounds: x=%ld y=%ld w=%ld h=%ld",
-             static_cast<long>(lv_obj_get_x(g_app.diagnostic.recalibrate_button)),
-             static_cast<long>(lv_obj_get_y(g_app.diagnostic.recalibrate_button)),
-             static_cast<long>(lv_obj_get_width(g_app.diagnostic.recalibrate_button)),
-             static_cast<long>(lv_obj_get_height(g_app.diagnostic.recalibrate_button)));
-
+  if (g_app.diagnostic.back_button != nullptr) {
     lv_obj_add_event_cb(
-        g_app.diagnostic.recalibrate_button,
-        [](lv_event_t*) { ESP_LOGI(kTag, "recalibrate_button: LV_EVENT_PRESSED"); },
-        LV_EVENT_PRESSED, nullptr);
-
-    lv_obj_add_event_cb(
-        g_app.diagnostic.recalibrate_button,
+        g_app.diagnostic.back_button,
         [](lv_event_t*) {
-          ESP_LOGI(kTag, "recalibrate_button: LV_EVENT_CLICKED");
           if (g_app.diagnostic.root != nullptr) {
             lv_obj_delete(g_app.diagnostic.root);
             g_app.diagnostic = {};
           }
-          g_app.active_transform.reset();
-          lv_obj_t* screen = lv_display_get_screen_active(g_app.board.display);
-          g_app.calibration.emplace(screen);
           g_app.touch_was_pressed = false;
+          ShowMonitorScreen();
         },
         LV_EVENT_CLICKED, nullptr);
   }
@@ -297,7 +283,23 @@ void PumpCpuReplay() {
   }
 }
 
-void StartLinkSession() {
+// Opens touch recalibration from the monitor's settings panel.
+void StartRecalibration() {
+  if (g_link.has_value()) g_link->screen.reset();
+  g_app.active_transform.reset();
+  g_app.calibration.emplace(lv_display_get_screen_active(g_app.board.display));
+  g_app.touch_was_pressed = false;
+}
+
+// Opens the debug landing screen (the diagnostic screen) from the settings panel.
+void StartDebugScreen() {
+  if (g_link.has_value()) g_link->screen.reset();
+  g_app.touch_was_pressed = false;
+  ShowDiagnosticScreen();
+}
+
+void EnsureLinkSession() {
+  if (g_link.has_value()) return;
   g_link.emplace();
   g_link->link.SetCalibrationResetHandler([] {
     // Clear now, restart shortly after the reply has been written so the
@@ -306,27 +308,30 @@ void StartLinkSession() {
     g_link->restart_at_us = esp_timer_get_time() + 300'000;
     return true;
   });
+}
+
+// The landing screen: the System monitor with its settings panel. It shows
+// whatever the Host link has fed it (or its no-data state) and is the screen
+// the board returns to after calibration and from the debug screens.
+void ShowMonitorScreen() {
+  EnsureLinkSession();
   if (g_app.board.display == nullptr || g_app.calibration.has_value() ||
       g_app.capacity_slice.has_value() || g_cpu_replay.has_value() ||
-      g_app.diagnostic.root == nullptr) {
-    return;  // no screen: the link still runs, an unanswered prompt times out
+      g_app.diagnostic.root != nullptr || g_link->screen.has_value()) {
+    return;
   }
-  lv_obj_delete(g_app.diagnostic.root);
-  g_app.diagnostic = {};
   g_link->screen.emplace(
       lv_display_get_screen_active(g_app.board.display),
       [](bool accepted) { g_link->link.ConfirmPairing(accepted); },
       [](const firmware::domain::DisplaySettings& settings) { nvs::SaveDisplaySettings(settings); },
-      nvs::LoadDisplaySettings());
+      nvs::LoadDisplaySettings(),
+      firmware::ui::system::SettingsPanel::Actions{
+          // Deferred: both tear down the screen that owns the button being clicked.
+          .on_recalibrate = [] { g_pending_action = PendingAction::kRecalibrate; },
+          .on_debug = [] { g_pending_action = PendingAction::kDebug; }});
 }
 
-void PumpLink() {
-  if (!firmware::platform::esp32::usb::LinkModeActive()) {
-    return;
-  }
-  if (!g_link.has_value()) {
-    StartLinkSession();
-  }
+void PumpLinkTransport() {
   namespace usb = firmware::platform::esp32::usb;
   uint8_t buffer[256];
   while (const size_t n = usb::Read(buffer, sizeof(buffer))) {
@@ -339,6 +344,9 @@ void PumpLink() {
   if (g_link->restart_at_us != 0 && esp_timer_get_time() >= g_link->restart_at_us) {
     esp_restart();
   }
+}
+
+void DrawMonitor() {
   const int64_t now_us = esp_timer_get_time();
   if (g_link->screen.has_value() && now_us - g_link->last_draw_us >= 100'000) {
     g_link->last_draw_us = now_us;
@@ -352,7 +360,20 @@ void PumpLink() {
   }
 }
 
-void PersistAndShowDiagnostic(const calibration::AffineTransform& transform) {
+void PumpLink() {
+  const PendingAction action = std::exchange(g_pending_action, PendingAction::kNone);
+  if (action == PendingAction::kRecalibrate) StartRecalibration();
+  if (action == PendingAction::kDebug) StartDebugScreen();
+  if (!g_link.has_value()) {
+    return;
+  }
+  if (firmware::platform::esp32::usb::LinkModeActive()) {
+    PumpLinkTransport();
+  }
+  DrawMonitor();
+}
+
+void PersistAndShowMonitor(const calibration::AffineTransform& transform) {
   calibration::CalibrationRecord record;
   record.profile_id = firmware::domain::profile::kProfileId;
   record.orientation = kOrientation;
@@ -370,7 +391,7 @@ void PersistAndShowDiagnostic(const calibration::AffineTransform& transform) {
     g_app.calibration.reset();
   }
   g_app.active_transform = transform;
-  ShowDiagnosticScreen();
+  ShowMonitorScreen();
 }
 
 // Polls the touch driver once per loop iteration and drives whichever
@@ -408,7 +429,7 @@ void PumpTouch() {
 
   g_app.calibration->SubmitRawSample(sample);
   if (g_app.calibration->stage() == ui_calibration::CalibrationFlow::Stage::kAccepted) {
-    PersistAndShowDiagnostic(*g_app.calibration->transform());
+    PersistAndShowMonitor(*g_app.calibration->transform());
   }
 }
 
@@ -479,9 +500,11 @@ extern "C" void app_main(void) {
   // unnoticed until physical testing showed the recalibrate button's
   // LV_EVENT_CLICKED (and even LV_EVENT_PRESSED) never firing despite
   // confirmed real touches. Must run after InitBoard() succeeds.
-  lv_indev_t* indev = lv_indev_create();
-  lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
-  lv_indev_set_read_cb(indev, TouchIndevReadCb);
+  if (g_app.board.touch_ready) {
+    lv_indev_t* indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, TouchIndevReadCb);
+  }
 
   ESP_LOGI(kTag, "profile=%s build=%s reset_reason=%s", g_app.diagnostic_state.profile_id.c_str(),
            g_app.diagnostic_state.build_identity.c_str(),
@@ -501,24 +524,32 @@ extern "C" void app_main(void) {
   } else {
     lv_obj_t* screen = lv_display_get_screen_active(g_app.board.display);
 
-    calibration::CalibrationRecord stored;
-    const bool have_valid_calibration =
-        g_app.board.touch_ready &&
-        nvs::LoadCalibrationRecord(stored, firmware::domain::profile::kProfileId, kOrientation,
-                                   calibration::kCalibrationSchemaVersion);
-
-    if (have_valid_calibration || !g_app.board.touch_ready) {
-      // No usable touch means calibration is unreachable; go straight to
-      // diagnostics rather than presenting a flow that can never advance.
-      ESP_LOGI(kTag, "boot: showing diagnostic screen (touch_ready=%d have_valid_calibration=%d)",
-               g_app.board.touch_ready, have_valid_calibration);
-      if (have_valid_calibration) {
-        g_app.active_transform = stored.transform;
-      }
-      ShowDiagnosticScreen();
+    if (!firmware::domain::profile::kTouchCalibrateOnFirstStart) {
+      // The profile's screen has no calibratable touch: skip calibration and
+      // land on the monitor. Touch is never armed, so recalibration and the
+      // settings panel stay out of reach.
+      ESP_LOGI(kTag, "boot: profile has no calibratable touch; showing monitor screen");
+      ShowMonitorScreen();
     } else {
-      ESP_LOGI(kTag, "boot: entering guided calibration (no valid stored record)");
-      g_app.calibration.emplace(screen);
+      calibration::CalibrationRecord stored;
+      const bool have_valid_calibration =
+          g_app.board.touch_ready &&
+          nvs::LoadCalibrationRecord(stored, firmware::domain::profile::kProfileId, kOrientation,
+                                     calibration::kCalibrationSchemaVersion);
+
+      if (have_valid_calibration) {
+        ESP_LOGI(kTag, "boot: showing monitor screen (valid stored calibration)");
+        g_app.active_transform = stored.transform;
+        ShowMonitorScreen();
+      } else if (!g_app.board.touch_ready) {
+        // The profile expects touch but it failed to initialise: calibration
+        // can never advance, so show diagnostics.
+        ESP_LOGI(kTag, "boot: touch init failed; showing diagnostic screen");
+        ShowDiagnosticScreen();
+      } else {
+        ESP_LOGI(kTag, "boot: entering guided calibration (no valid stored record)");
+        g_app.calibration.emplace(screen);
+      }
     }
   }
 

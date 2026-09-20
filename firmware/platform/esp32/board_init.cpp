@@ -69,11 +69,18 @@ firmware::domain::DiagnosticState InitBoard(BoardHandles& out_handles) {
   state.peripherals.push_back({"display", out_handles.display != nullptr,
                                out_handles.display != nullptr ? "initialized" : "init failed"});
 
-  out_handles.touch_ready = out_handles.touch.Init();
-  state.peripherals.push_back({"touch", out_handles.touch_ready,
-                               out_handles.touch_ready
-                                   ? "bit-banged SPI ready (PROVISIONAL bus, see F08)"
-                                   : "init failed"});
+  // A profile that disables touch never initialises the controller, so the
+  // input loop (calibration, LVGL indev, polling) has nothing to run on.
+  if (firmware::domain::profile::kTouchCalibrateOnFirstStart) {
+    out_handles.touch_ready = out_handles.touch.Init();
+    state.peripherals.push_back({"touch", out_handles.touch_ready,
+                                 out_handles.touch_ready
+                                     ? "bit-banged SPI ready (PROVISIONAL bus, see F08)"
+                                     : "init failed"});
+  } else {
+    out_handles.touch_ready = false;
+    state.peripherals.push_back({"touch", false, "disabled by profile"});
+  }
 
   const auto sd_result = firmware::platform::esp32::microsd::Probe();
   state.peripherals.push_back({"microsd", sd_result.present, sd_result.detail});
