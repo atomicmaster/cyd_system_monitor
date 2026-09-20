@@ -58,4 +58,11 @@ int RunSystemScreen();
 // pairing prompt taking priority. Matches `./dev run simulator -- settings`.
 int RunSettings();
 
+// Replays a scripted radio driver (lost windows, a disabled radio, a fault, a
+// silent driver, both radios off) through the observation scheduler and
+// coverage ledger, comparing each checkpoint with
+// simulator/scenarios/coverage.expected. Matches TB09's
+// `./dev run simulator -- coverage`.
+int RunCoverage();
+
 }  // namespace simulator::scenarios

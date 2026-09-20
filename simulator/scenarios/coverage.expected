@@ -1,0 +1,10 @@
+boot @1000 | wifi=no-data 0/1000 drop=0 ch=0 | ble=no-data 0/1000 drop=0 ch=0 | host_only=0
+one-revisit @5510 | wifi=observing 1000/1000 drop=0 ch=11 | ble=observing 1000/1000 drop=0 ch=0 | host_only=0
+lossy @6330 | wifi=gap 923/1000 drop=2 ch=2 | ble=gap 923/1000 drop=2 ch=0 | host_only=0
+recovered @6740 | wifi=observing 928/1000 drop=2 ch=3 | ble=observing 928/1000 drop=2 ch=0 | host_only=0
+wifi-disabled @6740 | wifi=disabled 0/1000 drop=0 ch=0 | ble=observing 928/1000 drop=2 ch=0 | host_only=0
+ble-only @7970 | wifi=disabled 0/1000 drop=0 ch=0 | ble=observing 950/1000 drop=2 ch=0 | host_only=0
+wifi-fault @7970 | wifi=fault(init failed) 928/1000 drop=2 ch=3 | ble=disabled 0/1000 drop=0 ch=0 | host_only=0
+wifi-only @10225 | wifi=observing 960/1000 drop=2 ch=11 | ble=disabled 0/1000 drop=0 ch=0 | host_only=0
+silent @70225 | wifi=no-data 960/1000 drop=2 ch=11 | ble=disabled 0/1000 drop=0 ch=0 | host_only=0
+host-only @70225 | wifi=disabled 0/1000 drop=0 ch=0 | ble=disabled 0/1000 drop=0 ch=0 | host_only=1

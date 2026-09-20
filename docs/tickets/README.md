@@ -85,7 +85,7 @@ The dependency column repeats each ticket's prerequisite links for navigation. E
 | [TB06](TB06.md) | Display battery charge and condition without blocking collection | Outline | [C02](C02.md) |
 | [TB07](TB07.md) | Show supported agent process presence | Outline | [C02](C02.md) |
 | [TB08](TB08.md) | Run the Host as a per-user service with setup status | Outline | [C02](C02.md) |
-| [TB09](TB09.md) | Show the real radio schedule and coverage | Outline | [C02](C02.md) |
+| [TB09](TB09.md) | Show the real radio schedule and coverage | Executable | [C02](C02.md) |
 | [TB10](TB10.md) | Observe WiFi traffic through to an inspectable view | Outline | [TB09](TB09.md) |
 | [TB11](TB11.md) | Observe BLE advertisements through to an inspectable view | Outline | [TB09](TB09.md) |
 | [TB12](TB12.md) | Carry one deauthentication anomaly through an Alert episode | Outline | [TB10](TB10.md), [TB05](TB05.md) |

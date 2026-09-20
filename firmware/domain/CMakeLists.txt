@@ -54,6 +54,7 @@ set(_fd_sources
     "src/cpu_view.cpp"
     "src/cpu_replay.cpp"
     "src/card_registry.cpp"
+    "src/coverage.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../protocol/core/cpp/protocol.cpp"
     ${_fd_card_sources}
     "${FIRMWARE_DOMAIN_CALIBRATION_SOURCES}")
