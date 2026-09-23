@@ -110,6 +110,27 @@ int main() {
            "clearing the fault restores the coverage state");
   }
 
+  // The persistent status text distinguishes observed, gap, unknown, off, fault, and Host only.
+  {
+    ObservationScheduler scheduler;
+    CoverageLedger ledger;
+    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 0)) == "WiFi ? BLE ?",
+           "no report reads unknown, never quiet");
+    ledger.Record({*scheduler.NextWindow(0), 205, 0});
+    ledger.Record({*scheduler.NextWindow(205), 0, 0});
+    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 410)) == "WiFi 100% BLE gap",
+           "observed share and a lost window read differently");
+    ledger.SetFault(Radio::kWifi, "init failed");
+    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 410)) == "WiFi fault BLE gap",
+           "a fault reads fault");
+    scheduler.Configure({.wifi_enabled = false});
+    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 410)).find("WiFi off") == 0,
+           "a disabled radio reads off");
+    scheduler.Configure({.wifi_enabled = false, .ble_enabled = false});
+    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 410)) == "Host only",
+           "both radios off reads Host only");
+  }
+
   // The gap list is bounded; older gaps roll off but stay in the totals.
   {
     ObservationScheduler scheduler({.ble_enabled = false});

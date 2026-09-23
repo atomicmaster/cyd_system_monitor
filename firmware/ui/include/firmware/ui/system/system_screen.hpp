@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "firmware/domain/card_registry.hpp"
@@ -24,9 +25,11 @@ class SystemScreen {
   SystemScreen(const SystemScreen&) = delete;
   SystemScreen& operator=(const SystemScreen&) = delete;
 
-  // `status` supplies the bar text; `cards` are in registry order.
+  // `status` supplies the bar text; `cards` are in registry order. `coverage`
+  // is the radio coverage text shown in the bar (empty hides it).
   void Update(const firmware::domain::CpuView& status,
-              std::span<const firmware::domain::MetricCardView> cards);
+              std::span<const firmware::domain::MetricCardView> cards,
+              const std::string& coverage = {});
 
   // Tapping the status bar (connection and clock) reports here; the owner
   // decides what it opens.
@@ -36,6 +39,7 @@ class SystemScreen {
   lv_obj_t* status_bar() const { return bar_row_; }
   lv_obj_t* connection_label() const { return connection_label_; }
   lv_obj_t* clock_label() const { return clock_label_; }
+  lv_obj_t* coverage_label() const { return coverage_label_; }
   size_t card_count() const { return cards_.size(); }
   const MetricCard& card(size_t index) const { return *cards_[index]; }
 
@@ -44,6 +48,7 @@ class SystemScreen {
   std::function<void()> on_status_tap_;
   lv_obj_t* bar_row_ = nullptr;
   lv_obj_t* connection_label_ = nullptr;
+  lv_obj_t* coverage_label_ = nullptr;
   lv_obj_t* clock_label_ = nullptr;
   lv_obj_t* card_area_ = nullptr;
   std::vector<std::unique_ptr<MetricCard>> cards_;

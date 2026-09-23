@@ -32,6 +32,7 @@ SystemScreen::SystemScreen(lv_obj_t* parent) {
       },
       LV_EVENT_CLICKED, this);
   connection_label_ = lv_label_create(bar_row);
+  coverage_label_ = lv_label_create(bar_row);
   clock_label_ = lv_label_create(bar_row);
 
   card_area_ = lv_obj_create(root_);
@@ -49,8 +50,10 @@ SystemScreen::~SystemScreen() {
 }
 
 void SystemScreen::Update(const firmware::domain::CpuView& status,
-                          std::span<const firmware::domain::MetricCardView> cards) {
+                          std::span<const firmware::domain::MetricCardView> cards,
+                          const std::string& coverage) {
   lv_label_set_text(connection_label_, status.connection.c_str());
+  lv_label_set_text(coverage_label_, coverage.c_str());
   lv_label_set_text(clock_label_, status.clock.c_str());
   while (cards_.size() < cards.size()) {
     cards_.push_back(std::make_unique<MetricCard>(card_area_, kCardWidth, kCardHeight));

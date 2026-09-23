@@ -5,6 +5,7 @@
 #include "../expect.hpp"
 #include "../lvgl_env.hpp"
 #include "firmware/domain/card_registry.hpp"
+#include "firmware/domain/coverage.hpp"
 #include "firmware/domain/cpu_view.hpp"
 #include "firmware/domain/host_feed.hpp"
 #include "firmware/ui/system/system_screen.hpp"
@@ -58,12 +59,24 @@ int RunSystemScreen() {
   for (uint8_t i = 0; i < session.size(); ++i) session[i] = i;
   feed.StartSession(session);
 
+  domain::ObservationScheduler scheduler;
+  domain::CoverageLedger ledger;
+  const auto run_windows = [&](uint64_t now_ms, int count, bool lossy) {
+    for (int i = 0; i < count; ++i) {
+      const auto window = scheduler.NextWindow(now_ms);
+      if (!window) break;
+      ledger.Record({*window, lossy ? 0u : window->planned_ms, 0u});
+      now_ms += window->planned_ms;
+    }
+  };
+
   const auto render = [&](uint64_t now_ms) {
     clock.Set(now_ms);
     feed.Tick();
     std::vector<domain::MetricCardView> cards;
     for (const auto& card : domain::Cards()) cards.push_back(card.make(feed.state(), now_ms));
-    ui.Update(domain::MakeCpuView(feed.state(), now_ms), cards);
+    ui.Update(domain::MakeCpuView(feed.state(), now_ms), cards,
+              domain::CoverageStatusText(domain::MakeCoverageView(scheduler, ledger, now_ms)));
     RenderOnce();
   };
 
@@ -102,6 +115,26 @@ int RunSystemScreen() {
   render(7100);  // 3.1 s since the last frame
   result.Expect(Has(ui.card(1).value_label(), "Last 8.0 / 16.0 GB") && ui.card(1).dimmed(),
                 "stale RAM keeps its last value, labelled Last and dimmed");
+
+  // Coverage stays in the persistent bar and never reads as quiet.
+  result.Expect(Has(ui.coverage_label(), "WiFi ? BLE ?"),
+                "coverage is unknown, not quiet, before the radio reports");
+  run_windows(8000, 2, false);
+  render(8500);
+  result.Expect(Has(ui.coverage_label(), "WiFi 100% BLE 100%"),
+                "reported observed time appears in the status bar");
+  run_windows(8500, 2, true);
+  render(9000);
+  result.Expect(Has(ui.coverage_label(), "gap"), "a lost window shows as a gap in the status bar");
+  scheduler.Configure({.wifi_enabled = false});
+  render(9100);
+  result.Expect(Has(ui.coverage_label(), "WiFi off"), "a disabled radio reads off");
+  scheduler.Configure({.wifi_enabled = false, .ble_enabled = false});
+  render(9200);
+  result.Expect(Has(ui.coverage_label(), "Host only"), "both radios off reads Host only");
+  render(200000);
+  result.Expect(Has(ui.coverage_label(), "Host only") && !Has(ui.connection_label(), "Connected"),
+                "coverage stays in the bar while the Host link goes stale");
   return result.Finish("simulator system-screen");
 }
 

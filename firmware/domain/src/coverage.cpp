@@ -163,4 +163,25 @@ std::string FormatCoverage(const CoverageView& view) {
          " | host_only=" + (view.host_only ? "1" : "0");
 }
 
+std::string CoverageStatusText(const CoverageView& view) {
+  if (view.host_only) return "Host only";
+  const auto radio = [](const char* name, const RadioCoverageView& v) {
+    std::string text = std::string(name) + " ";
+    switch (v.state) {
+      case RadioState::kOperatorDisabled:
+        return text + "off";
+      case RadioState::kFault:
+        return text + "fault";
+      case RadioState::kNoData:
+        return text + "?";
+      case RadioState::kGap:
+        return text + "gap";
+      case RadioState::kObserving:
+        return text + std::to_string(v.observed_permille / 10) + "%";
+    }
+    return text + "?";
+  };
+  return radio("WiFi", view.wifi) + " " + radio("BLE", view.ble);
+}
+
 }  // namespace firmware::domain

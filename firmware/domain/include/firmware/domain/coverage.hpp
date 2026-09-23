@@ -184,4 +184,8 @@ CoverageView MakeCoverageView(const ObservationScheduler& scheduler, const Cover
 // replay checkpoints.
 std::string FormatCoverage(const CoverageView& view);
 
+// Compact persistent-status text: "WiFi 93% BLE gap", "WiFi ? BLE off", "Host only".
+// A percentage is observed time, "gap" a lost window, "?" unknown (never quiet).
+std::string CoverageStatusText(const CoverageView& view);
+
 }  // namespace firmware::domain
