@@ -29,6 +29,8 @@ Host WiFi band/channel context, when available, also lets the display show that 
 
 Future Linux and Windows adapters implement the same optional capability with native permission and availability states. No platform may invent or retain stale association identity when current access is unavailable.
 
+The provider socket contract between the daemon and the setup application is in [wifi-context-provider.md](wifi-context-provider.md).
+
 ## Local lifecycle tools
 
 The CLI and setup application list compatible attached monitors by Pairing Identity, guide the matching-code confirmation, and make unpairing explicit. After reconnection, they negotiate a fresh protocol session and send an immediate complete Host snapshot, followed by complete snapshots every second. MVP has no incremental Host Metric updates. The Host also supplies UTC, timezone, and clock uncertainty at handshake and periodically afterward.

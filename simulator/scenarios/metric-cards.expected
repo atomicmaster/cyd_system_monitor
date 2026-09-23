@@ -4,45 +4,53 @@ before any Host data
   storage | Storage | -- |  | bar=0 | dimmed=0
   battery | Battery | -- |  | bar=0 | dimmed=0
   agents | Agents | -- |  | bar=0 | dimmed=0
+  network | Network | -- |  | bar=0 | dimmed=0
 live: cpu 50%, ram 8.0 of 16.0 GB
   cpu | CPU | 50% |  | bar=500 | dimmed=0
   ram | RAM | 8.0 / 16.0 GB |  | bar=500 | dimmed=0
   storage | Storage | -- |  | bar=0 | dimmed=0
   battery | Battery | -- |  | bar=0 | dimmed=0
   agents | Agents | -- |  | bar=0 | dimmed=0
+  network | Network | -- |  | bar=0 | dimmed=0
 ram temporarily unavailable, cpu still live
   cpu | CPU | 60% |  | bar=600 | dimmed=0
   ram | RAM | -- | Unavailable | bar=0 | dimmed=0
   storage | Storage | -- |  | bar=0 | dimmed=0
   battery | Battery | -- |  | bar=0 | dimmed=0
   agents | Agents | -- |  | bar=0 | dimmed=0
+  network | Network | -- |  | bar=0 | dimmed=0
 ram back: 12.0 of 16.0 GB
   cpu | CPU | 60% |  | bar=600 | dimmed=0
   ram | RAM | 12.0 / 16.0 GB |  | bar=750 | dimmed=0
   storage | Storage | -- |  | bar=0 | dimmed=0
   battery | Battery | -- |  | bar=0 | dimmed=0
   agents | Agents | -- |  | bar=0 | dimmed=0
+  network | Network | -- |  | bar=0 | dimmed=0
 ram group last sent 2.9 s ago: still fresh; cpu live
   cpu | CPU | 61% |  | bar=610 | dimmed=0
   ram | RAM | 12.0 / 16.0 GB |  | bar=750 | dimmed=0
   storage | Storage | -- |  | bar=0 | dimmed=0
   battery | Battery | -- |  | bar=0 | dimmed=0
   agents | Agents | -- |  | bar=0 | dimmed=0
+  network | Network | -- |  | bar=0 | dimmed=0
 ram group last sent 3.1 s ago: ram goes stale, cpu still live
   cpu | CPU | 61% |  | bar=610 | dimmed=0
   ram | RAM | Last 12.0 / 16.0 GB |  | bar=750 | dimmed=1
   storage | Storage | -- |  | bar=0 | dimmed=0
   battery | Battery | -- |  | bar=0 | dimmed=0
   agents | Agents | -- |  | bar=0 | dimmed=0
+  network | Network | -- |  | bar=0 | dimmed=0
 cpu frame 3.1 s ago: cpu goes stale too
   cpu | CPU | Last 61% |  | bar=610 | dimmed=1
   ram | RAM | Last 12.0 / 16.0 GB |  | bar=750 | dimmed=1
   storage | Storage | -- |  | bar=0 | dimmed=0
   battery | Battery | -- |  | bar=0 | dimmed=0
   agents | Agents | -- |  | bar=0 | dimmed=0
+  network | Network | -- |  | bar=0 | dimmed=0
 15.1 s without any frame: both retained and dimmed
   cpu | CPU | Last 61% |  | bar=610 | dimmed=1
   ram | RAM | Last 12.0 / 16.0 GB |  | bar=750 | dimmed=1
   storage | Storage | -- |  | bar=0 | dimmed=0
   battery | Battery | -- |  | bar=0 | dimmed=0
   agents | Agents | -- |  | bar=0 | dimmed=0
+  network | Network | -- |  | bar=0 | dimmed=0

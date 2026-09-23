@@ -7,15 +7,19 @@ use std::io;
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use metrics::network::{Coverage, NetworkReading, RouteKind as NetRouteKind};
+use metrics::wifi_context::{ContextAvailability, FixtureProvider, WifiContextProvider};
 use metrics::{Collector, MetricAvailability};
 use platform_macos::agents::{AgentsCollector, AgentsReading};
 use platform_macos::battery::{BatteryCollector, BatteryReading};
 use platform_macos::cpu::CpuCollector;
 use platform_macos::ram::RamCollector;
 use platform_macos::storage::{StorageCollector, StorageReading};
+use platform_macos::wifi_context_server::{ServerConfig, WifiContextServer};
 use protocol::{
-    AgentsSnapshot, Availability, BatterySnapshot, CommandOperation, CommandResult, CpuSnapshot,
-    Freshness, RamSnapshot, StorageSnapshot,
+    AgentsSnapshot, AssociationContext, Availability, BatterySnapshot, CommandOperation,
+    CommandResult, CpuSnapshot, Freshness, NetworkSnapshot, RamSnapshot, RouteKind,
+    StorageSnapshot, WifiCoverage,
 };
 use transport::client::{Event, HostClient, Phase, Refusal};
 use transport::serial::SerialPort;
@@ -150,6 +154,25 @@ impl Link {
         let mut battery_collector = BatteryCollector::new();
         let mut agents_collector = AgentsCollector::new();
         let epoch = Instant::now();
+        // The WiFi context provider socket. Failing to open it costs only the
+        // optional context: traffic and Host Station Identity still flow.
+        let (context_server, provider): (Option<WifiContextServer>, Box<dyn WifiContextProvider>) =
+            match WifiContextServer::start(ServerConfig {
+                dir: run_dir(),
+                expected_uid: platform_macos::wifi_context_server::current_uid(),
+                epoch,
+            }) {
+                Ok(server) => {
+                    println!("WiFi context socket: {}", server.socket_path().display());
+                    let provider = Box::new(server.provider());
+                    (Some(server), provider)
+                }
+                Err(error) => {
+                    println!("WiFi context provider unavailable ({error}); continuing without it");
+                    (None, Box::new(FixtureProvider::absent()))
+                }
+            };
+        let mut network_collector = platform_macos::network::collector(provider);
         let mut next = Instant::now();
         let mut buf = [0u8; 512];
         loop {
@@ -173,6 +196,7 @@ impl Link {
             let storage = storage_snapshot(storage_collector.collect(now_ms).value);
             let battery = battery_snapshot(battery_collector.collect(now_ms).value);
             let agents = agents_snapshot(agents_collector.collect(now_ms));
+            let network = network_snapshot(network_collector.collect(now_ms).value);
             self.client
                 .set_local_offset_minutes(platform_macos::time::local_offset_minutes());
             let frame = self
@@ -183,6 +207,7 @@ impl Link {
                     storage.as_ref(),
                     battery.as_ref(),
                     Some(&agents),
+                    Some(&network),
                     Some(utc_ms()),
                 )
                 .ok_or(LinkError::Timeout("sending: the link is no longer paired"))?;
@@ -213,6 +238,35 @@ impl Link {
             println!(
                 "agents {:?}: codex {} claude {} grok {}",
                 agents.availability, agents.state[0], agents.state[1], agents.state[2]
+            );
+            // Presence and states only: never a MAC address, SSID or BSSID.
+            println!(
+                "network {:?} kind {:?}{} rate {} context {:?} coverage {:?} ch {} station {} ssid {} bssid {}{}",
+                network.traffic_availability,
+                network.route_kind,
+                if network.via_tunnel { " via tunnel" } else { "" },
+                if network.traffic_availability == Availability::Available {
+                    format!("{}/{} B/s", network.rx_bytes_per_s, network.tx_bytes_per_s)
+                } else {
+                    "unavailable".to_string()
+                },
+                network.context_availability,
+                network.coverage,
+                network.channel,
+                if network.station.is_some() { "present" } else { "absent" },
+                if network.ssid.is_empty() { "absent" } else { "present" },
+                if network.bssid.is_some() { "present" } else { "absent" },
+                context_server.as_ref().map_or(String::new(), |s| {
+                    let n = s.stats();
+                    if n.malformed + n.oversized + n.out_of_order + n.wrong_uid + n.rate_limited > 0 {
+                        format!(
+                            " (dropped: {} malformed, {} oversized, {} out of order, {} wrong uid, {} rate limited)",
+                            n.malformed, n.oversized, n.out_of_order, n.wrong_uid, n.rate_limited
+                        )
+                    } else {
+                        String::new()
+                    }
+                })
             );
             match (sample.value, ram_sample.value) {
                 (Some(v), Some(r)) => println!(
@@ -387,6 +441,97 @@ fn agents_snapshot(sample: metrics::MetricSample<AgentsReading>) -> AgentsSnapsh
     }
 }
 
+/// The per-user run directory that holds the provider socket:
+/// `$CYD_RUN_DIR`, else `~/Library/Application Support/CYD System Monitor/run`.
+fn run_dir() -> std::path::PathBuf {
+    if let Some(dir) = std::env::var_os("CYD_RUN_DIR") {
+        return dir.into();
+    }
+    let home = std::env::var_os("HOME").map_or_else(|| "/tmp".into(), std::path::PathBuf::from);
+    home.join("Library/Application Support/CYD System Monitor/run")
+}
+
+/// The wire group for one second of network collection. Each half carries its
+/// own availability; a rate that is not available is zero with its
+/// availability (never a measured zero), and SSID/BSSID travel only with an
+/// available context.
+fn network_snapshot(reading: Option<NetworkReading>) -> NetworkSnapshot {
+    let Some(reading) = reading else {
+        return NetworkSnapshot {
+            traffic_availability: Availability::Error,
+            traffic_age_ms: 0,
+            route_kind: RouteKind::Unknown,
+            via_tunnel: false,
+            rx_bytes_per_s: 0,
+            tx_bytes_per_s: 0,
+            context_availability: AssociationContext::Error,
+            context_age_ms: 0,
+            coverage: WifiCoverage::Unknown,
+            channel: 0,
+            station: None,
+            ssid: Vec::new(),
+            bssid: None,
+        };
+    };
+    let (t, w) = (reading.traffic, reading.wifi);
+    let snapshot = NetworkSnapshot {
+        traffic_availability: match (t.availability, t.rate) {
+            (MetricAvailability::Available, None) => Availability::Error, // no value behind it
+            (other, _) => availability(other),
+        },
+        // The sample is taken as it is collected.
+        traffic_age_ms: 0,
+        route_kind: match t.route_kind {
+            NetRouteKind::Unknown => RouteKind::Unknown,
+            NetRouteKind::Wifi => RouteKind::Wifi,
+            NetRouteKind::Ethernet => RouteKind::Ethernet,
+            NetRouteKind::Other => RouteKind::Other,
+            NetRouteKind::None => RouteKind::None,
+        },
+        via_tunnel: t.via_tunnel,
+        rx_bytes_per_s: t.rate.map_or(0, |r| r.rx_bytes_per_s),
+        tx_bytes_per_s: t.rate.map_or(0, |r| r.tx_bytes_per_s),
+        context_availability: match w.availability {
+            ContextAvailability::Available => AssociationContext::Available,
+            ContextAvailability::PermissionNotRequested => {
+                AssociationContext::PermissionNotRequested
+            }
+            ContextAvailability::Denied => AssociationContext::Denied,
+            ContextAvailability::Restricted => AssociationContext::Restricted,
+            ContextAvailability::AuthorizedUnavailable => AssociationContext::AuthorizedUnavailable,
+            ContextAvailability::Unsupported => AssociationContext::Unsupported,
+            ContextAvailability::Error => AssociationContext::Error,
+        },
+        context_age_ms: w.age_ms,
+        coverage: match w.coverage {
+            Coverage::Unknown => WifiCoverage::Unknown,
+            Coverage::Observable => WifiCoverage::Observable,
+            Coverage::OutsideSupported => WifiCoverage::OutsideSupported,
+        },
+        channel: w.channel,
+        station: w.station,
+        ssid: w.ssid,
+        bssid: w.bssid,
+    };
+    if snapshot.is_valid() {
+        snapshot
+    } else {
+        // Defensive: never send a group the codecs would refuse.
+        NetworkSnapshot {
+            traffic_availability: Availability::Error,
+            rx_bytes_per_s: 0,
+            tx_bytes_per_s: 0,
+            via_tunnel: false,
+            context_availability: AssociationContext::Error,
+            coverage: WifiCoverage::Unknown,
+            channel: 0,
+            ssid: Vec::new(),
+            bssid: None,
+            ..snapshot
+        }
+    }
+}
+
 fn protocol_error(error: protocol::Error) -> LinkError {
     LinkError::Io(io::Error::new(
         io::ErrorKind::InvalidData,
@@ -498,5 +643,95 @@ mod tests {
         ));
         assert_eq!(down.availability, Availability::TemporarilyUnavailable);
         assert_eq!((down.state, down.source_age_ms), ([0; 3], 0));
+    }
+
+    #[test]
+    fn network_readings_map_to_valid_wire_groups() {
+        use metrics::network::{NetworkRate, TrafficHalf, WifiHalf};
+        let reading = |availability, rate, kind, via_tunnel, wifi| NetworkReading {
+            traffic: TrafficHalf {
+                availability,
+                route_kind: kind,
+                via_tunnel,
+                rate,
+            },
+            wifi,
+        };
+        let no_wifi = |availability| WifiHalf {
+            availability,
+            age_ms: 0,
+            coverage: Coverage::Unknown,
+            channel: 0,
+            station: Some([2, 0, 0, 0, 0, 1]),
+            ssid: Vec::new(),
+            bssid: None,
+        };
+        let rate = Some(NetworkRate {
+            rx_bytes_per_s: 1200,
+            tx_bytes_per_s: 300,
+        });
+        // No provider: traffic and station identity still flow.
+        let g = network_snapshot(
+            reading(
+                MetricAvailability::Available,
+                rate,
+                NetRouteKind::Wifi,
+                false,
+                no_wifi(ContextAvailability::PermissionNotRequested),
+            )
+            .into(),
+        );
+        assert!(g.is_valid());
+        assert_eq!((g.rx_bytes_per_s, g.tx_bytes_per_s), (1200, 300));
+        assert_eq!(
+            g.context_availability,
+            AssociationContext::PermissionNotRequested
+        );
+        assert!(g.station.is_some());
+        // A rate pending after a route change is unavailable with zero values.
+        let g = network_snapshot(
+            reading(
+                MetricAvailability::TemporarilyUnavailable,
+                None,
+                NetRouteKind::Ethernet,
+                false,
+                no_wifi(ContextAvailability::Unsupported),
+            )
+            .into(),
+        );
+        assert_eq!(g.traffic_availability, Availability::TemporarilyUnavailable);
+        assert_eq!((g.rx_bytes_per_s, g.route_kind), (0, RouteKind::Ethernet));
+        // Offline is Absent with route kind none; an unreadable system is Error.
+        let g = network_snapshot(
+            reading(
+                MetricAvailability::Absent,
+                None,
+                NetRouteKind::None,
+                false,
+                no_wifi(ContextAvailability::PermissionNotRequested),
+            )
+            .into(),
+        );
+        assert_eq!(
+            (g.traffic_availability, g.route_kind),
+            (Availability::Absent, RouteKind::None)
+        );
+        assert_eq!(
+            network_snapshot(None).traffic_availability,
+            Availability::Error
+        );
+        // An impossible reading is degraded, never sent as an invalid group.
+        let g = network_snapshot(
+            reading(
+                MetricAvailability::Available,
+                None,
+                NetRouteKind::Wifi,
+                false,
+                no_wifi(ContextAvailability::PermissionNotRequested),
+            )
+            .into(),
+        );
+        assert!(g.is_valid());
+        assert_eq!(g.traffic_availability, Availability::Error);
     }
 }

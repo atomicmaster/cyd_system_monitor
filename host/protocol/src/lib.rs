@@ -106,6 +106,84 @@ pub struct AgentsSnapshot {
     pub source_age_ms: u32,
     pub state: [u8; 3],
 }
+/// The kind of the primary-route interface (Network group, key 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteKind {
+    Unknown = 0,
+    Wifi = 1,
+    Ethernet = 2,
+    /// Another link, e.g. a Thunderbolt bridge or cellular.
+    Other = 3,
+    /// No primary route: offline.
+    None = 4,
+}
+/// Association Context Availability (CONTEXT.md): why SSID/BSSID context is or
+/// is not usable. Independent of the metric `Availability`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssociationContext {
+    Available = 0,
+    PermissionNotRequested = 1,
+    Denied = 2,
+    Restricted = 3,
+    AuthorizedUnavailable = 4,
+    Unsupported = 5,
+    Error = 6,
+}
+/// Host WiFi Coverage: observable (2.4 GHz, not necessarily captured now),
+/// outside supported coverage (5/6 GHz) or unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WifiCoverage {
+    Unknown = 0,
+    Observable = 1,
+    OutsideSupported = 2,
+}
+pub const MAX_SSID_BYTES: usize = 32;
+/// Network group (TB05): primary-route traffic and Host WiFi context, two
+/// halves with independent availability and source ages. A traffic half that
+/// is not Available has zero rates; SSID/BSSID are present only when
+/// `context_availability` is Available (`CORE_PROTOCOL.md`, group 9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkSnapshot {
+    pub traffic_availability: Availability,
+    pub traffic_age_ms: u32,
+    pub route_kind: RouteKind,
+    /// The rates are the tunnel's own; never summed with the underlying link.
+    pub via_tunnel: bool,
+    pub rx_bytes_per_s: u64,
+    pub tx_bytes_per_s: u64,
+    pub context_availability: AssociationContext,
+    pub context_age_ms: u32,
+    pub coverage: WifiCoverage,
+    /// 0 unknown; 0 whenever coverage is unknown.
+    pub channel: u8,
+    /// Host Station Identity; independent of Location permission.
+    pub station: Option<[u8; 6]>,
+    /// 0-32 raw octets.
+    pub ssid: Vec<u8>,
+    pub bssid: Option<[u8; 6]>,
+}
+impl NetworkSnapshot {
+    /// The rules shared with the C++ `ValidNetwork`: an encoder refuses and a
+    /// decoder rejects what breaks them.
+    pub fn is_valid(&self) -> bool {
+        if self.via_tunnel && matches!(self.route_kind, RouteKind::Unknown | RouteKind::None) {
+            return false;
+        }
+        if self.traffic_availability != Availability::Available
+            && (self.rx_bytes_per_s != 0 || self.tx_bytes_per_s != 0)
+        {
+            return false;
+        }
+        if self.coverage == WifiCoverage::Unknown && self.channel != 0 {
+            return false;
+        }
+        if self.ssid.len() > MAX_SSID_BYTES {
+            return false;
+        }
+        (self.ssid.is_empty() && self.bssid.is_none())
+            || self.context_availability == AssociationContext::Available
+    }
+}
 /// A complete snapshot: CPU plus each optional metric group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
@@ -114,6 +192,7 @@ pub struct Snapshot {
     pub storage: Option<StorageSnapshot>,
     pub battery: Option<BatterySnapshot>,
     pub agents: Option<AgentsSnapshot>,
+    pub network: Option<NetworkSnapshot>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuSnapshot {
@@ -321,10 +400,10 @@ pub fn encode_snapshot(
     cpu: &CpuSnapshot,
     ram: Option<&RamSnapshot>,
 ) -> Result<Vec<u8>, Error> {
-    encode_groups(envelope, cpu, ram, None, None, None)
+    encode_groups(envelope, cpu, ram, None, None, None, None)
 }
 /// Encodes a complete snapshot with every optional group given (RAM at key 5,
-/// Storage at key 6, Battery at key 7, Agents at key 8).
+/// Storage at key 6, Battery at key 7, Agents at key 8, Network at key 9).
 pub fn encode_groups(
     envelope: &Envelope,
     cpu: &CpuSnapshot,
@@ -332,6 +411,7 @@ pub fn encode_groups(
     storage: Option<&StorageSnapshot>,
     battery: Option<&BatterySnapshot>,
     agents: Option<&AgentsSnapshot>,
+    network: Option<&NetworkSnapshot>,
 ) -> Result<Vec<u8>, Error> {
     if ram.is_some_and(|r| r.used_bytes > r.total_bytes)
         || storage.is_some_and(|s| s.available_bytes > s.total_bytes)
@@ -342,6 +422,7 @@ pub fn encode_groups(
                 || b.condition > 3
         })
         || agents.is_some_and(|a| a.state.iter().any(|&s| s > 3))
+        || network.is_some_and(|n| !n.is_valid())
     {
         return Err(Error::Malformed);
     }
@@ -368,7 +449,8 @@ pub fn encode_groups(
         0xa5 + ram.is_some() as u8
             + storage.is_some() as u8
             + battery.is_some() as u8
-            + agents.is_some() as u8,
+            + agents.is_some() as u8
+            + network.is_some() as u8,
     );
     for (k, v) in [
         (0, cpu.availability as u64),
@@ -442,6 +524,32 @@ pub fn encode_groups(
         ] {
             uint(&mut c, 0, k);
             uint(&mut c, 0, v)
+        }
+    }
+    if let Some(network) = network {
+        uint(&mut c, 0, 9);
+        c.push(0xad);
+        for (k, v) in [
+            (0, network.traffic_availability as u64),
+            (1, network.traffic_age_ms as u64),
+            (2, network.route_kind as u64),
+            (3, network.via_tunnel as u64),
+            (4, network.rx_bytes_per_s),
+            (5, network.tx_bytes_per_s),
+            (6, network.context_availability as u64),
+            (7, network.context_age_ms as u64),
+            (8, network.coverage as u64),
+            (9, network.channel as u64),
+        ] {
+            uint(&mut c, 0, k);
+            uint(&mut c, 0, v)
+        }
+        let station: &[u8] = network.station.as_ref().map_or(&[], |m| m);
+        let bssid: &[u8] = network.bssid.as_ref().map_or(&[], |m| m);
+        for (k, bytes) in [(10, station), (11, &network.ssid[..]), (12, bssid)] {
+            uint(&mut c, 0, k);
+            uint(&mut c, 2, bytes.len() as u64);
+            c.extend(bytes);
         }
     }
     if let Some(utc_ms) = envelope.utc_ms {
@@ -563,7 +671,7 @@ fn parse_envelope(frame: &[u8]) -> Result<(Envelope, &[u8]), Error> {
 fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
     let mut p = 0;
     let count = read_uint(body, &mut p, 5).ok_or(Error::Malformed)?;
-    if count > 9 {
+    if count > 10 {
         return Err(Error::Malformed);
     }
     let mut cpu = [None; 5];
@@ -571,6 +679,7 @@ fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
     let mut storage = None;
     let mut battery = None;
     let mut agents = None;
+    let mut network = None;
     for _ in 0..count {
         let q = read_uint(body, &mut p, 0).ok_or(Error::Malformed)? as usize;
         if q == 5 {
@@ -599,6 +708,13 @@ fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
                 return Err(Error::Malformed);
             }
             agents = Some(decode_agents_group(body, &mut p)?);
+            continue;
+        }
+        if q == 9 {
+            if network.is_some() {
+                return Err(Error::Malformed);
+            }
+            network = Some(decode_network_group(body, &mut p)?);
             continue;
         }
         // Unknown optional fields are skipped like any other bounded value.
@@ -646,6 +762,7 @@ fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
         storage,
         battery,
         agents,
+        network,
     })
 }
 
@@ -819,6 +936,109 @@ fn decode_agents_group(input: &[u8], p: &mut usize) -> Result<AgentsSnapshot, Er
         source_age_ms: all[1] as u32,
         state: [all[2] as u8, all[3] as u8, all[4] as u8],
     })
+}
+
+/// A definite-length byte string, at most the frame limit (mirrors `ReadBytes`).
+fn read_byte_string(input: &[u8], p: &mut usize) -> Option<Vec<u8>> {
+    let len = read_uint(input, p, 2)? as usize;
+    if len > MAX_FRAME_BYTES || *p + len > input.len() {
+        return None;
+    }
+    let bytes = input[*p..*p + len].to_vec();
+    *p += len;
+    Some(bytes)
+}
+
+/// The Network group: thirteen required fields (keys 10-12 are byte strings),
+/// unknown extra keys skipped (mirrors the C++ `ReadNetworkGroup`).
+fn decode_network_group(input: &[u8], p: &mut usize) -> Result<NetworkSnapshot, Error> {
+    let count = read_uint(input, p, 5).ok_or(Error::Malformed)?;
+    if count > 16 {
+        return Err(Error::Malformed);
+    }
+    let mut value = [None; 10];
+    let mut bytes: [Option<Vec<u8>>; 3] = [None, None, None];
+    for _ in 0..count {
+        let key = read_uint(input, p, 0).ok_or(Error::Malformed)? as usize;
+        if key > 12 {
+            skip_value(input, p, 0)?;
+            continue;
+        }
+        if key >= 10 {
+            if bytes[key - 10].is_some() {
+                return Err(Error::Malformed);
+            }
+            bytes[key - 10] = Some(read_byte_string(input, p).ok_or(Error::Malformed)?);
+        } else {
+            if value[key].is_some() {
+                return Err(Error::Malformed);
+            }
+            value[key] = Some(read_uint(input, p, 0).ok_or(Error::Malformed)?);
+        }
+    }
+    let all: Vec<u64> = (0..10)
+        .map(|k| value[k].ok_or(Error::Malformed))
+        .collect::<Result<_, _>>()?;
+    let [station, ssid, bssid] = bytes;
+    let (station, ssid, bssid) = (
+        station.ok_or(Error::Malformed)?,
+        ssid.ok_or(Error::Malformed)?,
+        bssid.ok_or(Error::Malformed)?,
+    );
+    let mac = |b: &[u8]| -> Result<Option<[u8; 6]>, Error> {
+        match b.len() {
+            0 => Ok(None),
+            6 => Ok(Some(b.try_into().unwrap())),
+            _ => Err(Error::Malformed),
+        }
+    };
+    if all[1] > u64::from(u32::MAX)
+        || all[2] > 4
+        || all[3] > 1
+        || all[6] > 6
+        || all[7] > u64::from(u32::MAX)
+        || all[8] > 2
+        || all[9] > 255
+    {
+        return Err(Error::Malformed);
+    }
+    let snapshot = NetworkSnapshot {
+        traffic_availability: availability_from(all[0])?,
+        traffic_age_ms: all[1] as u32,
+        route_kind: match all[2] {
+            0 => RouteKind::Unknown,
+            1 => RouteKind::Wifi,
+            2 => RouteKind::Ethernet,
+            3 => RouteKind::Other,
+            _ => RouteKind::None,
+        },
+        via_tunnel: all[3] == 1,
+        rx_bytes_per_s: all[4],
+        tx_bytes_per_s: all[5],
+        context_availability: match all[6] {
+            0 => AssociationContext::Available,
+            1 => AssociationContext::PermissionNotRequested,
+            2 => AssociationContext::Denied,
+            3 => AssociationContext::Restricted,
+            4 => AssociationContext::AuthorizedUnavailable,
+            5 => AssociationContext::Unsupported,
+            _ => AssociationContext::Error,
+        },
+        context_age_ms: all[7] as u32,
+        coverage: match all[8] {
+            0 => WifiCoverage::Unknown,
+            1 => WifiCoverage::Observable,
+            _ => WifiCoverage::OutsideSupported,
+        },
+        channel: all[9] as u8,
+        station: mac(&station)?,
+        ssid,
+        bssid: mac(&bssid)?,
+    };
+    if !snapshot.is_valid() {
+        return Err(Error::Malformed);
+    }
+    Ok(snapshot)
 }
 
 /// Decodes a complete snapshot frame: CPU plus any metric groups.
@@ -1627,7 +1847,7 @@ mod tests {
         assert_eq!((g.capacity_age_ms, g.io_age_ms), (1500, 250));
         assert_eq!(golden.ram, None);
         assert_eq!(
-            encode_groups(&envelope, &golden.cpu, None, Some(&g), None, None).unwrap(),
+            encode_groups(&envelope, &golden.cpu, None, Some(&g), None, None, None).unwrap(),
             fixture("storage-snapshot-v1.hex")
         );
         let (envelope, both) =
@@ -1640,6 +1860,7 @@ mod tests {
                 both.ram.as_ref(),
                 both.storage.as_ref(),
                 None,
+                None,
                 None
             )
             .unwrap(),
@@ -1649,7 +1870,7 @@ mod tests {
         let max = fixture("storage-snapshot-v1-max-u64.hex");
         assert!(max.len() < 2048);
         let (envelope, snap) = decode_snapshot(&max).unwrap();
-        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None).unwrap();
+        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None, None).unwrap();
         // key + map header + eight keys + 2 availabilities + 4 x 9 + 2 x 5 = 58 bytes
         assert_eq!(max.len() - without.len(), 58);
         let bad = StorageSnapshot {
@@ -1657,7 +1878,7 @@ mod tests {
             ..g
         };
         assert_eq!(
-            encode_groups(&envelope, &snap.cpu, None, Some(&bad), None, None),
+            encode_groups(&envelope, &snap.cpu, None, Some(&bad), None, None, None),
             Err(Error::Malformed)
         );
     }
@@ -1677,7 +1898,7 @@ mod tests {
         );
         assert_eq!(g.condition_age_ms, 1_800_000);
         assert_eq!(
-            encode_groups(&envelope, &golden.cpu, None, None, Some(&g), None).unwrap(),
+            encode_groups(&envelope, &golden.cpu, None, None, Some(&g), None, None).unwrap(),
             fixture("battery-snapshot-v1.hex")
         );
         let (envelope, all) =
@@ -1690,6 +1911,7 @@ mod tests {
                 all.ram.as_ref(),
                 all.storage.as_ref(),
                 all.battery.as_ref(),
+                None,
                 None
             )
             .unwrap(),
@@ -1704,7 +1926,7 @@ mod tests {
         let max = fixture("battery-snapshot-v1-max.hex");
         assert!(max.len() < 2048);
         let (envelope, snap) = decode_snapshot(&max).unwrap();
-        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None).unwrap();
+        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None, None).unwrap();
         // key + map header + ten keys + 4 availability/state/condition bytes
         // + 4 x 3-byte (per-mille, sentinels) + 2 x 5-byte ages = 38 bytes
         assert_eq!(max.len() - without.len(), 38);
@@ -1713,7 +1935,7 @@ mod tests {
             ..snap.battery.clone().unwrap()
         };
         assert_eq!(
-            encode_groups(&envelope, &snap.cpu, None, None, Some(&bad), None),
+            encode_groups(&envelope, &snap.cpu, None, None, Some(&bad), None, None),
             Err(Error::Malformed)
         );
     }
@@ -1727,7 +1949,7 @@ mod tests {
             (Availability::Available, 250, [0, 1, 0])
         );
         assert_eq!(
-            encode_groups(&envelope, &golden.cpu, None, None, None, Some(&g)).unwrap(),
+            encode_groups(&envelope, &golden.cpu, None, None, None, Some(&g), None).unwrap(),
             fixture("agents-snapshot-v1.hex")
         );
         let (envelope, all) =
@@ -1745,7 +1967,8 @@ mod tests {
                 all.ram.as_ref(),
                 all.storage.as_ref(),
                 all.battery.as_ref(),
-                all.agents.as_ref()
+                all.agents.as_ref(),
+                None
             )
             .unwrap(),
             fixture("agents-snapshot-v1-with-groups.hex")
@@ -1760,7 +1983,7 @@ mod tests {
         let max = fixture("agents-snapshot-v1-max.hex");
         assert!(max.len() < 2048);
         let (envelope, snap) = decode_snapshot(&max).unwrap();
-        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None).unwrap();
+        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None, None).unwrap();
         // key + map header + five keys + availability + 5-byte age + three states
         assert_eq!(max.len() - without.len(), 16);
         let bad = AgentsSnapshot {
@@ -1768,8 +1991,105 @@ mod tests {
             ..snap.agents.clone().unwrap()
         };
         assert_eq!(
-            encode_groups(&envelope, &snap.cpu, None, None, None, Some(&bad)),
+            encode_groups(&envelope, &snap.cpu, None, None, None, Some(&bad), None),
             Err(Error::Malformed)
         );
+    }
+
+    #[test]
+    fn network_group_round_trips_and_stays_within_its_bound() {
+        let (envelope, golden) = decode_snapshot(&fixture("network-snapshot-v1.hex")).unwrap();
+        let g = golden.network.clone().expect("network group");
+        assert_eq!(g.route_kind, RouteKind::Wifi);
+        assert!(!g.via_tunnel);
+        assert_eq!((g.rx_bytes_per_s, g.tx_bytes_per_s), (1_200_000, 340_000));
+        assert_eq!(g.context_availability, AssociationContext::Available);
+        assert_eq!((g.coverage, g.channel), (WifiCoverage::Observable, 6));
+        assert_eq!(g.station, Some([0xf2, 0xa1, 0xb3, 0xc4, 0xd5, 0xe6]));
+        assert_eq!(g.ssid, b"CYD-Test");
+        assert_eq!(
+            encode_groups(&envelope, &golden.cpu, None, None, None, None, Some(&g)).unwrap(),
+            fixture("network-snapshot-v1.hex")
+        );
+        let (envelope, all) =
+            decode_snapshot(&fixture("network-snapshot-v1-with-groups.hex")).unwrap();
+        assert!(all.ram.is_some() && all.agents.is_some() && all.network.is_some());
+        assert_eq!(
+            encode_groups(
+                &envelope,
+                &all.cpu,
+                all.ram.as_ref(),
+                all.storage.as_ref(),
+                all.battery.as_ref(),
+                all.agents.as_ref(),
+                all.network.as_ref()
+            )
+            .unwrap(),
+            fixture("network-snapshot-v1-with-groups.hex")
+        );
+        // Every Association Context Availability state round-trips.
+        for (i, name) in [
+            "available",
+            "not-requested",
+            "denied",
+            "restricted",
+            "authorized-unavailable",
+            "unsupported",
+            "error",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let bytes = fixture(&format!("network-snapshot-v1-ctx-{name}.hex"));
+            let (e, s) = decode_snapshot(&bytes).unwrap();
+            let n = s.network.unwrap();
+            assert_eq!(n.context_availability as usize, i, "{name}");
+            assert_eq!(
+                encode_groups(&e, &s.cpu, None, None, None, None, Some(&n)).unwrap(),
+                bytes
+            );
+        }
+        let (_, tunnel) = decode_snapshot(&fixture("network-snapshot-v1-tunnel.hex")).unwrap();
+        assert!(tunnel.network.unwrap().via_tunnel);
+        let (_, outside) =
+            decode_snapshot(&fixture("network-snapshot-v1-5ghz-outside.hex")).unwrap();
+        assert_eq!(
+            outside.network.unwrap().coverage,
+            WifiCoverage::OutsideSupported
+        );
+        // The largest group: 64-bit rates, 32-bit ages, a 32-byte SSID.
+        let max = fixture("network-snapshot-v1-max.hex");
+        assert!(max.len() < 2048);
+        let (envelope, snap) = decode_snapshot(&max).unwrap();
+        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None, None).unwrap();
+        assert_eq!(max.len() - without.len(), 98);
+        let n = snap.network.clone().unwrap();
+        for bad in [
+            NetworkSnapshot {
+                ssid: vec![0; 33],
+                ..n.clone()
+            },
+            NetworkSnapshot {
+                context_availability: AssociationContext::Denied,
+                ..n.clone()
+            },
+            NetworkSnapshot {
+                traffic_availability: Availability::Error,
+                ..n.clone()
+            },
+            NetworkSnapshot {
+                coverage: WifiCoverage::Unknown,
+                ..n.clone()
+            },
+            NetworkSnapshot {
+                route_kind: RouteKind::None,
+                ..n.clone()
+            },
+        ] {
+            assert_eq!(
+                encode_groups(&envelope, &snap.cpu, None, None, None, None, Some(&bad)),
+                Err(Error::Malformed)
+            );
+        }
     }
 }

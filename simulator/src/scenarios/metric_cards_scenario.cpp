@@ -74,12 +74,13 @@ int RunMetricCards() {
     feed.Push(frame);
   };
 
-  result.Expect(domain::Cards().size() == 5 && std::string(domain::Cards()[0].id) == "cpu" &&
+  result.Expect(domain::Cards().size() == 6 && std::string(domain::Cards()[0].id) == "cpu" &&
                     std::string(domain::Cards()[1].id) == "ram" &&
                     std::string(domain::Cards()[2].id) == "storage" &&
                     std::string(domain::Cards()[3].id) == "battery" &&
-                    std::string(domain::Cards()[4].id) == "agents",
-                "the registry lists cpu, ram, storage, battery, then agents from "
+                    std::string(domain::Cards()[4].id) == "agents" &&
+                    std::string(domain::Cards()[5].id) == "network",
+                "the registry lists cpu, ram, storage, battery, agents, then network from "
                 "card_registry.def");
 
   at(1000, "before any Host data");

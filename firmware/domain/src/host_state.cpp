@@ -30,6 +30,15 @@ void DeriveAgentsFreshness(AgentsMetricState* agents, uint64_t now_ms) {
           ? protocol::Freshness::kStale
           : protocol::Freshness::kFresh;
 }
+void DeriveNetworkFreshness(NetworkMetricState* network, uint64_t now_ms) {
+  const auto stale = [now_ms](int64_t source_time_ms, uint64_t limit_ms) {
+    return static_cast<int64_t>(now_ms) - source_time_ms >= static_cast<int64_t>(limit_ms)
+               ? protocol::Freshness::kStale
+               : protocol::Freshness::kFresh;
+  };
+  network->traffic_freshness = stale(network->traffic_source_time_ms, kNetworkTrafficStaleMs);
+  network->context_freshness = stale(network->context_source_time_ms, kNetworkContextStaleMs);
+}
 }  // namespace
 void HostStateReducer::ApplySnapshot(const protocol::Decoded& decoded, uint64_t now_ms,
                                      uint64_t resolved_source_time_ms) {
@@ -95,6 +104,26 @@ void HostStateReducer::ApplySnapshot(const protocol::Decoded& decoded, uint64_t 
     for (int i = 0; i < kAgentSlotCount; ++i) state_.agents.state[i] = g.state[i];
     DeriveAgentsFreshness(&state_.agents, now_ms);
   }
+  if (decoded.has_network) {
+    const auto& g = decoded.network;
+    state_.network = {.has_data = true,
+                      .traffic_availability = g.traffic_availability,
+                      .route_kind = g.route_kind,
+                      .via_tunnel = g.via_tunnel,
+                      .rx_bytes_per_s = g.rx_bytes_per_s,
+                      .tx_bytes_per_s = g.tx_bytes_per_s,
+                      .traffic_source_time_ms =
+                          static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.traffic_age_ms),
+                      .context_availability = g.context_availability,
+                      .coverage = g.coverage,
+                      .channel = g.channel,
+                      .station = g.station,
+                      .ssid = g.ssid,
+                      .bssid = g.bssid,
+                      .context_source_time_ms =
+                          static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.context_age_ms)};
+    DeriveNetworkFreshness(&state_.network, now_ms);
+  }
 }
 void HostStateReducer::Advance(uint64_t now_ms) {
   if (state_.connection == ConnectionState::kIncompatible || !state_.has_seen_host) return;
@@ -110,6 +139,7 @@ void HostStateReducer::Advance(uint64_t now_ms) {
   if (state_.storage.has_data) DeriveStorageFreshness(&state_.storage, now_ms);
   if (state_.battery.has_data) DeriveBatteryFreshness(&state_.battery, now_ms);
   if (state_.agents.has_data) DeriveAgentsFreshness(&state_.agents, now_ms);
+  if (state_.network.has_data) DeriveNetworkFreshness(&state_.network, now_ms);
 }
 void HostStateReducer::MarkIncompatible() { state_.connection = ConnectionState::kIncompatible; }
 void HostStateReducer::CorrectTime() { state_.time_available = true; }

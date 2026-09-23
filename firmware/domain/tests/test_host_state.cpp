@@ -239,6 +239,63 @@ int main() {
     booted.ApplySnapshot(snapshot(1, 15'000), 5'000, 0);
     if (booted.state().agents.freshness != proto::Freshness::kStale) return 55;
   }
+  {
+    // Network freshness is per half and comes from each source age: traffic is
+    // stale 3 s after its sample, WiFi context 15 s; a re-sent old sample stays
+    // stale; one older than device uptime is stale, not clamped to "at boot".
+    namespace proto = cyd::protocol;
+    using firmware::domain::HostStateReducer;
+    const auto snapshot = [&](uint32_t seq, uint32_t traffic_age, uint32_t context_age) {
+      proto::Envelope env;
+      env.type = proto::MessageType::kSnapshot;
+      env.sequence = seq;
+      const proto::CpuSnapshot c{proto::Availability::kAvailable, 1, 0, proto::Freshness::kFresh,
+                                 0};
+      proto::NetworkSnapshot g;
+      g.traffic_availability = proto::Availability::kAvailable;
+      g.traffic_age_ms = traffic_age;
+      g.route_kind = proto::RouteKind::kWifi;
+      g.rx_bytes_per_s = 1000;
+      g.tx_bytes_per_s = 2000;
+      g.context_availability = proto::AssociationContext::kAvailable;
+      g.context_age_ms = context_age;
+      g.coverage = proto::WifiCoverage::kObservable;
+      g.channel = 6;
+      std::vector<uint8_t> frame;
+      proto::EncodeSnapshot(env, c, nullptr, nullptr, nullptr, nullptr, &g, &frame);
+      proto::Decoded decoded;
+      if (proto::Decode(frame, &decoded) != proto::Error::kNone || !decoded.has_network)
+        std::abort();
+      return decoded;
+    };
+    HostStateReducer reducer(1);
+    reducer.ApplySnapshot(snapshot(1, 500, 1000), 100'000, 0);
+    const auto& n = reducer.state().network;
+    if (!n.has_data || n.rx_bytes_per_s != 1000 || n.channel != 6) return 60;
+    reducer.Advance(102'499);  // traffic sampled at 99,500; context at 99,000
+    if (n.traffic_freshness != proto::Freshness::kFresh) return 61;
+    reducer.Advance(102'500);
+    if (n.traffic_freshness != proto::Freshness::kStale ||
+        n.context_freshness != proto::Freshness::kFresh)
+      return 62;  // the halves age independently
+    reducer.Advance(113'999);
+    if (n.context_freshness != proto::Freshness::kFresh) return 63;
+    reducer.Advance(114'000);
+    if (n.context_freshness != proto::Freshness::kStale) return 64;
+    reducer.ApplySnapshot(snapshot(2, 4'000, 20'000), 115'000, 0);  // old samples re-sent
+    if (n.traffic_freshness != proto::Freshness::kStale ||
+        n.context_freshness != proto::Freshness::kStale)
+      return 65;
+    reducer.ApplySnapshot(snapshot(3, 0, 200), 116'000, 0);
+    if (n.traffic_freshness != proto::Freshness::kFresh ||
+        n.context_freshness != proto::Freshness::kFresh)
+      return 66;
+    HostStateReducer booted(1);
+    booted.ApplySnapshot(snapshot(1, 3'000, 15'000), 5'000, 0);
+    if (booted.state().network.traffic_freshness != proto::Freshness::kStale ||
+        booted.state().network.context_freshness != proto::Freshness::kStale)
+      return 67;
+  }
   std::puts("firmware_domain_host_state_tests: ok");
   return 0;
 }

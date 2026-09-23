@@ -13,7 +13,7 @@ The macOS adapter runs in the logged-in Operator's per-user LaunchAgent. Ordinar
 | Root disk capacity | Capacity and available space of the filesystem containing `/`; APFS volumes are not summed | Public Foundation filesystem capacity API | 30 s |
 | Root disk read/write rate | Delta of bytes read/written by the physical storage driver backing `/` | Public user-space IOKit block-storage statistics | 1 s |
 | Interfaces and addresses | Up, running, non-loopback interfaces with usable addresses | Public BSD `getifaddrs` | 30 s or network change |
-| Network RX/TX rate | Per-interface 64-bit byte-counter deltas; tunnels are never summed with their underlying interfaces | Darwin route sysctl `NET_RT_IFLIST2` | 1 s |
+| Network RX/TX rate | Per-interface 64-bit byte-counter deltas; tunnels are never summed with their underlying interfaces | Darwin `net.link.generic.ifdata` sysctl (`NET_RT_IFLIST2` truncates byte counts to 32 bits on macOS 26) | 1 s |
 | Host Station Identity | Current `AF_LINK` address of the active WiFi interface, including macOS Private WiFi Address | Public BSD `getifaddrs` | 1 s or link change |
 | Host WiFi band/channel | Fresh current association band/channel when available; supports observable/outside-supported-coverage/unknown presentation, never continuous-coverage claims | macOS WiFi adapter; capability and permission behavior verified during M3 | 1 s or association change |
 | Current WiFi BSS | Optional SSID/BSSID context when the Operator grants macOS Location Services access | Public CoreWLAN | 1 s or association change |

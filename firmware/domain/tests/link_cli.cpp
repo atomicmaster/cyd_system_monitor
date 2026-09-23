@@ -11,7 +11,9 @@
 // "STATE phase=<n> paired=<0|1> seen=<0|1> cpu=<per-mille> ram=<used>/<total>|-
 // storage=<total>/<avail>/<read>/<write>|-
 // battery=<charge-availability>/<per-mille>/<state>/<max-capacity>|-
-// agents=<availability>/<codex>/<claude>/<grok>|- code=<n|->" line.
+// agents=<availability>/<codex>/<claude>/<grok>|-
+// network=<traffic-availability>/<kind>/<via-tunnel>/<rx>/<tx>/<context>/<coverage>/<channel>|-
+// code=<n|->" line.
 #include <cstdio>
 #include <iostream>
 #include <sstream>
@@ -113,6 +115,18 @@ int main() {
                   static_cast<unsigned>(state.agents.state[0]),
                   static_cast<unsigned>(state.agents.state[1]),
                   static_cast<unsigned>(state.agents.state[2]));
+    } else {
+      std::printf("-");
+    }
+    std::printf(" network=");
+    if (state.network.has_data) {
+      const auto& n = state.network;
+      std::printf("%u/%u/%u/%llu/%llu/%u/%u/%u", static_cast<unsigned>(n.traffic_availability),
+                  static_cast<unsigned>(n.route_kind), n.via_tunnel ? 1u : 0u,
+                  static_cast<unsigned long long>(n.rx_bytes_per_s),
+                  static_cast<unsigned long long>(n.tx_bytes_per_s),
+                  static_cast<unsigned>(n.context_availability), static_cast<unsigned>(n.coverage),
+                  static_cast<unsigned>(n.channel));
     } else {
       std::printf("-");
     }

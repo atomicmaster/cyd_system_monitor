@@ -84,6 +84,19 @@ std::string Body(const p::Decoded &d) {
           << g.source_age_ms << ',' << static_cast<int>(g.state[0]) << ','
           << static_cast<int>(g.state[1]) << ',' << static_cast<int>(g.state[2]);
     }
+    if (d.has_network) {
+      const auto &g = d.network;
+      const auto mac = [](const auto &m) {
+        return m ? Hex(m->data(), m->size()) : std::string("-");
+      };
+      out << ";network=" << static_cast<int>(g.traffic_availability) << ','
+          << g.traffic_age_ms << ',' << static_cast<int>(g.route_kind) << ','
+          << (g.via_tunnel ? 1 : 0) << ',' << g.rx_bytes_per_s << ','
+          << g.tx_bytes_per_s << ',' << static_cast<int>(g.context_availability)
+          << ',' << g.context_age_ms << ',' << static_cast<int>(g.coverage)
+          << ',' << static_cast<int>(g.channel) << ',' << mac(g.station) << ','
+          << Hex(g.ssid.data(), g.ssid.size()) << ',' << mac(g.bssid);
+    }
   } else if (e.hello) {
     out << static_cast<int>(e.hello->supported_major) << ','
         << static_cast<int>(e.hello->supported_minor) << ','
@@ -123,7 +136,8 @@ std::string Reencode(const p::Decoded &d) {
                          ? p::EncodeSnapshot(d.envelope, d.cpu, d.has_ram ? &d.ram : nullptr,
                                            d.has_storage ? &d.storage : nullptr,
                                            d.has_battery ? &d.battery : nullptr,
-                                           d.has_agents ? &d.agents : nullptr, &frame)
+                                           d.has_agents ? &d.agents : nullptr,
+                                           d.has_network ? &d.network : nullptr, &frame)
                          : p::Encode(d.envelope, &frame);
   return error == p::Error::kNone ? Hex(frame.data(), frame.size())
                                   : std::string("err ") + p::ErrorName(error);

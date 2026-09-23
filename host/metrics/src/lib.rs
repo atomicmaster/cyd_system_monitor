@@ -10,6 +10,8 @@
 
 pub mod agents;
 pub mod battery;
+pub mod network;
+pub mod wifi_context;
 
 /// Whether a Host Metric's current value can be trusted, independent of
 /// how fresh it is.

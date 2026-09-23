@@ -66,6 +66,13 @@ int RunBatteryCards();
 // stale, link lost), compared with simulator/scenarios/agents-cards.expected.
 int RunAgentsCards();
 
+// Feeds snapshots with the Network group through HostFeed and prints the
+// Network card at each step (no data, WiFi with rates, Ethernet, a tunnel
+// primary route, a route change, 5/6 GHz outside supported coverage, unknown
+// and denied context, provider absent, offline, per-half staleness, link
+// lost), compared with simulator/scenarios/network-cards.expected.
+int RunNetworkCards();
+
 // Draws the System shell (status bar plus the registered CPU and RAM cards)
 // and asserts label text, dimming, and RAM's missing-data behaviour. Matches
 // TB03's `./dev run simulator -- system-screen`.

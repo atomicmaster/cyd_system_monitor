@@ -7,7 +7,7 @@
 use protocol::{
     decode, encode_control, encode_groups, AgentsSnapshot, BatterySnapshot, CommandBody,
     CommandOperation, CommandResult, ControlBody, CpuSnapshot, Envelope, Error, FrameStream,
-    HelloBody, Message, MessageType, PairBody, RamSnapshot, StorageSnapshot,
+    HelloBody, Message, MessageType, NetworkSnapshot, PairBody, RamSnapshot, StorageSnapshot,
 };
 
 const ZERO: [u8; 16] = [0; 16];
@@ -220,6 +220,8 @@ impl HostClient {
 
     /// A complete snapshot: CPU plus each optional metric group. Only valid
     /// once paired.
+    // One optional argument per metric group, mirroring `encode_groups`.
+    #[allow(clippy::too_many_arguments)]
     pub fn snapshot(
         &mut self,
         cpu: &CpuSnapshot,
@@ -227,6 +229,7 @@ impl HostClient {
         storage: Option<&StorageSnapshot>,
         battery: Option<&BatterySnapshot>,
         agents: Option<&AgentsSnapshot>,
+        network: Option<&NetworkSnapshot>,
         utc_ms: Option<u64>,
     ) -> Option<Vec<u8>> {
         if self.phase != Phase::Live {
@@ -235,7 +238,7 @@ impl HostClient {
         let sequence = self.next_sequence();
         let mut envelope = self.envelope(MessageType::Snapshot, self.session, sequence);
         envelope.utc_ms = utc_ms;
-        encode_groups(&envelope, cpu, ram, storage, battery, agents).ok()
+        encode_groups(&envelope, cpu, ram, storage, battery, agents, network).ok()
     }
 
     /// A command frame and the identity to match its reply against. Reusing
@@ -289,7 +292,7 @@ mod tests {
         };
         client.set_local_offset_minutes(Some(60)); // daylight saving changed
         let frame = client
-            .snapshot(&cpu, None, None, None, None, Some(1))
+            .snapshot(&cpu, None, None, None, None, None, Some(1))
             .unwrap();
         let Ok(Message::Snapshot(envelope, _)) = decode(&frame) else {
             panic!("snapshot")
@@ -298,7 +301,7 @@ mod tests {
 
         client.set_local_offset_minutes(None);
         let frame = client
-            .snapshot(&cpu, None, None, None, None, Some(2))
+            .snapshot(&cpu, None, None, None, None, None, Some(2))
             .unwrap();
         let Ok(Message::Snapshot(envelope, _)) = decode(&frame) else {
             panic!("snapshot")

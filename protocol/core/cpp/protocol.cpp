@@ -169,10 +169,38 @@ Error EncodeControlBody(const Envelope &e, std::vector<uint8_t> *cbor) {
     return Error::kNone;
   }
 }
+// The rules of the Network group (CORE_PROTOCOL.md group 9), shared by the
+// encoder and the decoder so neither can accept what the other refuses.
+bool ValidNetwork(const NetworkSnapshot &n) {
+  if (static_cast<uint8_t>(n.traffic_availability) >
+          static_cast<uint8_t>(Availability::kError) ||
+      static_cast<uint8_t>(n.route_kind) > static_cast<uint8_t>(RouteKind::kNone) ||
+      static_cast<uint8_t>(n.context_availability) >
+          static_cast<uint8_t>(AssociationContext::kError) ||
+      static_cast<uint8_t>(n.coverage) >
+          static_cast<uint8_t>(WifiCoverage::kOutsideSupported))
+    return false;
+  // A tunnel needs a route to be under; no data means zero rates.
+  if (n.via_tunnel && (n.route_kind == RouteKind::kUnknown ||
+                       n.route_kind == RouteKind::kNone))
+    return false;
+  if (n.traffic_availability != Availability::kAvailable &&
+      (n.rx_bytes_per_s != 0 || n.tx_bytes_per_s != 0))
+    return false;
+  if (n.coverage == WifiCoverage::kUnknown && n.channel != 0)
+    return false;
+  if (n.ssid.size() > kMaxSsidBytes)
+    return false;
+  // SSID and BSSID are only ever present when the context is available.
+  if ((!n.ssid.empty() || n.bssid.has_value()) &&
+      n.context_availability != AssociationContext::kAvailable)
+    return false;
+  return true;
+}
 Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
                  const RamSnapshot *ram, const StorageSnapshot *storage,
-                 const BatterySnapshot *battery,
-                 const AgentsSnapshot *agents, std::vector<uint8_t> *cbor) {
+                 const BatterySnapshot *battery, const AgentsSnapshot *agents,
+                 const NetworkSnapshot *network, std::vector<uint8_t> *cbor) {
   cbor->clear();
   const uint8_t envelope_fields =
       6 + e.utc_ms.has_value() + e.utc_uncertainty_ms.has_value() +
@@ -191,7 +219,7 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
   UInt(cbor, 0, 5);
   if (cpu) {
     Map(cbor, 5 + (ram ? 1 : 0) + (storage ? 1 : 0) + (battery ? 1 : 0) +
-            (agents ? 1 : 0));
+            (agents ? 1 : 0) + (network ? 1 : 0));
     UInt(cbor, 0, 0);
     UInt(cbor, 0, static_cast<uint8_t>(cpu->availability));
     UInt(cbor, 0, 1);
@@ -272,6 +300,35 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
         UInt(cbor, 0, key);
         UInt(cbor, 0, values[key]);
       }
+    }
+    if (network) {
+      if (!ValidNetwork(*network))
+        return Error::kMalformed;
+      UInt(cbor, 0, 9);
+      Map(cbor, 13);
+      const uint64_t values[9] = {static_cast<uint8_t>(network->traffic_availability),
+                                  network->traffic_age_ms,
+                                  static_cast<uint8_t>(network->route_kind),
+                                  network->via_tunnel ? 1u : 0u,
+                                  network->rx_bytes_per_s,
+                                  network->tx_bytes_per_s,
+                                  static_cast<uint8_t>(network->context_availability),
+                                  network->context_age_ms,
+                                  static_cast<uint8_t>(network->coverage)};
+      for (uint64_t key = 0; key < 9; ++key) {
+        UInt(cbor, 0, key);
+        UInt(cbor, 0, values[key]);
+      }
+      UInt(cbor, 0, 9);
+      UInt(cbor, 0, network->channel);
+      UInt(cbor, 0, 10);
+      Bytes(cbor, network->station ? std::span<const uint8_t>(*network->station)
+                                   : std::span<const uint8_t>());
+      UInt(cbor, 0, 11);
+      Bytes(cbor, network->ssid);
+      UInt(cbor, 0, 12);
+      Bytes(cbor, network->bssid ? std::span<const uint8_t>(*network->bssid)
+                                 : std::span<const uint8_t>());
     }
   } else {
     const Error error = EncodeControlBody(e, cbor);
@@ -394,7 +451,7 @@ uint32_t Crc32(std::span<const uint8_t> b) {
 }
 Error Encode(const Envelope &e, std::vector<uint8_t> *out) {
   std::vector<uint8_t> c;
-  Error x = EncodeBody(e, nullptr, nullptr, nullptr, nullptr, nullptr, &c);
+  Error x = EncodeBody(e, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &c);
   if (x != Error::kNone)
     return x;
   out->clear();
@@ -427,8 +484,16 @@ Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
                      const BatterySnapshot *battery,
                      const AgentsSnapshot *agents,
                      std::vector<uint8_t> *out) {
+  return EncodeSnapshot(e, cpu, ram, storage, battery, agents, nullptr, out);
+}
+Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
+                     const RamSnapshot *ram, const StorageSnapshot *storage,
+                     const BatterySnapshot *battery,
+                     const AgentsSnapshot *agents,
+                     const NetworkSnapshot *network,
+                     std::vector<uint8_t> *out) {
   std::vector<uint8_t> c;
-  Error x = EncodeBody(e, &cpu, ram, storage, battery, agents, &c);
+  Error x = EncodeBody(e, &cpu, ram, storage, battery, agents, network, &c);
   if (x != Error::kNone)
     return x;
   out->clear();
@@ -596,6 +661,77 @@ bool ReadAgentsGroup(std::span<const uint8_t> c, std::size_t *p,
     agents->state[i] = static_cast<uint8_t>(value[2 + i]);
   return true;
 }
+// The Network group: thirteen required fields (three of them byte strings),
+// unknown extra keys skipped; the shared ValidNetwork rules apply.
+bool ReadNetworkGroup(std::span<const uint8_t> c, std::size_t *p,
+                      NetworkSnapshot *network) {
+  uint64_t count;
+  if (!ReadUInt(c, p, 5, &count) || count > 16)
+    return false;
+  bool seen[13] = {};
+  uint64_t value[10] = {};
+  std::vector<uint8_t> bytes[3];
+  for (uint64_t i = 0; i < count; ++i) {
+    uint64_t key;
+    if (!ReadUInt(c, p, 0, &key))
+      return false;
+    if (key > 12) {
+      if (!Skip(c, p))
+        return false;
+      continue;
+    }
+    if (seen[key])
+      return false;
+    if (key >= 10) {
+      if (!ReadBytes(c, p, &bytes[key - 10]))
+        return false;
+    } else if (!ReadUInt(c, p, 0, &value[key])) {
+      return false;
+    }
+    seen[key] = true;
+  }
+  for (bool present : seen) {
+    if (!present)
+      return false;
+  }
+  if (value[0] > static_cast<uint8_t>(Availability::kError) ||
+      value[1] > UINT32_MAX || value[2] > static_cast<uint8_t>(RouteKind::kNone) ||
+      value[3] > 1 || value[6] > static_cast<uint8_t>(AssociationContext::kError) ||
+      value[7] > UINT32_MAX ||
+      value[8] > static_cast<uint8_t>(WifiCoverage::kOutsideSupported) ||
+      value[9] > 0xff)
+    return false;
+  for (const int i : {0, 2}) {
+    if (bytes[i].size() != 0 && bytes[i].size() != kMacBytes)
+      return false;
+  }
+  if (bytes[1].size() > kMaxSsidBytes)
+    return false;
+  NetworkSnapshot n;
+  n.traffic_availability = static_cast<Availability>(value[0]);
+  n.traffic_age_ms = static_cast<uint32_t>(value[1]);
+  n.route_kind = static_cast<RouteKind>(value[2]);
+  n.via_tunnel = value[3] == 1;
+  n.rx_bytes_per_s = value[4];
+  n.tx_bytes_per_s = value[5];
+  n.context_availability = static_cast<AssociationContext>(value[6]);
+  n.context_age_ms = static_cast<uint32_t>(value[7]);
+  n.coverage = static_cast<WifiCoverage>(value[8]);
+  n.channel = static_cast<uint8_t>(value[9]);
+  if (bytes[0].size() == kMacBytes) {
+    n.station.emplace();
+    std::copy(bytes[0].begin(), bytes[0].end(), n.station->begin());
+  }
+  n.ssid = bytes[1];
+  if (bytes[2].size() == kMacBytes) {
+    n.bssid.emplace();
+    std::copy(bytes[2].begin(), bytes[2].end(), n.bssid->begin());
+  }
+  if (!ValidNetwork(n))
+    return false;
+  *network = std::move(n);
+  return true;
+}
 Error Decode(std::span<const uint8_t> f, Decoded *r) {
   if (f.size() < 7)
     return Error::kTruncated;
@@ -654,7 +790,7 @@ Error Decode(std::span<const uint8_t> f, Decoded *r) {
         return Error::kMalformed;
       if ((c[p] >> 5) == 5 && d.envelope.type == MessageType::kSnapshot) {
         uint64_t m;
-        if (!ReadUInt(c, &p, 5, &m) || m > 9)
+        if (!ReadUInt(c, &p, 5, &m) || m > 10)
           return Error::kMalformed;
         d.has_cpu = true;
         bool fields[5] = {};
@@ -684,6 +820,12 @@ Error Decode(std::span<const uint8_t> f, Decoded *r) {
             if (d.has_agents || !ReadAgentsGroup(c, &p, &d.agents))
               return Error::kMalformed;
             d.has_agents = true;
+            continue;
+          }
+          if (q == 9) {
+            if (d.has_network || !ReadNetworkGroup(c, &p, &d.network))
+              return Error::kMalformed;
+            d.has_network = true;
             continue;
           }
           if (q > 4) {

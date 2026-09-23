@@ -105,6 +105,31 @@ fn summary(result: &Result<Decoded, String>) -> String {
                     g.availability as u8, g.source_age_ms, g.state[0], g.state[1], g.state[2]
                 );
             }
+            if let Some(g) = &snapshot.network {
+                let hex = |b: &[u8]| {
+                    if b.is_empty() {
+                        "-".to_string()
+                    } else {
+                        b.iter().map(|x| format!("{x:02x}")).collect()
+                    }
+                };
+                text += &format!(
+                    ";network={},{},{},{},{},{},{},{},{},{},{},{},{}",
+                    g.traffic_availability as u8,
+                    g.traffic_age_ms,
+                    g.route_kind as u8,
+                    g.via_tunnel as u8,
+                    g.rx_bytes_per_s,
+                    g.tx_bytes_per_s,
+                    g.context_availability as u8,
+                    g.context_age_ms,
+                    g.coverage as u8,
+                    g.channel,
+                    hex(g.station.as_ref().map_or(&[][..], |m| &m[..])),
+                    hex(&g.ssid),
+                    hex(g.bssid.as_ref().map_or(&[][..], |m| &m[..]))
+                );
+            }
             (e, text)
         }
         Ok(Message::Control(e, body)) => (
@@ -159,6 +184,7 @@ fn reencode(decoded: &Decoded) -> String {
             s.storage.as_ref(),
             s.battery.as_ref(),
             s.agents.as_ref(),
+            s.network.as_ref(),
         ),
         Message::Control(e, b) => encode_control(e, b),
     };

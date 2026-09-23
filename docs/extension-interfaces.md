@@ -3,7 +3,7 @@
 # Extension interfaces for feature slices
 
 What a feature ticket edits, what it must not, and the contracts it can rely
-on. Proven by the CPU path plus RAM as a stub metric (C02), Storage (TB04), Battery (TB06), and Agents (TB07); the radio,
+on. Proven by the CPU path plus RAM as a stub metric (C02), Storage (TB04), Battery (TB06), Agents (TB07), and Network (TB05); the radio,
 episode, configuration, and persistence interfaces below are written
 contracts only and are refined by TB09, TB13, and TB16.
 
@@ -48,7 +48,7 @@ Rules every group follows:
   (map key, five fields with 64-bit counts); the Storage group adds at most 58
   (eight fields, four 64-bit and two 32-bit values); the Battery group adds at most 38
   (ten fields, four 16-bit values, four one-byte enums, two 32-bit ages); the Agents group adds at most 16
-  (five fields: availability, one 32-bit age, three one-byte agent states). Frame limit is 2,048; the link
+  (five fields: availability, one 32-bit age, three one-byte agent states); the Network group adds at most 98 (thirteen fields: two 64-bit rates, two 32-bit ages, a 32-byte SSID, two MAC addresses), over the 64-byte budget and covered by a maximum-size fixture. The snapshot body accepts up to 10 keys. Frame limit is 2,048; the link
   carries about 11 KB/s at 115,200 baud, so one complete snapshot per second
   uses well under 1%.
 - Budget for the six MVP cards: up to 64 bytes per group, so all groups plus the

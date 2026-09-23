@@ -7,6 +7,8 @@
 pub mod agents;
 pub mod battery;
 pub mod cpu;
+pub mod network;
 pub mod ram;
 pub mod storage;
 pub mod time;
+pub mod wifi_context_server;

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "protocol.hpp"
 
@@ -91,6 +93,38 @@ struct AgentsMetricState {
   // Signed: a sample older than device uptime predates the device clock.
   int64_t source_time_ms = 0;
 };
+// Network (TB05): primary-route traffic and Host WiFi context, each half with
+// its own availability and source time. The wire carries no freshness; the
+// device derives it from the *source* sample time (received time minus the
+// reported age), so a re-sent old sample stays stale. Traffic is stale 3 s
+// after its sample (the 1 s rate cadence x 3, the same rule as CPU). WiFi
+// context is stale 15 s after its sample: the provider sends on change and at
+// least once a second, so 15 s is 15 missed heartbeats, and the Host itself
+// downgrades a silent provider's context to unavailable at the same 15 s
+// (docs/wifi-context-provider.md). Host Station Identity is read by the Host
+// itself every second and travels with the traffic half's age.
+constexpr uint64_t kNetworkTrafficStaleMs = 3'000;
+constexpr uint64_t kNetworkContextStaleMs = 15'000;
+struct NetworkMetricState {
+  bool has_data = false;
+  protocol::Availability traffic_availability = protocol::Availability::kTemporarilyUnavailable;
+  protocol::Freshness traffic_freshness = protocol::Freshness::kFresh;
+  protocol::RouteKind route_kind = protocol::RouteKind::kUnknown;
+  bool via_tunnel = false;
+  uint64_t rx_bytes_per_s = 0;
+  uint64_t tx_bytes_per_s = 0;
+  // Signed: a sample older than device uptime predates the device clock.
+  int64_t traffic_source_time_ms = 0;
+  protocol::AssociationContext context_availability =
+      protocol::AssociationContext::kPermissionNotRequested;
+  protocol::Freshness context_freshness = protocol::Freshness::kFresh;
+  protocol::WifiCoverage coverage = protocol::WifiCoverage::kUnknown;
+  uint8_t channel = 0;
+  std::optional<std::array<uint8_t, protocol::kMacBytes>> station;
+  std::vector<uint8_t> ssid;
+  std::optional<std::array<uint8_t, protocol::kMacBytes>> bssid;
+  int64_t context_source_time_ms = 0;
+};
 struct HostState {
   ConnectionState connection = ConnectionState::kNegotiating;
   HostMetricState cpu{};
@@ -98,6 +132,7 @@ struct HostState {
   StorageMetricState storage{};
   BatteryMetricState battery{};
   AgentsMetricState agents{};
+  NetworkMetricState network{};
   uint64_t host_last_seen_ms = 0;
   bool has_seen_host = false;  // false on cold boot: last-seen is unknown, not zero
   bool time_available = false;

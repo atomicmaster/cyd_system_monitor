@@ -108,9 +108,9 @@ write("cpu-snapshot-v1-duplicate-major.hex",
                                    (3, uint(2, 16) + SESSION), (4, u(1)), (5, CPU)])),
       "envelope key 0 repeated with a different major: malformed key order beats the version error")
 CPU_UNKNOWN = uint(5, 6) + kv([(0, u(0)), (1, u(723)), (2, u(1000)), (3, u(0)), (4, u(4)),
-                               (9, uint(4, 2) + u(1) + uint(3, 1) + b"x")])
+                               (15, uint(4, 2) + u(1) + uint(3, 1) + b"x")])
 write("cpu-snapshot-v1-unknown-body-field.hex", frame(envelope(4, CPU_UNKNOWN)),
-      "unknown optional snapshot-body field 9 holding [1, \"x\"]: skipped like any bounded value")
+      "unknown optional snapshot-body field 15 holding [1, \"x\"]: skipped like any bounded value")
 write("error-v1-kind-unknown.hex",
       frame(envelope(9, uint(2, 600) + bytes(600))),
       "unknown message type 9 with an oversized body: malformed type, not a size error")
@@ -140,10 +140,10 @@ write("command-reply-v1-unknown-body-field.hex",
       frame(envelope(6, with_unknown(CMD_REPLY, 4, u(7)))),
       "CommandReply with unknown optional body key 4 holding an integer: skipped")
 write("cpu-snapshot-v1-unknown-body-nested.hex",
-      frame(envelope(4, with_unknown(CPU, 9, nest(3)))),
+      frame(envelope(4, with_unknown(CPU, 15, nest(3)))),
       "unknown snapshot-body field nested three arrays deep: at the depth limit, accepted")
 write("cpu-snapshot-v1-unknown-body-too-deep.hex",
-      frame(envelope(4, with_unknown(CPU, 9, nest(4)))),
+      frame(envelope(4, with_unknown(CPU, 15, nest(4)))),
       "unknown snapshot-body field nested four arrays deep: over the limit, malformed")
 write("hello-v1-unknown-body-nested.hex",
       frame(envelope(1, with_unknown(HELLO, 9, nest(3)))),
@@ -489,3 +489,129 @@ write("agents-snapshot-v1-noncanonical.hex",
 write("agents-snapshot-v1-duplicate-group.hex",
       frame(envelope(4, with_agents(ram_group(AGENTS), extra_body=[(8, ram_group(AGENTS))]))),
       "Agents group present twice in the snapshot body: malformed")
+
+
+# Network group (TB05), key 9: thirteen fields, two independent halves.
+# 0 traffic availability, 1 traffic age ms, 2 route kind (0 unknown, 1 WiFi,
+# 3 other, 2 Ethernet, 4 none), 3 via tunnel, 4 rx B/s, 5 tx B/s,
+# 6 association context availability (0-6), 7 context age ms, 8 coverage
+# (0 unknown, 1 observable, 2 outside), 9 channel, 10 station (byte string of
+# 0 or 6), 11 SSID (0-32 bytes), 12 BSSID (0 or 6).
+def with_network(group, extra_body=(), ram=None, storage=None, battery=None, agents=None):
+    items = [(0, u(0)), (1, u(723)), (2, u(1000)), (3, u(0)), (4, u(4))]
+    for key, value in ((5, ram), (6, storage), (7, battery), (8, agents)):
+        if value is not None:
+            items.append((key, value))
+    items.append((9, group))
+    items += list(extra_body)
+    return uint(5, len(items)) + kv(items)
+
+
+def bstr(b):
+    return uint(2, len(b)) + b
+
+
+STATION = bytes.fromhex("f2a1b3c4d5e6")
+BSSID = bytes.fromhex("0a1b2c3d4e5f")
+NET = [(0, u(0)), (1, u(250)), (2, u(1)), (3, u(0)), (4, u(1_200_000)), (5, u(340_000)),
+       (6, u(0)), (7, u(400)), (8, u(1)), (9, u(6)), (10, bstr(STATION)),
+       (11, bstr(b"CYD-Test")), (12, bstr(BSSID))]
+
+
+def network_frame(items, **kw):
+    return frame(envelope(4, with_network(ram_group(items), **kw)))
+
+
+def net_with(**fields):
+    """NET with the named keys replaced; keys are given as k<number>."""
+    out = []
+    for key, value in NET:
+        out.append((key, fields.get(f"k{key}", value)))
+    return out
+
+
+write("network-snapshot-v1.hex", network_frame(NET),
+      "CPU plus Network group: WiFi primary route 1.2 MB/s down 340 kB/s up, channel 6 observable, "
+      "context available (SSID CYD-Test), station and BSSID present")
+write("network-snapshot-v1-offline.hex",
+      network_frame(net_with(k0=u(2), k1=u(0), k2=u(4), k4=u(0), k5=u(0), k6=u(1), k7=u(0),
+                             k8=u(0), k9=u(0), k10=bstr(b""), k11=bstr(b""), k12=bstr(b""))),
+      "Network with no primary route: kind 4, traffic Absent with zero rates, no station")
+write("network-snapshot-v1-ethernet.hex",
+      network_frame(net_with(k2=u(2), k6=u(5), k8=u(0), k9=u(0), k10=bstr(b""),
+                             k11=bstr(b""), k12=bstr(b""))),
+      "Network over Ethernet: rates, WiFi context unsupported and coverage unknown")
+write("network-snapshot-v1-tunnel.hex",
+      network_frame(net_with(k3=u(1))),
+      "Network with a tunnel as primary route (underlying WiFi): the tunnel's own rate, via_tunnel 1")
+write("network-snapshot-v1-rate-unavailable.hex",
+      network_frame(net_with(k0=u(3), k1=u(0), k4=u(0), k5=u(0))),
+      "Network right after a route change: kind WiFi, rate temporarily unavailable with zero values")
+write("network-snapshot-v1-5ghz-outside.hex",
+      network_frame(net_with(k6=u(2), k8=u(2), k9=u(149), k11=bstr(b""), k12=bstr(b""))),
+      "Network on channel 149: outside supported coverage, permission denied (no SSID/BSSID), station present")
+write("network-snapshot-v1-context-unknown.hex",
+      network_frame(net_with(k6=u(1), k7=u(0), k8=u(0), k9=u(0), k11=bstr(b""), k12=bstr(b""))),
+      "Network with no provider: context not requested, coverage unknown, station identity still present")
+write("network-snapshot-v1-band-only.hex",
+      network_frame(net_with(k6=u(4), k9=u(0), k11=bstr(b""), k12=bstr(b""))),
+      "Network with a known 2.4 GHz band but no channel and authorized-but-unavailable SSID")
+write("network-snapshot-v1-rate-error.hex",
+      network_frame(net_with(k0=u(4), k2=u(0), k4=u(0), k5=u(0))),
+      "Network traffic read error: unknown route kind, zero rates")
+for n, name in enumerate(["available", "not-requested", "denied", "restricted",
+                          "authorized-unavailable", "unsupported", "error"]):
+    extra = {} if n == 0 else dict(k11=bstr(b""), k12=bstr(b""))
+    write(f"network-snapshot-v1-ctx-{name}.hex",
+          network_frame(net_with(k6=u(n), **extra)),
+          f"Network Association Context Availability {n} ({name.replace('-', ' ')})")
+write("network-snapshot-v1-max.hex",
+      network_frame([(0, u(0)), (1, u(0xffffffff)), (2, u(3)), (3, u(1)), (4, u(2**64 - 1)),
+                     (5, u(2**64 - 1)), (6, u(0)), (7, u(0xffffffff)), (8, u(2)), (9, u(233)),
+                     (10, bstr(STATION)), (11, bstr(bytes(range(0x80, 0xa0)))), (12, bstr(BSSID))]),
+      "Network at every maximum: 64-bit rates, 32-bit ages, 32-byte SSID: valid, the largest group (98 bytes)")
+write("network-snapshot-v1-with-groups.hex",
+      frame(envelope(4, with_network(ram_group(NET), ram=ram_group(RAM), storage=ram_group(STORAGE),
+                                     battery=ram_group(BATTERY), agents=ram_group(AGENTS)))),
+      "CPU plus the RAM (5), Storage (6), Battery (7), Agents (8) and Network (9) groups")
+write("network-snapshot-v1-with-bad-agents.hex",
+      frame(envelope(4, with_network(ram_group(NET), agents=ram_group(AGENTS[:4])))),
+      "valid Network group beside an Agents group missing a field: malformed as a whole")
+bad = {
+    "bad-traffic-availability": (net_with(k0=u(5)), "traffic availability 5 is not defined"),
+    "bad-route-kind": (net_with(k2=u(5)), "route kind 5 is not defined"),
+    "bad-via-tunnel": (net_with(k3=u(2)), "via_tunnel 2 is not a boolean"),
+    "bad-context": (net_with(k6=u(7)), "association context availability 7 is not defined"),
+    "bad-coverage": (net_with(k8=u(3)), "coverage 3 is not defined"),
+    "channel-over-255": (net_with(k9=u(256)), "channel above 8 bits"),
+    "channel-without-coverage": (net_with(k8=u(0)), "a channel with coverage unknown"),
+    "ssid-oversize": (net_with(k11=bstr(bytes(33))), "SSID of 33 bytes, over the 32-byte bound"),
+    "ssid-without-context": (net_with(k6=u(2)), "SSID present while permission is denied"),
+    "bssid-without-context": (net_with(k6=u(4), k11=bstr(b"")), "BSSID present while context is unavailable"),
+    "bad-station-length": (net_with(k10=bstr(STATION[:5])), "station identity of 5 bytes"),
+    "bad-bssid-length": (net_with(k12=bstr(BSSID + b"\x00")), "BSSID of 7 bytes"),
+    "rates-with-unavailable": (net_with(k0=u(3)), "non-zero rates while traffic is unavailable"),
+    "tunnel-without-route": (net_with(k2=u(4), k0=u(2), k4=u(0), k5=u(0), k3=u(1)),
+                             "via_tunnel with no primary route"),
+    "traffic-age-overflow": (net_with(k1=u(1 << 32)), "traffic age above 32 bits"),
+    "context-age-overflow": (net_with(k7=u(1 << 32)), "context age above 32 bits"),
+    "station-as-uint": (net_with(k10=u(5)), "station encoded as an integer, not a byte string"),
+    "ssid-as-text": (net_with(k11=uint(3, 3) + b"abc"), "SSID encoded as a text string"),
+    "missing-field": (NET[:12], "Network group without the BSSID (key 12)"),
+    "duplicate-key": (NET[:3] + [NET[2]] + NET[3:], "Network key 2 twice"),
+    "noncanonical": (net_with(k1=b"\x18\x05"), "traffic age encoded with a needless extra byte"),
+}
+for name, (items, note) in bad.items():
+    write(f"network-snapshot-v1-{name}.hex", network_frame(items), f"{note}: malformed")
+write("network-snapshot-v1-not-a-map.hex",
+      frame(envelope(4, with_network(uint(2, 3) + b"\x01\x02\x03"))),
+      "Network group is a byte string, not a field map: malformed")
+write("network-snapshot-v1-unknown-field.hex",
+      network_frame(NET + [(13, uint(4, 2) + u(1) + u(2))]),
+      "unknown optional Network field 13 holding [1, 2]: skipped, snapshot applies")
+write("network-snapshot-v1-unknown-too-deep.hex",
+      network_frame(NET + [(13, nest(4))]),
+      "unknown Network field nested four arrays deep: over the skip limit, malformed")
+write("network-snapshot-v1-duplicate-group.hex",
+      frame(envelope(4, with_network(ram_group(NET), extra_body=[(9, ram_group(NET))]))),
+      "Network group present twice in the snapshot body: malformed")

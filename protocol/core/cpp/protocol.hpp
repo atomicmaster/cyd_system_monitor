@@ -104,6 +104,52 @@ struct AgentsSnapshot {
   uint32_t source_age_ms = 0;
   uint8_t state[kAgentSlots] = {0, 0, 0};
 };
+// Network (TB05): primary-route traffic and Host WiFi context, two halves with
+// independent availability and source ages; no freshness field. See
+// CORE_PROTOCOL.md group 9 for every sentinel. A traffic half that is not
+// kAvailable carries zero rates. Only the primary-route interface is reported;
+// a tunnel's own rate is labelled via_tunnel and never summed with the
+// underlying interface.
+enum class RouteKind : uint8_t {
+  kUnknown,
+  kWifi,
+  kEthernet,
+  kOther,  // another link, e.g. Thunderbolt bridge or cellular
+  kNone    // no primary route: offline
+};
+// Association Context Availability (CONTEXT.md): why SSID/BSSID context is or
+// is not usable. Independent of the metric Availability enum.
+enum class AssociationContext : uint8_t {
+  kAvailable,
+  kPermissionNotRequested,
+  kDenied,
+  kRestricted,
+  kAuthorizedUnavailable,
+  kUnsupported,
+  kError
+};
+// Host WiFi Coverage: 2.4 GHz is observable (not necessarily captured now);
+// 5/6 GHz is outside the board's supported coverage; unknown is explicit.
+enum class WifiCoverage : uint8_t { kUnknown, kObservable, kOutsideSupported };
+constexpr std::size_t kMacBytes = 6;
+constexpr std::size_t kMaxSsidBytes = 32;
+struct NetworkSnapshot {
+  Availability traffic_availability = Availability::kTemporarilyUnavailable;
+  uint32_t traffic_age_ms = 0;
+  RouteKind route_kind = RouteKind::kUnknown;
+  bool via_tunnel = false;
+  uint64_t rx_bytes_per_s = 0;
+  uint64_t tx_bytes_per_s = 0;
+  AssociationContext context_availability = AssociationContext::kPermissionNotRequested;
+  uint32_t context_age_ms = 0;
+  WifiCoverage coverage = WifiCoverage::kUnknown;
+  uint8_t channel = 0;  // 0 unknown; 0 whenever coverage is unknown
+  // Host Station Identity: independent of Location permission.
+  std::optional<std::array<uint8_t, kMacBytes>> station;
+  // Only when context_availability is kAvailable; SSID is 0-32 raw octets.
+  std::vector<uint8_t> ssid;
+  std::optional<std::array<uint8_t, kMacBytes>> bssid;
+};
 struct HelloBody {
   uint8_t supported_major = 1;
   uint8_t supported_minor = 0;
@@ -153,6 +199,8 @@ struct Decoded {
   bool has_battery = false;
   AgentsSnapshot agents{};
   bool has_agents = false;
+  NetworkSnapshot network{};
+  bool has_network = false;
 };
 
 uint32_t Crc32(std::span<const uint8_t> bytes);
@@ -173,6 +221,12 @@ Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
                      const RamSnapshot *ram, const StorageSnapshot *storage,
                      const BatterySnapshot *battery,
                      const AgentsSnapshot *agents,
+                     std::vector<uint8_t> *frame);
+Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
+                     const RamSnapshot *ram, const StorageSnapshot *storage,
+                     const BatterySnapshot *battery,
+                     const AgentsSnapshot *agents,
+                     const NetworkSnapshot *network,
                      std::vector<uint8_t> *frame);
 Error Decode(std::span<const uint8_t> frame, Decoded *result);
 const char *ErrorName(Error error);

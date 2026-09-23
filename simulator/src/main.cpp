@@ -83,6 +83,9 @@ int main(int argc, char** argv) {
   if (scenario == "agents-cards") {
     return simulator::scenarios::RunAgentsCards();
   }
+  if (scenario == "network-cards") {
+    return simulator::scenarios::RunNetworkCards();
+  }
   if (scenario == "coverage") {
     return simulator::scenarios::RunCoverage();
   }
@@ -90,7 +93,7 @@ int main(int argc, char** argv) {
                "usage: simulator <scenario>\n"
                "  scenario: smoke | display-smoke | calibration | peripherals | capacity | "
                "protocol-replay | cpu-lifecycle | cpu-replay | metric-cards | storage-cards | "
-               "battery-cards | agents-cards | system-screen | "
+               "battery-cards | agents-cards | network-cards | system-screen | "
                "settings | coverage\n");
   return 2;
 }
