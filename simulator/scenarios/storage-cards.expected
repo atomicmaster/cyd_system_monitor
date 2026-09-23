@@ -1,28 +1,28 @@
 no Host data yet
   Storage | -- |  | bar=0 | has_value=0 | dimmed=0
 live: 300 of 500 GB used, R 12.3 MB/s W 4.5 MB/s
-  Storage | 300.0 / 500.0 GB | R 12.3 MB/s W 4.5 MB/s | bar=600 | has_value=1 | dimmed=0
+  Storage | 300.0 / 500.0 GB | R12.3M/s W4.5M/s | bar=600 | has_value=1 | dimmed=0
 I/O temporarily unavailable, capacity still live
   Storage | 300.0 / 500.0 GB | I/O Unavailable | bar=600 | has_value=1 | dimmed=0
 counter reset: I/O still unavailable, never a zero rate
   Storage | 300.0 / 500.0 GB | I/O Unavailable | bar=600 | has_value=1 | dimmed=0
 I/O back after re-baseline: 800 B/s read, a measured zero write
-  Storage | 300.0 / 500.0 GB | R 800 B/s W 0 B/s | bar=600 | has_value=1 | dimmed=0
+  Storage | 300.0 / 500.0 GB | R800B/s W0B/s | bar=600 | has_value=1 | dimmed=0
 unit boundaries: 2.5 GB/s read, 999.96 KB/s write
-  Storage | 300.0 / 500.0 GB | R 2.5 GB/s W 1.0 MB/s | bar=600 | has_value=1 | dimmed=0
+  Storage | 300.0 / 500.0 GB | R2.5G/s W1.0M/s | bar=600 | has_value=1 | dimmed=0
 capacity sampled 30 s ago, I/O live: both fresh
-  Storage | 300.0 / 500.0 GB | R 1.0 MB/s W 2.0 MB/s | bar=600 | has_value=1 | dimmed=0
+  Storage | 300.0 / 500.0 GB | R1.0M/s W2.0M/s | bar=600 | has_value=1 | dimmed=0
 capacity 89 s old, I/O live: both fresh
-  Storage | 300.0 / 500.0 GB | R 1.0 MB/s W 2.0 MB/s | bar=600 | has_value=1 | dimmed=0
+  Storage | 300.0 / 500.0 GB | R1.0M/s W2.0M/s | bar=600 | has_value=1 | dimmed=0
 capacity sample is 91 s old, I/O live: capacity stale, I/O live
-  Storage | Last 300.0 / 500.0 GB | R 1.0 MB/s W 2.0 MB/s | bar=600 | has_value=1 | dimmed=1
+  Storage | Last 300.0 / 500.0 GB | R1.0M/s W2.0M/s | bar=600 | has_value=1 | dimmed=1
 capacity read error, I/O live
-  Storage | -- | R 100 B/s W 200 B/s | bar=0 | has_value=0 | dimmed=0
+  Storage | -- | R100B/s W200B/s | bar=0 | has_value=0 | dimmed=0
 2 TB disk, 1.5 TB used, idle: a zero rate is measured
-  Storage | 1.5 / 2.0 TB | R 0 B/s W 0 B/s | bar=750 | has_value=1 | dimmed=0
+  Storage | 1.5 / 2.0 TB | R0B/s W0B/s | bar=750 | has_value=1 | dimmed=0
 last frame 2.9 s ago: still live
-  Storage | 1.5 / 2.0 TB | R 0 B/s W 0 B/s | bar=750 | has_value=1 | dimmed=0
+  Storage | 1.5 / 2.0 TB | R0B/s W0B/s | bar=750 | has_value=1 | dimmed=0
 last frame 3.1 s ago: I/O stale, capacity fresh, the link stale too
-  Storage | Last 1.5 / 2.0 TB | Last R 0 B/s W 0 B/s | bar=750 | has_value=1 | dimmed=1
+  Storage | Last 1.5 / 2.0 TB | Last R0B/s W0B/s | bar=750 | has_value=1 | dimmed=1
 16 s without any frame: retained and dimmed
-  Storage | Last 1.5 / 2.0 TB | Last R 0 B/s W 0 B/s | bar=750 | has_value=1 | dimmed=1
+  Storage | Last 1.5 / 2.0 TB | Last R0B/s W0B/s | bar=750 | has_value=1 | dimmed=1

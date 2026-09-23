@@ -3,17 +3,21 @@
 
 namespace firmware::ui::system {
 namespace {
-constexpr int32_t kCardWidth = 152;
-constexpr int32_t kCardHeight = 84;
+// The Overview grid: two cards per row, three rows, under the 28 px status bar
+// on the 320x240 display, with 4 px padding and gaps and no scrolling.
+constexpr int32_t kCardWidth = 154;
+constexpr int32_t kCardHeight = 64;
+constexpr int32_t kCardAreaHeight = 3 * kCardHeight + 2 * 4;
 }  // namespace
 
 SystemScreen::SystemScreen(lv_obj_t* parent) {
   root_ = lv_obj_create(parent);
-  lv_obj_set_size(root_, 320, 128);
+  lv_obj_set_size(root_, 320, 240);
   // Fixed layout: nothing here scrolls, so a drag on the bar never moves content.
   lv_obj_remove_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_flex_flow(root_, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_all(root_, 4, 0);
+  lv_obj_set_style_border_width(root_, 0, 0);
   lv_obj_set_style_pad_row(root_, 4, 0);
 
   bar_row_ = lv_obj_create(root_);
@@ -36,11 +40,12 @@ SystemScreen::SystemScreen(lv_obj_t* parent) {
   clock_label_ = lv_label_create(bar_row);
 
   card_area_ = lv_obj_create(root_);
-  lv_obj_set_size(card_area_, LV_PCT(100), kCardHeight);
+  lv_obj_set_size(card_area_, LV_PCT(100), kCardAreaHeight);
   lv_obj_remove_flag(card_area_, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_flex_flow(card_area_, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_all(card_area_, 0, 0);
   lv_obj_set_style_pad_column(card_area_, 4, 0);
+  lv_obj_set_style_pad_row(card_area_, 4, 0);
   lv_obj_set_style_border_width(card_area_, 0, 0);
 }
 

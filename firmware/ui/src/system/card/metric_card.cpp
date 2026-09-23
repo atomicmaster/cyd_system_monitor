@@ -27,13 +27,24 @@ MetricCard::MetricCard(lv_obj_t* parent, int32_t width, int32_t height) {
   lv_obj_set_size(root_, width, height);
   lv_obj_remove_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_flex_flow(root_, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_all(root_, 4, 0);
-  lv_obj_set_style_pad_row(root_, 2, 0);
+  lv_obj_set_style_pad_all(root_, 3, 0);
+  lv_obj_set_style_border_width(root_, 0, 0);
+  lv_obj_set_style_pad_row(root_, 0, 0);
   title_label_ = lv_label_create(root_);
   value_label_ = lv_label_create(root_);
   note_label_ = lv_label_create(root_);
+  // Fixed-height lines: text that is too long is clipped, never wrapped, so a
+  // card cannot grow past its grid cell.
+  for (lv_obj_t* label : {title_label_, value_label_, note_label_}) {
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
+  }
+  lv_obj_set_style_text_font(note_label_, &lv_font_montserrat_12, 0);
+  // The bar sits on the card's bottom edge, outside the text flow.
   bar_ = lv_bar_create(root_);
-  lv_obj_set_size(bar_, LV_PCT(100), 8);
+  lv_obj_add_flag(bar_, LV_OBJ_FLAG_FLOATING);
+  lv_obj_align(bar_, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_obj_set_size(bar_, LV_PCT(100), 4);
   lv_bar_set_range(bar_, 0, 1000);
   Update(firmware::domain::MetricCardView{.title = "", .value = "--"});
 }

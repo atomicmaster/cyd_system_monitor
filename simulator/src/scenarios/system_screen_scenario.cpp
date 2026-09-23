@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -135,6 +137,43 @@ int RunSystemScreen() {
   render(200000);
   result.Expect(Has(ui.coverage_label(), "Host only") && !Has(ui.connection_label(), "Connected"),
                 "coverage stays in the bar while the Host link goes stale");
+
+  // Six cards (the Overview's 2x3 grid) fit the 320x240 display with no
+  // scrolling, and realistic worst-case text fits its card without clipping.
+  {
+    const char* titles[] = {"System", "Storage", "Network", "Agents", "WiFi", "BLE"};
+    std::vector<domain::MetricCardView> six;
+    for (const char* title : titles) {
+      six.push_back({.title = title,
+                     .value = "Last 745.2 / 994.6 GB",
+                     .note = "Last R99.9M/s W99.9M/s",
+                     .has_value = true});
+    }
+    ui.Update(domain::MakeCpuView(feed.state(), 7100), six);
+    RenderOnce();
+    lv_obj_update_layout(screen);
+    bool inside = ui.card_count() == 6;
+    bool clipped = false;
+    int32_t bottom_most = 0;
+    for (size_t i = 0; i < ui.card_count(); ++i) {
+      lv_area_t box;
+      lv_obj_get_coords(lv_obj_get_parent(ui.card(i).title_label()), &box);
+      inside = inside && box.x1 >= 0 && box.x2 < 320 && box.y1 >= 0 && box.y2 < 240;
+      bottom_most = std::max(bottom_most, box.y2);
+      for (lv_obj_t* label : {ui.card(i).value_label(), ui.card(i).note_label()}) {
+        lv_point_t text;
+        lv_text_get_size(&text, lv_label_get_text(label), lv_obj_get_style_text_font(label, 0), 0,
+                         0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        clipped = clipped || text.x > lv_obj_get_content_width(label);
+      }
+    }
+    result.Expect(inside, "six cards sit inside the 320x240 display");
+    result.Expect(bottom_most == 239 || bottom_most < 240, "the grid ends above the display edge");
+    result.Expect(
+        !lv_obj_has_flag(screen, LV_OBJ_FLAG_SCROLLABLE) || lv_obj_get_scroll_bottom(screen) == 0,
+        "the Overview does not scroll");
+    result.Expect(!clipped, "realistic worst-case card text fits without clipping");
+  }
   return result.Finish("simulator system-screen");
 }
 

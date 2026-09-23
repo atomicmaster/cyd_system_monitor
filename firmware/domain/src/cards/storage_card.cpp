@@ -39,22 +39,22 @@ std::string CapacityText(uint64_t used, uint64_t total, bool retained) {
   return text;
 }
 
-// One rate with a unit chosen so the number stays under four digits: "812 B/s",
-// "12.3 KB/s", "4.5 MB/s", "1.2 GB/s". Clamped at 999.9 GB/s, so at most 10
-// characters.
+// One rate with a unit chosen so the number stays under four digits: "812B/s",
+// "12.3K/s", "4.5M/s", "1.2G/s" (bytes; no space, so the note fits a 148 px card
+// at 12 pt). Clamped at 999.9 GB/s, so at most 8 characters.
 std::string RateText(uint64_t bytes_per_s) {
   constexpr uint64_t kClamp = 999'900'000'000ULL;
   if (bytes_per_s > kClamp) bytes_per_s = kClamp;
   const double value = static_cast<double>(bytes_per_s);
   char text[24];
   if (value < 1e3) {
-    std::snprintf(text, sizeof text, "%llu B/s", static_cast<unsigned long long>(bytes_per_s));
+    std::snprintf(text, sizeof text, "%lluB/s", static_cast<unsigned long long>(bytes_per_s));
   } else if (value < 999.95e3) {
-    std::snprintf(text, sizeof text, "%.1f KB/s", value / 1e3);
+    std::snprintf(text, sizeof text, "%.1fK/s", value / 1e3);
   } else if (value < 999.95e6) {
-    std::snprintf(text, sizeof text, "%.1f MB/s", value / 1e6);
+    std::snprintf(text, sizeof text, "%.1fM/s", value / 1e6);
   } else {
-    std::snprintf(text, sizeof text, "%.1f GB/s", value / 1e9);
+    std::snprintf(text, sizeof text, "%.1fG/s", value / 1e9);
   }
   return text;
 }
@@ -62,8 +62,8 @@ std::string RateText(uint64_t bytes_per_s) {
 }  // namespace
 
 // Root storage: capacity of the filesystem containing "/" as the value and the
-// physical device's read/write rates as the note ("R 12.3 MB/s W 4.5 MB/s",
-// at most 30 characters with the "Last " prefix). Capacity and I/O are
+// physical device's read/write rates as the note ("R12.3M/s W4.5M/s",
+// at most 23 characters with the "Last " prefix). Capacity and I/O are
 // independent: each has its own availability, `--` plus wording when it is not
 // available, and its own retained-and-dimmed state.
 MetricCardView MakeStorageCard(const HostState& state, uint64_t /*now_ms*/) {
@@ -91,8 +91,8 @@ MetricCardView MakeStorageCard(const HostState& state, uint64_t /*now_ms*/) {
     view.dimmed = capacity_retained;
   }
   if (io_ok) {
-    view.note = std::string(io_retained ? "Last " : "") + "R " +
-                RateText(storage.read_bytes_per_s) + " W " + RateText(storage.write_bytes_per_s);
+    view.note = std::string(io_retained ? "Last " : "") + "R" + RateText(storage.read_bytes_per_s) +
+                " W" + RateText(storage.write_bytes_per_s);
     view.dimmed = view.dimmed || io_retained;
   } else if (capacity_ok) {
     view.note = std::string("I/O ") + NoteText(storage.io_availability);
