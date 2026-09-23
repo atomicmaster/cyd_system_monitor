@@ -99,6 +99,12 @@ fn summary(result: &Result<Decoded, String>) -> String {
                     g.condition_age_ms
                 );
             }
+            if let Some(g) = &snapshot.agents {
+                text += &format!(
+                    ";agents={},{},{},{},{}",
+                    g.availability as u8, g.source_age_ms, g.state[0], g.state[1], g.state[2]
+                );
+            }
             (e, text)
         }
         Ok(Message::Control(e, body)) => (
@@ -152,6 +158,7 @@ fn reencode(decoded: &Decoded) -> String {
             s.ram.as_ref(),
             s.storage.as_ref(),
             s.battery.as_ref(),
+            s.agents.as_ref(),
         ),
         Message::Control(e, b) => encode_control(e, b),
     };

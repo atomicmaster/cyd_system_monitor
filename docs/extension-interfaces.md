@@ -3,11 +3,11 @@
 # Extension interfaces for feature slices
 
 What a feature ticket edits, what it must not, and the contracts it can rely
-on. Proven by the CPU path plus RAM as a stub metric (C02), Storage (TB04), and Battery (TB06); the radio,
+on. Proven by the CPU path plus RAM as a stub metric (C02), Storage (TB04), Battery (TB06), and Agents (TB07); the radio,
 episode, configuration, and persistence interfaces below are written
 contracts only and are refined by TB09, TB13, and TB16.
 
-## Adding a metric (proven: CPU, RAM, Storage, Battery)
+## Adding a metric (proven: CPU, RAM, Storage, Battery, Agents)
 
 A metric is a *group* in the complete snapshot, one collector on the Host, and
 one card on the display. Each step has exclusive files; the only shared edit is
@@ -47,7 +47,8 @@ Rules every group follows:
 - A CPU snapshot with UTC is 61 bytes worst case; the RAM group adds at most 33
   (map key, five fields with 64-bit counts); the Storage group adds at most 58
   (eight fields, four 64-bit and two 32-bit values); the Battery group adds at most 38
-  (ten fields, four 16-bit values, four one-byte enums, two 32-bit ages). Frame limit is 2,048; the link
+  (ten fields, four 16-bit values, four one-byte enums, two 32-bit ages); the Agents group adds at most 16
+  (five fields: availability, one 32-bit age, three one-byte agent states). Frame limit is 2,048; the link
   carries about 11 KB/s at 115,200 baud, so one complete snapshot per second
   uses well under 1%.
 - Budget for the six MVP cards: up to 64 bytes per group, so all groups plus the
@@ -66,7 +67,7 @@ Rules every group follows:
   source: a slow source keeps its own cache and returns the last sample with its
   age, or an unavailable sample (Battery condition runs `system_profiler` on a
   background thread with a hard timeout and output cap, and `collect` only reads
-  the cache).
+  the cache; Agents runs a bounded libproc scan, about 6-17 ms, inline every 5 s and reuses it in between).
 - Ordering evidence uses boot identity plus monotonic sequence; UTC is display
   context only.
 

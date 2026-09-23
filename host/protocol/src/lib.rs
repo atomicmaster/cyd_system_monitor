@@ -96,6 +96,16 @@ pub struct BatterySnapshot {
     pub condition_age_ms: u32,
 }
 pub const BATTERY_UNKNOWN_U16: u16 = 0xFFFF;
+/// Agents group (TB07): exact same-user process presence for the three
+/// supported agents in fixed slot order [codex, claude, grok]. Each state is
+/// 0 not running, 1 running with activity unknown, 2 busy, 3 idle (2 and 3
+/// need an activity adapter). Not Available means all states are 0.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentsSnapshot {
+    pub availability: Availability,
+    pub source_age_ms: u32,
+    pub state: [u8; 3],
+}
 /// A complete snapshot: CPU plus each optional metric group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
@@ -103,6 +113,7 @@ pub struct Snapshot {
     pub ram: Option<RamSnapshot>,
     pub storage: Option<StorageSnapshot>,
     pub battery: Option<BatterySnapshot>,
+    pub agents: Option<AgentsSnapshot>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuSnapshot {
@@ -310,16 +321,17 @@ pub fn encode_snapshot(
     cpu: &CpuSnapshot,
     ram: Option<&RamSnapshot>,
 ) -> Result<Vec<u8>, Error> {
-    encode_groups(envelope, cpu, ram, None, None)
+    encode_groups(envelope, cpu, ram, None, None, None)
 }
 /// Encodes a complete snapshot with every optional group given (RAM at key 5,
-/// Storage at key 6, Battery at key 7).
+/// Storage at key 6, Battery at key 7, Agents at key 8).
 pub fn encode_groups(
     envelope: &Envelope,
     cpu: &CpuSnapshot,
     ram: Option<&RamSnapshot>,
     storage: Option<&StorageSnapshot>,
     battery: Option<&BatterySnapshot>,
+    agents: Option<&AgentsSnapshot>,
 ) -> Result<Vec<u8>, Error> {
     if ram.is_some_and(|r| r.used_bytes > r.total_bytes)
         || storage.is_some_and(|s| s.available_bytes > s.total_bytes)
@@ -329,6 +341,7 @@ pub fn encode_groups(
                 || b.state > 4
                 || b.condition > 3
         })
+        || agents.is_some_and(|a| a.state.iter().any(|&s| s > 3))
     {
         return Err(Error::Malformed);
     }
@@ -351,7 +364,12 @@ pub fn encode_groups(
     uint(&mut c, 0, 4);
     uint(&mut c, 0, envelope.sequence as u64);
     uint(&mut c, 0, 5);
-    c.push(0xa5 + ram.is_some() as u8 + storage.is_some() as u8 + battery.is_some() as u8);
+    c.push(
+        0xa5 + ram.is_some() as u8
+            + storage.is_some() as u8
+            + battery.is_some() as u8
+            + agents.is_some() as u8,
+    );
     for (k, v) in [
         (0, cpu.availability as u64),
         (1, cpu.utilization_per_mille as u64),
@@ -407,6 +425,20 @@ pub fn encode_groups(
             (7, battery.condition as u64),
             (8, battery.cycle_count as u64),
             (9, battery.condition_age_ms as u64),
+        ] {
+            uint(&mut c, 0, k);
+            uint(&mut c, 0, v)
+        }
+    }
+    if let Some(agents) = agents {
+        uint(&mut c, 0, 8);
+        c.push(0xa5);
+        for (k, v) in [
+            (0, agents.availability as u64),
+            (1, agents.source_age_ms as u64),
+            (2, agents.state[0] as u64),
+            (3, agents.state[1] as u64),
+            (4, agents.state[2] as u64),
         ] {
             uint(&mut c, 0, k);
             uint(&mut c, 0, v)
@@ -531,13 +563,14 @@ fn parse_envelope(frame: &[u8]) -> Result<(Envelope, &[u8]), Error> {
 fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
     let mut p = 0;
     let count = read_uint(body, &mut p, 5).ok_or(Error::Malformed)?;
-    if count > 8 {
+    if count > 9 {
         return Err(Error::Malformed);
     }
     let mut cpu = [None; 5];
     let mut ram = None;
     let mut storage = None;
     let mut battery = None;
+    let mut agents = None;
     for _ in 0..count {
         let q = read_uint(body, &mut p, 0).ok_or(Error::Malformed)? as usize;
         if q == 5 {
@@ -559,6 +592,13 @@ fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
                 return Err(Error::Malformed);
             }
             battery = Some(decode_battery_group(body, &mut p)?);
+            continue;
+        }
+        if q == 8 {
+            if agents.is_some() {
+                return Err(Error::Malformed);
+            }
+            agents = Some(decode_agents_group(body, &mut p)?);
             continue;
         }
         // Unknown optional fields are skipped like any other bounded value.
@@ -605,6 +645,7 @@ fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
         ram,
         storage,
         battery,
+        agents,
     })
 }
 
@@ -745,6 +786,38 @@ fn decode_battery_group(input: &[u8], p: &mut usize) -> Result<BatterySnapshot, 
         condition: all[7] as u8,
         cycle_count: all[8] as u16,
         condition_age_ms: all[9] as u32,
+    })
+}
+
+/// The Agents group: five required fields, unknown extra keys skipped
+/// (mirrors the C++ `ReadAgentsGroup`).
+fn decode_agents_group(input: &[u8], p: &mut usize) -> Result<AgentsSnapshot, Error> {
+    let count = read_uint(input, p, 5).ok_or(Error::Malformed)?;
+    if count > 16 {
+        return Err(Error::Malformed);
+    }
+    let mut value = [None; 5];
+    for _ in 0..count {
+        let key = read_uint(input, p, 0).ok_or(Error::Malformed)? as usize;
+        if key > 4 {
+            skip_value(input, p, 0)?;
+            continue;
+        }
+        if value[key].is_some() {
+            return Err(Error::Malformed);
+        }
+        value[key] = Some(read_uint(input, p, 0).ok_or(Error::Malformed)?);
+    }
+    let all: Vec<u64> = (0..5)
+        .map(|k| value[k].ok_or(Error::Malformed))
+        .collect::<Result<_, _>>()?;
+    if all[1] > u64::from(u32::MAX) || all[2..].iter().any(|&s| s > 3) {
+        return Err(Error::Malformed);
+    }
+    Ok(AgentsSnapshot {
+        availability: availability_from(all[0])?,
+        source_age_ms: all[1] as u32,
+        state: [all[2] as u8, all[3] as u8, all[4] as u8],
     })
 }
 
@@ -1554,7 +1627,7 @@ mod tests {
         assert_eq!((g.capacity_age_ms, g.io_age_ms), (1500, 250));
         assert_eq!(golden.ram, None);
         assert_eq!(
-            encode_groups(&envelope, &golden.cpu, None, Some(&g), None).unwrap(),
+            encode_groups(&envelope, &golden.cpu, None, Some(&g), None, None).unwrap(),
             fixture("storage-snapshot-v1.hex")
         );
         let (envelope, both) =
@@ -1566,6 +1639,7 @@ mod tests {
                 &both.cpu,
                 both.ram.as_ref(),
                 both.storage.as_ref(),
+                None,
                 None
             )
             .unwrap(),
@@ -1575,7 +1649,7 @@ mod tests {
         let max = fixture("storage-snapshot-v1-max-u64.hex");
         assert!(max.len() < 2048);
         let (envelope, snap) = decode_snapshot(&max).unwrap();
-        let without = encode_groups(&envelope, &snap.cpu, None, None, None).unwrap();
+        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None).unwrap();
         // key + map header + eight keys + 2 availabilities + 4 x 9 + 2 x 5 = 58 bytes
         assert_eq!(max.len() - without.len(), 58);
         let bad = StorageSnapshot {
@@ -1583,7 +1657,7 @@ mod tests {
             ..g
         };
         assert_eq!(
-            encode_groups(&envelope, &snap.cpu, None, Some(&bad), None),
+            encode_groups(&envelope, &snap.cpu, None, Some(&bad), None, None),
             Err(Error::Malformed)
         );
     }
@@ -1603,7 +1677,7 @@ mod tests {
         );
         assert_eq!(g.condition_age_ms, 1_800_000);
         assert_eq!(
-            encode_groups(&envelope, &golden.cpu, None, None, Some(&g)).unwrap(),
+            encode_groups(&envelope, &golden.cpu, None, None, Some(&g), None).unwrap(),
             fixture("battery-snapshot-v1.hex")
         );
         let (envelope, all) =
@@ -1615,7 +1689,8 @@ mod tests {
                 &all.cpu,
                 all.ram.as_ref(),
                 all.storage.as_ref(),
-                all.battery.as_ref()
+                all.battery.as_ref(),
+                None
             )
             .unwrap(),
             fixture("battery-snapshot-v1-with-groups.hex")
@@ -1629,7 +1704,7 @@ mod tests {
         let max = fixture("battery-snapshot-v1-max.hex");
         assert!(max.len() < 2048);
         let (envelope, snap) = decode_snapshot(&max).unwrap();
-        let without = encode_groups(&envelope, &snap.cpu, None, None, None).unwrap();
+        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None).unwrap();
         // key + map header + ten keys + 4 availability/state/condition bytes
         // + 4 x 3-byte (per-mille, sentinels) + 2 x 5-byte ages = 38 bytes
         assert_eq!(max.len() - without.len(), 38);
@@ -1638,7 +1713,62 @@ mod tests {
             ..snap.battery.clone().unwrap()
         };
         assert_eq!(
-            encode_groups(&envelope, &snap.cpu, None, None, Some(&bad)),
+            encode_groups(&envelope, &snap.cpu, None, None, Some(&bad), None),
+            Err(Error::Malformed)
+        );
+    }
+
+    #[test]
+    fn agents_group_round_trips_and_stays_within_its_bound() {
+        let (envelope, golden) = decode_snapshot(&fixture("agents-snapshot-v1.hex")).unwrap();
+        let g = golden.agents.clone().expect("agents group");
+        assert_eq!(
+            (g.availability, g.source_age_ms, g.state),
+            (Availability::Available, 250, [0, 1, 0])
+        );
+        assert_eq!(
+            encode_groups(&envelope, &golden.cpu, None, None, None, Some(&g)).unwrap(),
+            fixture("agents-snapshot-v1.hex")
+        );
+        let (envelope, all) =
+            decode_snapshot(&fixture("agents-snapshot-v1-with-groups.hex")).unwrap();
+        assert!(
+            all.ram.is_some()
+                && all.storage.is_some()
+                && all.battery.is_some()
+                && all.agents.is_some()
+        );
+        assert_eq!(
+            encode_groups(
+                &envelope,
+                &all.cpu,
+                all.ram.as_ref(),
+                all.storage.as_ref(),
+                all.battery.as_ref(),
+                all.agents.as_ref()
+            )
+            .unwrap(),
+            fixture("agents-snapshot-v1-with-groups.hex")
+        );
+        // Busy and idle round-trip although no MVP Host produces them.
+        let (_, busy) = decode_snapshot(&fixture("agents-snapshot-v1-busy-idle.hex")).unwrap();
+        assert_eq!(busy.agents.unwrap().state, [2, 3, 1]);
+        let (_, down) = decode_snapshot(&fixture("agents-snapshot-v1-unavailable.hex")).unwrap();
+        let down = down.agents.unwrap();
+        assert_eq!(down.availability, Availability::TemporarilyUnavailable);
+        assert_eq!(down.state, [0, 0, 0]);
+        let max = fixture("agents-snapshot-v1-max.hex");
+        assert!(max.len() < 2048);
+        let (envelope, snap) = decode_snapshot(&max).unwrap();
+        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None).unwrap();
+        // key + map header + five keys + availability + 5-byte age + three states
+        assert_eq!(max.len() - without.len(), 16);
+        let bad = AgentsSnapshot {
+            state: [0, 4, 0],
+            ..snap.agents.clone().unwrap()
+        };
+        assert_eq!(
+            encode_groups(&envelope, &snap.cpu, None, None, None, Some(&bad)),
             Err(Error::Malformed)
         );
     }

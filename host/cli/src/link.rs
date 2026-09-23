@@ -8,13 +8,14 @@ use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use metrics::{Collector, MetricAvailability};
+use platform_macos::agents::{AgentsCollector, AgentsReading};
 use platform_macos::battery::{BatteryCollector, BatteryReading};
 use platform_macos::cpu::CpuCollector;
 use platform_macos::ram::RamCollector;
 use platform_macos::storage::{StorageCollector, StorageReading};
 use protocol::{
-    Availability, BatterySnapshot, CommandOperation, CommandResult, CpuSnapshot, Freshness,
-    RamSnapshot, StorageSnapshot,
+    AgentsSnapshot, Availability, BatterySnapshot, CommandOperation, CommandResult, CpuSnapshot,
+    Freshness, RamSnapshot, StorageSnapshot,
 };
 use transport::client::{Event, HostClient, Phase, Refusal};
 use transport::serial::SerialPort;
@@ -147,6 +148,7 @@ impl Link {
         let mut ram_collector = RamCollector::new();
         let mut storage_collector = StorageCollector::new();
         let mut battery_collector = BatteryCollector::new();
+        let mut agents_collector = AgentsCollector::new();
         let epoch = Instant::now();
         let mut next = Instant::now();
         let mut buf = [0u8; 512];
@@ -170,6 +172,7 @@ impl Link {
             };
             let storage = storage_snapshot(storage_collector.collect(now_ms).value);
             let battery = battery_snapshot(battery_collector.collect(now_ms).value);
+            let agents = agents_snapshot(agents_collector.collect(now_ms));
             self.client
                 .set_local_offset_minutes(platform_macos::time::local_offset_minutes());
             let frame = self
@@ -179,6 +182,7 @@ impl Link {
                     Some(&ram),
                     storage.as_ref(),
                     battery.as_ref(),
+                    Some(&agents),
                     Some(utc_ms()),
                 )
                 .ok_or(LinkError::Timeout("sending: the link is no longer paired"))?;
@@ -205,6 +209,11 @@ impl Link {
                     g.cycle_count
                 );
             }
+            // States only, never a path or a process name.
+            println!(
+                "agents {:?}: codex {} claude {} grok {}",
+                agents.availability, agents.state[0], agents.state[1], agents.state[2]
+            );
             match (sample.value, ram_sample.value) {
                 (Some(v), Some(r)) => println!(
                     "cpu {:.1}%  ram {:.1} / {:.1} GB",
@@ -357,6 +366,27 @@ fn battery_snapshot(reading: Option<BatteryReading>) -> Option<BatterySnapshot> 
     })
 }
 
+/// The wire group for one second of agent presence. A source that is not
+/// available carries all-zero states and its availability, so a failed process
+/// listing is never "none running".
+fn agents_snapshot(sample: metrics::MetricSample<AgentsReading>) -> AgentsSnapshot {
+    match sample.value {
+        Some(reading) => AgentsSnapshot {
+            availability: Availability::Available,
+            source_age_ms: reading.age_ms,
+            state: reading.states.map(|s| s as u8),
+        },
+        None => AgentsSnapshot {
+            availability: match availability(sample.availability) {
+                Availability::Available => Availability::Error, // no value behind it
+                other => other,
+            },
+            source_age_ms: 0,
+            state: [0; 3],
+        },
+    }
+}
+
 fn protocol_error(error: protocol::Error) -> LinkError {
     LinkError::Io(io::Error::new(
         io::ErrorKind::InvalidData,
@@ -448,5 +478,25 @@ mod tests {
             Availability::TemporarilyUnavailable
         );
         assert_eq!((g.charge_age_ms, g.condition_age_ms, g.state), (0, 0, 0));
+    }
+
+    #[test]
+    fn agent_presence_maps_to_the_wire_and_an_unavailable_source_is_all_zero() {
+        use metrics::agents::AgentState;
+        let g = agents_snapshot(metrics::MetricSample::available(AgentsReading {
+            states: [
+                AgentState::NotRunning,
+                AgentState::RunningActivityUnknown,
+                AgentState::NotRunning,
+            ],
+            age_ms: 1_200,
+        }));
+        assert_eq!(g.availability, Availability::Available);
+        assert_eq!((g.state, g.source_age_ms), ([0, 1, 0], 1_200));
+        let down = agents_snapshot(metrics::MetricSample::unavailable(
+            MetricAvailability::TemporarilyUnavailable,
+        ));
+        assert_eq!(down.availability, Availability::TemporarilyUnavailable);
+        assert_eq!((down.state, down.source_age_ms), ([0; 3], 0));
     }
 }

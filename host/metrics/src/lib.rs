@@ -8,6 +8,7 @@
 //! missing value never collapses into a measured zero (see
 //! `docs/host-metrics.md`).
 
+pub mod agents;
 pub mod battery;
 
 /// Whether a Host Metric's current value can be trusted, independent of

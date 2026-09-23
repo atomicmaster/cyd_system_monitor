@@ -9,8 +9,9 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use protocol::{
-    encode_control, Availability, BatterySnapshot, CommandOperation, CommandResult, ControlBody,
-    CpuSnapshot, Envelope, Freshness, HelloBody, MessageType, RamSnapshot, StorageSnapshot,
+    encode_control, AgentsSnapshot, Availability, BatterySnapshot, CommandOperation, CommandResult,
+    ControlBody, CpuSnapshot, Envelope, Freshness, HelloBody, MessageType, RamSnapshot,
+    StorageSnapshot,
 };
 use transport::client::{Event, HostClient, Phase, Refusal};
 
@@ -35,6 +36,7 @@ struct State {
     ram: Option<(u64, u64)>,
     storage: Option<[u64; 4]>,
     battery: Option<[u64; 4]>,
+    agents: Option<[u64; 4]>,
     code: Option<u32>,
 }
 
@@ -142,6 +144,12 @@ fn parse_state(rest: &str) -> State {
                 .map(|v| v.parse().unwrap());
             std::array::from_fn(|_| n.next().unwrap())
         }),
+        agents: field("agents").split_once('/').map(|(first, rest)| {
+            let mut n = std::iter::once(first)
+                .chain(rest.split('/'))
+                .map(|v| v.parse().unwrap());
+            std::array::from_fn(|_| n.next().unwrap())
+        }),
         code: field("code").parse().ok(),
     }
 }
@@ -206,7 +214,7 @@ fn first_pairing_needs_touch_then_live_data_flows() {
     assert_eq!(client.phase(), Phase::PairSent);
     assert!(
         client
-            .snapshot(&snapshot(1), None, None, None, None)
+            .snapshot(&snapshot(1), None, None, None, None, None)
             .is_none(),
         "no data before pairing"
     );
@@ -223,7 +231,7 @@ fn first_pairing_needs_touch_then_live_data_flows() {
     assert_eq!(state.phase, OPEN);
 
     let frame = client
-        .snapshot(&snapshot(437), None, None, None, None)
+        .snapshot(&snapshot(437), None, None, None, None, None)
         .unwrap();
     let (_, state) = device.push(&frame);
     assert!(state.seen);
@@ -239,7 +247,7 @@ fn paired_host_reconnects_without_touch_on_a_new_session() {
     deliver(&mut first, &frames);
     let (_, state) = device.push(
         &first
-            .snapshot(&snapshot(300), None, None, None, None)
+            .snapshot(&snapshot(300), None, None, None, None, None)
             .unwrap(),
     );
     assert_eq!(state.cpu, 300);
@@ -254,13 +262,13 @@ fn paired_host_reconnects_without_touch_on_a_new_session() {
     // The previous session's snapshots are rejected; the new one's are not.
     let (_, state) = device.push(
         &first
-            .snapshot(&snapshot(999), None, None, None, None)
+            .snapshot(&snapshot(999), None, None, None, None, None)
             .unwrap(),
     );
     assert_eq!(state.cpu, 300);
     let (_, state) = device.push(
         &second
-            .snapshot(&snapshot(650), None, None, None, None)
+            .snapshot(&snapshot(650), None, None, None, None, None)
             .unwrap(),
     );
     assert_eq!(state.cpu, 650);
@@ -301,7 +309,7 @@ fn a_second_host_is_refused_by_a_paired_device() {
     assert!(events.contains(&Event::Refused(Refusal::NotPairedWithYou)));
     assert!(state.paired);
     assert!(stranger
-        .snapshot(&snapshot(1), None, None, None, None)
+        .snapshot(&snapshot(1), None, None, None, None, None)
         .is_none());
 }
 
@@ -393,7 +401,7 @@ fn a_ram_group_reaches_the_firmware_state_and_may_stop_being_sent() {
         freshness: Freshness::Fresh,
     };
     let frame = client
-        .snapshot(&snapshot(400), Some(&ram), None, None, None)
+        .snapshot(&snapshot(400), Some(&ram), None, None, None, None)
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!((state.cpu, state.ram), (400, Some((8 << 30, 16 << 30))));
@@ -401,7 +409,7 @@ fn a_ram_group_reaches_the_firmware_state_and_may_stop_being_sent() {
     // A later snapshot without the group keeps the last RAM reading (it
     // goes stale on its own clock) while CPU updates.
     let frame = client
-        .snapshot(&snapshot(500), None, None, None, None)
+        .snapshot(&snapshot(500), None, None, None, None, None)
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!((state.cpu, state.ram), (500, Some((8 << 30, 16 << 30))));
@@ -433,7 +441,7 @@ fn a_storage_group_reaches_the_firmware_state_beside_ram() {
         io_age_ms: 0,
     };
     let frame = client
-        .snapshot(&snapshot(400), Some(&ram), Some(&storage), None, None)
+        .snapshot(&snapshot(400), Some(&ram), Some(&storage), None, None, None)
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!(state.ram, Some((8 << 30, 16 << 30)));
@@ -464,7 +472,7 @@ fn a_battery_group_reaches_the_firmware_state_and_absence_is_not_zero() {
         condition_age_ms: 1_800_000,
     };
     let frame = client
-        .snapshot(&snapshot(400), None, None, Some(&battery), None)
+        .snapshot(&snapshot(400), None, None, Some(&battery), None, None)
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!(state.battery, Some([0, 870, 1, 910]));
@@ -483,8 +491,39 @@ fn a_battery_group_reaches_the_firmware_state_and_absence_is_not_zero() {
         condition_age_ms: 0,
     };
     let frame = client
-        .snapshot(&snapshot(500), None, None, Some(&absent), None)
+        .snapshot(&snapshot(500), None, None, Some(&absent), None, None)
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!(state.battery, Some([2, 0, 0, 0]));
+}
+
+#[test]
+fn an_agents_group_reaches_the_firmware_state_and_unavailable_is_not_none_running() {
+    let mut device = Device::spawn();
+    let mut client = HostClient::new(HOST, None, CODE, SESSION_A);
+    handshake(&mut device, &mut client);
+    let (frames, _) = device.command("CONFIRM 1");
+    deliver(&mut client, &frames);
+
+    let agents = AgentsSnapshot {
+        availability: Availability::Available,
+        source_age_ms: 250,
+        state: [0, 1, 0],
+    };
+    let frame = client
+        .snapshot(&snapshot(400), None, None, None, Some(&agents), None)
+        .unwrap();
+    let (_, state) = device.push(&frame);
+    assert_eq!(state.agents, Some([0, 0, 1, 0]));
+
+    let down = AgentsSnapshot {
+        availability: Availability::TemporarilyUnavailable,
+        source_age_ms: 0,
+        state: [0, 0, 0],
+    };
+    let frame = client
+        .snapshot(&snapshot(500), None, None, None, Some(&down), None)
+        .unwrap();
+    let (_, state) = device.push(&frame);
+    assert_eq!(state.agents, Some([3, 0, 0, 0]));
 }

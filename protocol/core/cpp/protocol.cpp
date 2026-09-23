@@ -171,7 +171,8 @@ Error EncodeControlBody(const Envelope &e, std::vector<uint8_t> *cbor) {
 }
 Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
                  const RamSnapshot *ram, const StorageSnapshot *storage,
-                 const BatterySnapshot *battery, std::vector<uint8_t> *cbor) {
+                 const BatterySnapshot *battery,
+                 const AgentsSnapshot *agents, std::vector<uint8_t> *cbor) {
   cbor->clear();
   const uint8_t envelope_fields =
       6 + e.utc_ms.has_value() + e.utc_uncertainty_ms.has_value() +
@@ -189,7 +190,8 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
   UInt(cbor, 0, e.sequence);
   UInt(cbor, 0, 5);
   if (cpu) {
-    Map(cbor, 5 + (ram ? 1 : 0) + (storage ? 1 : 0) + (battery ? 1 : 0));
+    Map(cbor, 5 + (ram ? 1 : 0) + (storage ? 1 : 0) + (battery ? 1 : 0) +
+            (agents ? 1 : 0));
     UInt(cbor, 0, 0);
     UInt(cbor, 0, static_cast<uint8_t>(cpu->availability));
     UInt(cbor, 0, 1);
@@ -254,6 +256,19 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
           battery->cycle_count,
           battery->condition_age_ms};
       for (uint64_t key = 0; key < 10; ++key) {
+        UInt(cbor, 0, key);
+        UInt(cbor, 0, values[key]);
+      }
+    }
+    if (agents) {
+      if (agents->state[0] > 3 || agents->state[1] > 3 || agents->state[2] > 3)
+        return Error::kMalformed;
+      UInt(cbor, 0, 8);
+      Map(cbor, 5);
+      const uint64_t values[5] = {static_cast<uint8_t>(agents->availability),
+                                  agents->source_age_ms, agents->state[0],
+                                  agents->state[1], agents->state[2]};
+      for (uint64_t key = 0; key < 5; ++key) {
         UInt(cbor, 0, key);
         UInt(cbor, 0, values[key]);
       }
@@ -379,7 +394,7 @@ uint32_t Crc32(std::span<const uint8_t> b) {
 }
 Error Encode(const Envelope &e, std::vector<uint8_t> *out) {
   std::vector<uint8_t> c;
-  Error x = EncodeBody(e, nullptr, nullptr, nullptr, nullptr, &c);
+  Error x = EncodeBody(e, nullptr, nullptr, nullptr, nullptr, nullptr, &c);
   if (x != Error::kNone)
     return x;
   out->clear();
@@ -405,8 +420,15 @@ Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
                      const RamSnapshot *ram, const StorageSnapshot *storage,
                      const BatterySnapshot *battery,
                      std::vector<uint8_t> *out) {
+  return EncodeSnapshot(e, cpu, ram, storage, battery, nullptr, out);
+}
+Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
+                     const RamSnapshot *ram, const StorageSnapshot *storage,
+                     const BatterySnapshot *battery,
+                     const AgentsSnapshot *agents,
+                     std::vector<uint8_t> *out) {
   std::vector<uint8_t> c;
-  Error x = EncodeBody(e, &cpu, ram, storage, battery, &c);
+  Error x = EncodeBody(e, &cpu, ram, storage, battery, agents, &c);
   if (x != Error::kNone)
     return x;
   out->clear();
@@ -540,6 +562,40 @@ bool ReadBatteryGroup(std::span<const uint8_t> c, std::size_t *p,
   battery->condition_age_ms = static_cast<uint32_t>(value[9]);
   return true;
 }
+// The Agents group: five required fields, unknown extra keys skipped.
+bool ReadAgentsGroup(std::span<const uint8_t> c, std::size_t *p,
+                     AgentsSnapshot *agents) {
+  uint64_t count;
+  if (!ReadUInt(c, p, 5, &count) || count > 16)
+    return false;
+  bool seen[5] = {};
+  uint64_t value[5] = {};
+  for (uint64_t i = 0; i < count; ++i) {
+    uint64_t key;
+    if (!ReadUInt(c, p, 0, &key))
+      return false;
+    if (key > 4) {
+      if (!Skip(c, p))
+        return false;
+      continue;
+    }
+    if (seen[key] || !ReadUInt(c, p, 0, &value[key]))
+      return false;
+    seen[key] = true;
+  }
+  for (bool present : seen) {
+    if (!present)
+      return false;
+  }
+  if (value[0] > static_cast<uint8_t>(Availability::kError) ||
+      value[1] > UINT32_MAX || value[2] > 3 || value[3] > 3 || value[4] > 3)
+    return false;
+  agents->availability = static_cast<Availability>(value[0]);
+  agents->source_age_ms = static_cast<uint32_t>(value[1]);
+  for (int i = 0; i < kAgentSlots; ++i)
+    agents->state[i] = static_cast<uint8_t>(value[2 + i]);
+  return true;
+}
 Error Decode(std::span<const uint8_t> f, Decoded *r) {
   if (f.size() < 7)
     return Error::kTruncated;
@@ -598,7 +654,7 @@ Error Decode(std::span<const uint8_t> f, Decoded *r) {
         return Error::kMalformed;
       if ((c[p] >> 5) == 5 && d.envelope.type == MessageType::kSnapshot) {
         uint64_t m;
-        if (!ReadUInt(c, &p, 5, &m) || m > 8)
+        if (!ReadUInt(c, &p, 5, &m) || m > 9)
           return Error::kMalformed;
         d.has_cpu = true;
         bool fields[5] = {};
@@ -622,6 +678,12 @@ Error Decode(std::span<const uint8_t> f, Decoded *r) {
             if (d.has_battery || !ReadBatteryGroup(c, &p, &d.battery))
               return Error::kMalformed;
             d.has_battery = true;
+            continue;
+          }
+          if (q == 8) {
+            if (d.has_agents || !ReadAgentsGroup(c, &p, &d.agents))
+              return Error::kMalformed;
+            d.has_agents = true;
             continue;
           }
           if (q > 4) {

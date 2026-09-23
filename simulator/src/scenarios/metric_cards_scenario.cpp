@@ -74,11 +74,13 @@ int RunMetricCards() {
     feed.Push(frame);
   };
 
-  result.Expect(domain::Cards().size() == 4 && std::string(domain::Cards()[0].id) == "cpu" &&
+  result.Expect(domain::Cards().size() == 5 && std::string(domain::Cards()[0].id) == "cpu" &&
                     std::string(domain::Cards()[1].id) == "ram" &&
                     std::string(domain::Cards()[2].id) == "storage" &&
-                    std::string(domain::Cards()[3].id) == "battery",
-                "the registry lists cpu, ram, storage, then battery from card_registry.def");
+                    std::string(domain::Cards()[3].id) == "battery" &&
+                    std::string(domain::Cards()[4].id) == "agents",
+                "the registry lists cpu, ram, storage, battery, then agents from "
+                "card_registry.def");
 
   at(1000, "before any Host data");
   proto::RamSnapshot ram{proto::Availability::kAvailable, 8 * kGiB, 16 * kGiB, 250,

@@ -24,6 +24,12 @@ void DeriveBatteryFreshness(BatteryMetricState* battery, uint64_t now_ms) {
                                      ? protocol::Freshness::kStale
                                      : protocol::Freshness::kFresh;
 }
+void DeriveAgentsFreshness(AgentsMetricState* agents, uint64_t now_ms) {
+  agents->freshness =
+      static_cast<int64_t>(now_ms) - agents->source_time_ms >= static_cast<int64_t>(kAgentsStaleMs)
+          ? protocol::Freshness::kStale
+          : protocol::Freshness::kFresh;
+}
 }  // namespace
 void HostStateReducer::ApplySnapshot(const protocol::Decoded& decoded, uint64_t now_ms,
                                      uint64_t resolved_source_time_ms) {
@@ -80,6 +86,15 @@ void HostStateReducer::ApplySnapshot(const protocol::Decoded& decoded, uint64_t 
                           static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.condition_age_ms)};
     DeriveBatteryFreshness(&state_.battery, now_ms);
   }
+  if (decoded.has_agents) {
+    const auto& g = decoded.agents;
+    state_.agents = {
+        .has_data = true,
+        .availability = g.availability,
+        .source_time_ms = static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.source_age_ms)};
+    for (int i = 0; i < kAgentSlotCount; ++i) state_.agents.state[i] = g.state[i];
+    DeriveAgentsFreshness(&state_.agents, now_ms);
+  }
 }
 void HostStateReducer::Advance(uint64_t now_ms) {
   if (state_.connection == ConnectionState::kIncompatible || !state_.has_seen_host) return;
@@ -94,6 +109,7 @@ void HostStateReducer::Advance(uint64_t now_ms) {
     state_.ram.freshness = protocol::Freshness::kStale;
   if (state_.storage.has_data) DeriveStorageFreshness(&state_.storage, now_ms);
   if (state_.battery.has_data) DeriveBatteryFreshness(&state_.battery, now_ms);
+  if (state_.agents.has_data) DeriveAgentsFreshness(&state_.agents, now_ms);
 }
 void HostStateReducer::MarkIncompatible() { state_.connection = ConnectionState::kIncompatible; }
 void HostStateReducer::CorrectTime() { state_.time_available = true; }

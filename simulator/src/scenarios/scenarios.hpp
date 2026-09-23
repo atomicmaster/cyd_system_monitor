@@ -60,6 +60,12 @@ int RunStorageCards();
 // compared with simulator/scenarios/battery-cards.expected.
 int RunBatteryCards();
 
+// Feeds snapshots with the Agents group through HostFeed and prints the
+// Agents card at each step (no data, none running, Claude running with
+// activity unknown, two running, source unavailable, future busy/idle states,
+// stale, link lost), compared with simulator/scenarios/agents-cards.expected.
+int RunAgentsCards();
+
 // Draws the System shell (status bar plus the registered CPU and RAM cards)
 // and asserts label text, dimming, and RAM's missing-data behaviour. Matches
 // TB03's `./dev run simulator -- system-screen`.

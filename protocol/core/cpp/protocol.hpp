@@ -93,6 +93,17 @@ struct BatterySnapshot {
   uint16_t cycle_count = kBatteryUnknownU16;
   uint32_t condition_age_ms = 0;
 };
+// Agents (TB07): exact same-user process presence for the three supported
+// agents, in fixed slot order [codex, claude, grok]. Each state is 0 not
+// running, 1 running with activity unknown, 2 busy, 3 idle (2 and 3 need an
+// adapter that MVP Hosts do not have). Not kAvailable means all states are 0
+// and the device shows `--`, never "not running". No freshness field.
+constexpr uint8_t kAgentSlots = 3;
+struct AgentsSnapshot {
+  Availability availability = Availability::kTemporarilyUnavailable;
+  uint32_t source_age_ms = 0;
+  uint8_t state[kAgentSlots] = {0, 0, 0};
+};
 struct HelloBody {
   uint8_t supported_major = 1;
   uint8_t supported_minor = 0;
@@ -140,6 +151,8 @@ struct Decoded {
   bool has_storage = false;
   BatterySnapshot battery{};
   bool has_battery = false;
+  AgentsSnapshot agents{};
+  bool has_agents = false;
 };
 
 uint32_t Crc32(std::span<const uint8_t> bytes);
@@ -155,6 +168,11 @@ Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
 Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
                      const RamSnapshot *ram, const StorageSnapshot *storage,
                      const BatterySnapshot *battery,
+                     std::vector<uint8_t> *frame);
+Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
+                     const RamSnapshot *ram, const StorageSnapshot *storage,
+                     const BatterySnapshot *battery,
+                     const AgentsSnapshot *agents,
                      std::vector<uint8_t> *frame);
 Error Decode(std::span<const uint8_t> frame, Decoded *result);
 const char *ErrorName(Error error);

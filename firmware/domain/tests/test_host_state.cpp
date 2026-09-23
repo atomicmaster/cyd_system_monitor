@@ -200,6 +200,45 @@ int main() {
     booted.ApplySnapshot(snapshot(1, 1000, 3 * kHour), 10'000, 0);
     if (booted.state().battery.condition_freshness != proto::Freshness::kStale) return 25;
   }
+  {
+    // Agents freshness comes from the source age: stale 15 s after the sample,
+    // an old sample re-sent is still stale, and one older than device uptime
+    // (just after boot) is stale rather than clamped to "sampled at boot".
+    namespace proto = cyd::protocol;
+    using firmware::domain::HostStateReducer;
+    const auto snapshot = [&](uint32_t seq, uint32_t age) {
+      proto::Envelope env;
+      env.type = proto::MessageType::kSnapshot;
+      env.sequence = seq;
+      const proto::CpuSnapshot c{proto::Availability::kAvailable, 1, 0, proto::Freshness::kFresh,
+                                 0};
+      proto::AgentsSnapshot g;
+      g.availability = proto::Availability::kAvailable;
+      g.source_age_ms = age;
+      g.state[1] = 1;
+      std::vector<uint8_t> frame;
+      proto::EncodeSnapshot(env, c, nullptr, nullptr, nullptr, &g, &frame);
+      proto::Decoded decoded;
+      if (proto::Decode(frame, &decoded) != proto::Error::kNone || !decoded.has_agents)
+        std::abort();
+      return decoded;
+    };
+    HostStateReducer reducer(1);
+    reducer.ApplySnapshot(snapshot(1, 1000), 100'000, 0);
+    const auto& a = reducer.state().agents;
+    if (!a.has_data || a.state[1] != 1 || a.state[0] != 0) return 50;
+    reducer.Advance(113'999);  // sampled at 99,000
+    if (a.freshness != proto::Freshness::kFresh) return 51;
+    reducer.Advance(114'000);
+    if (a.freshness != proto::Freshness::kStale) return 52;
+    reducer.ApplySnapshot(snapshot(2, 16'000), 115'000, 0);  // same old sample re-sent
+    if (a.freshness != proto::Freshness::kStale) return 53;
+    reducer.ApplySnapshot(snapshot(3, 200), 116'000, 0);
+    if (a.freshness != proto::Freshness::kFresh) return 54;
+    HostStateReducer booted(1);
+    booted.ApplySnapshot(snapshot(1, 15'000), 5'000, 0);
+    if (booted.state().agents.freshness != proto::Freshness::kStale) return 55;
+  }
   std::puts("firmware_domain_host_state_tests: ok");
   return 0;
 }

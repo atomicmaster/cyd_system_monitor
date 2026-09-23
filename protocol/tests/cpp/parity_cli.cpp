@@ -78,6 +78,12 @@ std::string Body(const p::Decoded &d) {
           << g.max_capacity_per_mille << ',' << static_cast<int>(g.condition)
           << ',' << g.cycle_count << ',' << g.condition_age_ms;
     }
+    if (d.has_agents) {
+      const auto &g = d.agents;
+      out << ";agents=" << static_cast<int>(g.availability) << ','
+          << g.source_age_ms << ',' << static_cast<int>(g.state[0]) << ','
+          << static_cast<int>(g.state[1]) << ',' << static_cast<int>(g.state[2]);
+    }
   } else if (e.hello) {
     out << static_cast<int>(e.hello->supported_major) << ','
         << static_cast<int>(e.hello->supported_minor) << ','
@@ -116,7 +122,8 @@ std::string Reencode(const p::Decoded &d) {
   const auto error = d.envelope.type == p::MessageType::kSnapshot
                          ? p::EncodeSnapshot(d.envelope, d.cpu, d.has_ram ? &d.ram : nullptr,
                                            d.has_storage ? &d.storage : nullptr,
-                                           d.has_battery ? &d.battery : nullptr, &frame)
+                                           d.has_battery ? &d.battery : nullptr,
+                                           d.has_agents ? &d.agents : nullptr, &frame)
                          : p::Encode(d.envelope, &frame);
   return error == p::Error::kNone ? Hex(frame.data(), frame.size())
                                   : std::string("err ") + p::ErrorName(error);

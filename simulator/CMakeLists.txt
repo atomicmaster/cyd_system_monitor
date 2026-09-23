@@ -49,6 +49,7 @@ add_executable(simulator
   src/scenarios/metric_cards_scenario.cpp
   src/scenarios/storage_cards_scenario.cpp
   src/scenarios/battery_cards_scenario.cpp
+  src/scenarios/agents_cards_scenario.cpp
   src/scenarios/system_screen_scenario.cpp
   src/scenarios/settings_scenario.cpp
   src/scenarios/coverage_scenario.cpp

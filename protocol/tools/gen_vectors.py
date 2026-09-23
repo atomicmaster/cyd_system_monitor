@@ -407,3 +407,85 @@ write("battery-snapshot-v1-noncanonical.hex",
 write("battery-snapshot-v1-duplicate-group.hex",
       frame(envelope(4, with_battery(ram_group(BATTERY), extra_body=[(7, ram_group(BATTERY))]))),
       "Battery group present twice in the snapshot body: malformed")
+
+
+# Agents group (TB07), key 8: availability, source age and three fixed agent
+# state slots [codex, claude, grok]; no freshness field.
+def with_agents(group, extra_body=(), ram=None, storage=None, battery=None):
+    items = [(0, u(0)), (1, u(723)), (2, u(1000)), (3, u(0)), (4, u(4))]
+    if ram is not None:
+        items.append((5, ram))
+    if storage is not None:
+        items.append((6, storage))
+    if battery is not None:
+        items.append((7, battery))
+    items.append((8, group))
+    items += list(extra_body)
+    return uint(5, len(items)) + kv(items)
+
+
+# 0 availability, 1 source age ms, 2 codex, 3 claude, 4 grok
+AGENTS = [(0, u(0)), (1, u(250)), (2, u(0)), (3, u(1)), (4, u(0))]
+
+
+def agents_frame(items, **kw):
+    return frame(envelope(4, with_agents(ram_group(items), **kw)))
+
+
+def agents_replaced(index, item):
+    return AGENTS[:index] + [item] + AGENTS[index + 1:]
+
+
+write("agents-snapshot-v1.hex", agents_frame(AGENTS),
+      "CPU plus Agents group: Claude running with activity unknown, Codex and Grok Build not running (age 250 ms)")
+write("agents-snapshot-v1-none.hex",
+      agents_frame([(0, u(0)), (1, u(0)), (2, u(0)), (3, u(0)), (4, u(0))]),
+      "Agents group with the source available and no agent running")
+write("agents-snapshot-v1-all-running.hex",
+      agents_frame([(0, u(0)), (1, u(1200)), (2, u(1)), (3, u(1)), (4, u(1))]),
+      "Agents group with all three agents running, activity unknown")
+write("agents-snapshot-v1-busy-idle.hex",
+      agents_frame([(0, u(0)), (1, u(300)), (2, u(2)), (3, u(3)), (4, u(1))]),
+      "Agents group with busy (2) and idle (3) states, which only a future adapter supplies")
+write("agents-snapshot-v1-unavailable.hex",
+      agents_frame([(0, u(3)), (1, u(0)), (2, u(0)), (3, u(0)), (4, u(0))]),
+      "Agents source temporarily unavailable: zero states, never 'none running'")
+write("agents-snapshot-v1-max.hex",
+      agents_frame([(0, u(4)), (1, u(0xffffffff)), (2, u(3)), (3, u(3)), (4, u(3))]),
+      "Agents at every maximum: valid, the largest group (16 bytes)")
+write("agents-snapshot-v1-with-groups.hex",
+      frame(envelope(4, with_agents(ram_group(AGENTS), ram=ram_group(RAM), storage=ram_group(STORAGE),
+                                    battery=ram_group(BATTERY)))),
+      "CPU plus the RAM (5), Storage (6), Battery (7) and Agents (8) groups")
+write("agents-snapshot-v1-with-bad-battery.hex",
+      frame(envelope(4, with_agents(ram_group(AGENTS), battery=ram_group(BATTERY[:9])))),
+      "valid Agents group beside a Battery group missing a field: malformed as a whole")
+write("agents-snapshot-v1-bad-state.hex",
+      agents_frame(agents_replaced(3, (3, u(4)))),
+      "Agents state 4 is not a defined value: malformed")
+write("agents-snapshot-v1-bad-availability.hex",
+      agents_frame(agents_replaced(0, (0, u(5)))),
+      "Agents availability 5 is not a defined value: malformed")
+write("agents-snapshot-v1-age-overflow.hex",
+      agents_frame(agents_replaced(1, (1, u(1 << 32)))),
+      "Agents source age above 32 bits: malformed")
+write("agents-snapshot-v1-missing-field.hex", agents_frame(AGENTS[:4]),
+      "Agents group without the grok slot (key 4): malformed")
+write("agents-snapshot-v1-duplicate-key.hex",
+      agents_frame(AGENTS[:3] + [AGENTS[2]] + AGENTS[3:]),
+      "Agents group key 2 twice: malformed")
+write("agents-snapshot-v1-not-a-map.hex",
+      frame(envelope(4, with_agents(uint(2, 3) + b"\x01\x02\x03"))),
+      "Agents group is a byte string, not a field map: malformed")
+write("agents-snapshot-v1-unknown-field.hex",
+      agents_frame(AGENTS + [(5, uint(4, 2) + u(1) + u(2))]),
+      "unknown optional Agents field 5 holding [1, 2]: skipped, snapshot applies")
+write("agents-snapshot-v1-unknown-too-deep.hex",
+      agents_frame(AGENTS + [(5, nest(4))]),
+      "unknown Agents field nested four arrays deep: over the skip limit, malformed")
+write("agents-snapshot-v1-noncanonical.hex",
+      agents_frame(agents_replaced(1, (1, b"\x18\x05"))),
+      "Agents source age encoded with a needless extra byte: non-canonical, malformed")
+write("agents-snapshot-v1-duplicate-group.hex",
+      frame(envelope(4, with_agents(ram_group(AGENTS), extra_body=[(8, ram_group(AGENTS))]))),
+      "Agents group present twice in the snapshot body: malformed")

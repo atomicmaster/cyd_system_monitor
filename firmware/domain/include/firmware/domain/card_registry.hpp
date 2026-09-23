@@ -17,6 +17,7 @@ struct MetricCardView {
   std::string value;  // "62%", "Last 62%", or "--"; a missing value is never "0"
   std::string note;   // availability wording when there is no value, else empty
   bool has_value = false;
+  bool show_bar = true;  // false for a card whose value is not a proportion (Agents)
   bool dimmed = false;
   uint16_t bar_per_mille = 0;  // 0 when there is no value; check has_value
 };

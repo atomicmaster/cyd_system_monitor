@@ -10,7 +10,8 @@
 // After each command: zero or more "OUT <hex>" frames, then one
 // "STATE phase=<n> paired=<0|1> seen=<0|1> cpu=<per-mille> ram=<used>/<total>|-
 // storage=<total>/<avail>/<read>/<write>|-
-// battery=<charge-availability>/<per-mille>/<state>/<max-capacity>|- code=<n|->" line.
+// battery=<charge-availability>/<per-mille>/<state>/<max-capacity>|-
+// agents=<availability>/<codex>/<claude>/<grok>|- code=<n|->" line.
 #include <cstdio>
 #include <iostream>
 #include <sstream>
@@ -103,6 +104,15 @@ int main() {
                   static_cast<unsigned>(state.battery.charge_per_mille),
                   static_cast<unsigned>(state.battery.state),
                   static_cast<unsigned>(state.battery.max_capacity_per_mille));
+    } else {
+      std::printf("-");
+    }
+    std::printf(" agents=");
+    if (state.agents.has_data) {
+      std::printf("%u/%u/%u/%u", static_cast<unsigned>(state.agents.availability),
+                  static_cast<unsigned>(state.agents.state[0]),
+                  static_cast<unsigned>(state.agents.state[1]),
+                  static_cast<unsigned>(state.agents.state[2]));
     } else {
       std::printf("-");
     }

@@ -61,7 +61,7 @@ void MetricCard::Update(const firmware::domain::MetricCardView& view) {
   lv_label_set_text(value_label_, view.value.c_str());
   lv_label_set_text(note_label_, view.note.c_str());
   // No value means no bar: an empty bar would read as a measured zero.
-  if (view.has_value) {
+  if (view.has_value && view.show_bar) {
     lv_obj_remove_flag(bar_, LV_OBJ_FLAG_HIDDEN);
     lv_bar_set_value(bar_, view.bar_per_mille, LV_ANIM_OFF);
   } else {

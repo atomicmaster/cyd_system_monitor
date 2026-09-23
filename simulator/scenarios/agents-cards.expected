@@ -1,0 +1,38 @@
+no Host data yet
+  Agents | -- |  | show_bar=0 | has_value=0 | dimmed=0
+source available, nothing running
+  Agents | None running |  | show_bar=0 | has_value=1 | dimmed=0
+Claude running, no activity source
+  Agents | 1 running | Claude, unknown | show_bar=0 | has_value=1 | dimmed=0
+Codex and Claude running, no activity source
+  Agents | 2 running | Activity unknown | show_bar=0 | has_value=1 | dimmed=0
+all three running, no activity source
+  Agents | 3 running | Activity unknown | show_bar=0 | has_value=1 | dimmed=0
+process listing temporarily unavailable
+  Agents | -- | Unavailable | show_bar=0 | has_value=0 | dimmed=0
+process listing error
+  Agents | -- | Read error | show_bar=0 | has_value=0 | dimmed=0
+future adapter: Claude busy
+  Agents | 1 running | Claude busy | show_bar=0 | has_value=1 | dimmed=0
+future adapter: Grok idle
+  Agents | 1 running | Grok idle | show_bar=0 | has_value=1 | dimmed=0
+future adapter: busy, idle and unknown together
+  Agents | 3 running | 1 busy 1 idle 1 unknown | show_bar=0 | has_value=1 | dimmed=0
+future adapter: one busy, one idle
+  Agents | 2 running | 1 busy 1 idle | show_bar=0 | has_value=1 | dimmed=0
+source sample 14.999 s old: fresh
+  Agents | 1 running | Claude, unknown | show_bar=0 | has_value=1 | dimmed=0
+source sample 15 s old in a new snapshot: stale
+  Agents | Last 1 running | Claude, unknown | show_bar=0 | has_value=1 | dimmed=1
+the same old sample re-sent 9 s later: still stale
+  Agents | Last 1 running | Claude, unknown | show_bar=0 | has_value=1 | dimmed=1
+refreshed sample: nothing running now
+  Agents | None running |  | show_bar=0 | has_value=1 | dimmed=0
+same sample re-sent, 14.2 s old: still fresh
+  Agents | None running |  | show_bar=0 | has_value=1 | dimmed=0
+same sample re-sent, 15.2 s old: stale, retained as Last
+  Agents | Last none running |  | show_bar=0 | has_value=1 | dimmed=1
+last frame 2.9 s ago: still live
+  Agents | 1 running | Claude, unknown | show_bar=0 | has_value=1 | dimmed=0
+35 s without a frame: link stale, retained and dimmed
+  Agents | Last 1 running | Claude, unknown | show_bar=0 | has_value=1 | dimmed=1

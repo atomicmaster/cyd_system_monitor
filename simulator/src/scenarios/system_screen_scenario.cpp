@@ -230,6 +230,80 @@ int RunSystemScreen() {
     result.Expect(variants == 120 && fits,
                   "every Battery value and note variant fits 148 px (fresh and Last)");
   }
+  // Every Agents card text variant (all 64 state combinations, fresh and
+  // "Last", plus each unavailable wording) fits the 148 px of both lines.
+  {
+    size_t agents_index = 0;
+    for (size_t i = 0; i < domain::Cards().size(); ++i) {
+      if (std::string(domain::Cards()[i].id) == "agents") agents_index = i;
+    }
+    bool fits = true;
+    int variants = 0;
+    int widest_value = 0, widest_note = 0;
+    const auto measure = [&](const char* what) {
+      for (lv_obj_t* label :
+           {ui.card(agents_index).value_label(), ui.card(agents_index).note_label()}) {
+        lv_point_t text;
+        lv_text_get_size(&text, lv_label_get_text(label), lv_obj_get_style_text_font(label, 0), 0,
+                         0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        (label == ui.card(agents_index).value_label() ? widest_value : widest_note) =
+            std::max(label == ui.card(agents_index).value_label() ? widest_value : widest_note,
+                     static_cast<int>(text.x));
+        if (text.x > 148) {
+          std::printf("agents text too wide (%d px, %s): %s\n", static_cast<int>(text.x), what,
+                      lv_label_get_text(label));
+          fits = false;
+        }
+      }
+    };
+    for (const uint32_t age : {0u, 20'000u}) {
+      for (uint8_t a = 0; a < 4; ++a) {
+        for (uint8_t b = 0; b < 4; ++b) {
+          for (uint8_t c = 0; c < 4; ++c) {
+            proto::AgentsSnapshot g;
+            g.availability = proto::Availability::kAvailable;
+            g.source_age_ms = age;
+            g.state[0] = a;
+            g.state[1] = b;
+            g.state[2] = c;
+            proto::Envelope envelope;
+            envelope.type = proto::MessageType::kSnapshot;
+            envelope.sequence = static_cast<uint32_t>(1000 + variants);
+            envelope.session = session;
+            const proto::CpuSnapshot cpu{proto::Availability::kAvailable, 480, 0,
+                                         proto::Freshness::kFresh, 0};
+            std::vector<uint8_t> frame;
+            proto::EncodeSnapshot(envelope, cpu, nullptr, nullptr, nullptr, &g, &frame);
+            clock.Set(2'000'000);
+            feed.Push(frame);
+            render(2'000'000);
+            ++variants;
+            measure("states");
+          }
+        }
+      }
+    }
+    for (uint8_t availability = 1; availability <= 4; ++availability) {
+      proto::AgentsSnapshot g;
+      g.availability = static_cast<proto::Availability>(availability);
+      proto::Envelope envelope;
+      envelope.type = proto::MessageType::kSnapshot;
+      envelope.sequence = static_cast<uint32_t>(1000 + variants);
+      envelope.session = session;
+      const proto::CpuSnapshot cpu{proto::Availability::kAvailable, 480, 0,
+                                   proto::Freshness::kFresh, 0};
+      std::vector<uint8_t> frame;
+      proto::EncodeSnapshot(envelope, cpu, nullptr, nullptr, nullptr, &g, &frame);
+      clock.Set(2'000'000);
+      feed.Push(frame);
+      render(2'000'000);
+      ++variants;
+      measure("unavailable");
+    }
+    std::printf("agents widest value %d px, widest note %d px\n", widest_value, widest_note);
+    result.Expect(variants == 132 && fits,
+                  "every Agents value and note variant fits 148 px (fresh and Last)");
+  }
   return result.Finish("simulator system-screen");
 }
 
