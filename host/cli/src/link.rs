@@ -10,8 +10,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use metrics::{Collector, MetricAvailability};
 use platform_macos::cpu::CpuCollector;
 use platform_macos::ram::RamCollector;
+use platform_macos::storage::{StorageCollector, StorageReading};
 use protocol::{
     Availability, CommandOperation, CommandResult, CpuSnapshot, Freshness, RamSnapshot,
+    StorageSnapshot,
 };
 use transport::client::{Event, HostClient, Phase, Refusal};
 use transport::serial::SerialPort;
@@ -142,6 +144,7 @@ impl Link {
     pub fn serve(&mut self) -> Result<(), LinkError> {
         let mut cpu_collector = CpuCollector::new();
         let mut ram_collector = RamCollector::new();
+        let mut storage_collector = StorageCollector::new();
         let epoch = Instant::now();
         let mut next = Instant::now();
         let mut buf = [0u8; 512];
@@ -163,13 +166,23 @@ impl Link {
                 source_age_ms: 0,
                 freshness: Freshness::Fresh,
             };
+            let storage = storage_snapshot(storage_collector.collect(now_ms).value);
             self.client
                 .set_local_offset_minutes(platform_macos::time::local_offset_minutes());
             let frame = self
                 .client
-                .snapshot(&snapshot, Some(&ram), Some(utc_ms()))
+                .snapshot(&snapshot, Some(&ram), storage.as_ref(), Some(utc_ms()))
                 .ok_or(LinkError::Timeout("sending: the link is no longer paired"))?;
             self.port.write_all(&frame)?;
+            if let Some(g) = &storage {
+                println!(
+                    "storage {:.1} / {:.1} GB  read {} B/s  write {} B/s",
+                    (g.total_bytes - g.available_bytes) as f64 / 1e9,
+                    g.total_bytes as f64 / 1e9,
+                    g.read_bytes_per_s,
+                    g.write_bytes_per_s
+                );
+            }
             match (sample.value, ram_sample.value) {
                 (Some(v), Some(r)) => println!(
                     "cpu {:.1}%  ram {:.1} / {:.1} GB",
@@ -239,6 +252,38 @@ fn availability(a: MetricAvailability) -> Availability {
         MetricAvailability::TemporarilyUnavailable => Availability::TemporarilyUnavailable,
         MetricAvailability::Error => Availability::Error,
     }
+}
+
+/// The wire group for one second of storage collection. A half that is not
+/// available carries zero values and its availability; capacity and I/O are
+/// independent.
+fn storage_snapshot(reading: Option<StorageReading>) -> Option<StorageSnapshot> {
+    let reading = reading?;
+    let capacity = reading
+        .capacity
+        .value
+        .filter(|c| c.available_bytes <= c.total_bytes);
+    let io = reading.io.value;
+    Some(StorageSnapshot {
+        capacity_availability: match capacity {
+            Some(_) => Availability::Available,
+            None => match availability(reading.capacity.availability) {
+                Availability::Available => Availability::Error, // no value behind it
+                other => other,
+            },
+        },
+        total_bytes: capacity.map_or(0, |c| c.total_bytes),
+        available_bytes: capacity.map_or(0, |c| c.available_bytes),
+        capacity_age_ms: if capacity.is_some() {
+            reading.capacity_age_ms
+        } else {
+            0
+        },
+        io_availability: availability(reading.io.availability),
+        read_bytes_per_s: io.map_or(0, |r| r.read_bytes_per_s),
+        write_bytes_per_s: io.map_or(0, |r| r.write_bytes_per_s),
+        io_age_ms: 0,
+    })
 }
 
 fn protocol_error(error: protocol::Error) -> LinkError {

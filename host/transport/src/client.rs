@@ -5,9 +5,9 @@
 //! events out, so it is testable without a serial port.
 
 use protocol::{
-    decode, encode_control, encode_snapshot, CommandBody, CommandOperation, CommandResult,
+    decode, encode_control, encode_groups, CommandBody, CommandOperation, CommandResult,
     ControlBody, CpuSnapshot, Envelope, Error, FrameStream, HelloBody, Message, MessageType,
-    PairBody, RamSnapshot,
+    PairBody, RamSnapshot, StorageSnapshot,
 };
 
 const ZERO: [u8; 16] = [0; 16];
@@ -224,6 +224,7 @@ impl HostClient {
         &mut self,
         cpu: &CpuSnapshot,
         ram: Option<&RamSnapshot>,
+        storage: Option<&StorageSnapshot>,
         utc_ms: Option<u64>,
     ) -> Option<Vec<u8>> {
         if self.phase != Phase::Live {
@@ -232,7 +233,7 @@ impl HostClient {
         let sequence = self.next_sequence();
         let mut envelope = self.envelope(MessageType::Snapshot, self.session, sequence);
         envelope.utc_ms = utc_ms;
-        encode_snapshot(&envelope, cpu, ram).ok()
+        encode_groups(&envelope, cpu, ram, storage).ok()
     }
 
     /// A command frame and the identity to match its reply against. Reusing
@@ -285,14 +286,14 @@ mod tests {
             configuration_revision: 0,
         };
         client.set_local_offset_minutes(Some(60)); // daylight saving changed
-        let frame = client.snapshot(&cpu, None, Some(1)).unwrap();
+        let frame = client.snapshot(&cpu, None, None, Some(1)).unwrap();
         let Ok(Message::Snapshot(envelope, _)) = decode(&frame) else {
             panic!("snapshot")
         };
         assert_eq!(envelope.local_offset_minutes, Some(60));
 
         client.set_local_offset_minutes(None);
-        let frame = client.snapshot(&cpu, None, Some(2)).unwrap();
+        let frame = client.snapshot(&cpu, None, None, Some(2)).unwrap();
         let Ok(Message::Snapshot(envelope, _)) = decode(&frame) else {
             panic!("snapshot")
         };

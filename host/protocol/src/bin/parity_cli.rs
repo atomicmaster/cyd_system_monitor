@@ -71,6 +71,19 @@ fn summary(result: &Result<Decoded, String>) -> String {
                     r.freshness as u8
                 );
             }
+            if let Some(g) = &snapshot.storage {
+                text += &format!(
+                    ";storage={},{},{},{},{},{},{},{}",
+                    g.capacity_availability as u8,
+                    g.total_bytes,
+                    g.available_bytes,
+                    g.capacity_age_ms,
+                    g.io_availability as u8,
+                    g.read_bytes_per_s,
+                    g.write_bytes_per_s,
+                    g.io_age_ms
+                );
+            }
             (e, text)
         }
         Ok(Message::Control(e, body)) => (
@@ -118,7 +131,7 @@ fn summary(result: &Result<Decoded, String>) -> String {
 
 fn reencode(decoded: &Decoded) -> String {
     let result = match decoded {
-        Message::Snapshot(e, s) => encode_snapshot(e, &s.cpu, s.ram.as_ref()),
+        Message::Snapshot(e, s) => encode_groups(e, &s.cpu, s.ram.as_ref(), s.storage.as_ref()),
         Message::Control(e, b) => encode_control(e, b),
     };
     match result {

@@ -61,6 +61,14 @@ std::string Body(const p::Decoded &d) {
           << d.ram.used_bytes << ',' << d.ram.total_bytes << ','
           << d.ram.source_age_ms << ',' << static_cast<int>(d.ram.freshness);
     }
+    if (d.has_storage) {
+      const auto &g = d.storage;
+      out << ";storage=" << static_cast<int>(g.capacity_availability) << ','
+          << g.total_bytes << ',' << g.available_bytes << ','
+          << g.capacity_age_ms << ',' << static_cast<int>(g.io_availability)
+          << ',' << g.read_bytes_per_s << ',' << g.write_bytes_per_s << ','
+          << g.io_age_ms;
+    }
   } else if (e.hello) {
     out << static_cast<int>(e.hello->supported_major) << ','
         << static_cast<int>(e.hello->supported_minor) << ','
@@ -97,7 +105,8 @@ std::string Summary(p::Error error, const p::Decoded &d) {
 std::string Reencode(const p::Decoded &d) {
   std::vector<uint8_t> frame;
   const auto error = d.envelope.type == p::MessageType::kSnapshot
-                         ? p::EncodeSnapshot(d.envelope, d.cpu, d.has_ram ? &d.ram : nullptr, &frame)
+                         ? p::EncodeSnapshot(d.envelope, d.cpu, d.has_ram ? &d.ram : nullptr,
+                                           d.has_storage ? &d.storage : nullptr, &frame)
                          : p::Encode(d.envelope, &frame);
   return error == p::Error::kNone ? Hex(frame.data(), frame.size())
                                   : std::string("err ") + p::ErrorName(error);

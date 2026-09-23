@@ -80,7 +80,7 @@ The dependency column repeats each ticket's prerequisite links for navigation. E
 | [TB02](TB02.md) | Pair a Mac and display live CPU over USB | Executable | [TB01](TB01.md) |
 | [C02](C02.md) | Publish the extension interfaces for parallel feature slices | Executable | [TB02](TB02.md) |
 | [TB03](TB03.md) | Display Physical RAM Occupied with truthful availability | Outline | [C02](C02.md) |
-| [TB04](TB04.md) | Display root storage capacity and disk activity | Outline | [C02](C02.md) |
+| [TB04](TB04.md) | Display root storage capacity and disk activity | Executable | [C02](C02.md) |
 | [TB05](TB05.md) | Display network rates and Host WiFi coverage | Outline | [C02](C02.md) |
 | [TB06](TB06.md) | Display battery charge and condition without blocking collection | Outline | [C02](C02.md) |
 | [TB07](TB07.md) | Show supported agent process presence | Outline | [C02](C02.md) |

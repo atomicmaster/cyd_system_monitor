@@ -50,6 +50,7 @@ snapshot still travels in one frame of at most 2,048 bytes.
 | Key | Group | Fields |
 | --- | --- | --- |
 | 5 | RAM | `0` availability (0-4), `1` used bytes, `2` total bytes, `3` source age ms (32-bit), `4` freshness (0 fresh, 1 stale). Used is at most total; both are canonical unsigned 64-bit. |
+| 6 | Storage | `0` capacity availability (0-4), `1` total bytes, `2` available bytes, `3` capacity source age ms (32-bit), `4` I/O availability (0-4), `5` read bytes/s, `6` write bytes/s, `7` I/O source age ms (32-bit). All eight required; byte counts and rates are canonical unsigned 64-bit; available is at most total. When an availability is not 0 its value fields are 0 (the device shows `--`). Capacity and I/O availability are independent. No freshness field: the device derives freshness from the ages. At most 58 bytes (key, map header, eight keys, two availabilities, four 9-byte counts, two 5-byte ages). |
 
 Physical RAM Occupied is physical total minus free pages
 (`docs/host-metrics.md`); the group carries the two byte counts, never a

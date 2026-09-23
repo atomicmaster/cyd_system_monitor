@@ -74,13 +74,17 @@ int main(int argc, char** argv) {
   if (scenario == "metric-cards") {
     return simulator::scenarios::RunMetricCards();
   }
+  if (scenario == "storage-cards") {
+    return simulator::scenarios::RunStorageCards();
+  }
   if (scenario == "coverage") {
     return simulator::scenarios::RunCoverage();
   }
   std::fprintf(stderr,
                "usage: simulator <scenario>\n"
                "  scenario: smoke | display-smoke | calibration | peripherals | capacity | "
-               "protocol-replay | cpu-lifecycle | cpu-replay | metric-cards | system-screen | "
+               "protocol-replay | cpu-lifecycle | cpu-replay | metric-cards | storage-cards | "
+               "system-screen | "
                "settings | coverage\n");
   return 2;
 }

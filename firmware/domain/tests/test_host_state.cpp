@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 #include "firmware/domain/cpu_view.hpp"
@@ -83,6 +84,52 @@ int main() {
     if (firmware::domain::MakeCpuView(firmware::domain::HostStateReducer(1).state(), 0).clock !=
         "Time unavailable")
       return 10;
+  }
+  {
+    // Storage freshness is derived on the device: I/O 3 s after receipt,
+    // capacity 90 s after its *source* sample. A new snapshot that re-carries
+    // an old capacity sample (large age) must not make capacity fresh.
+    namespace proto = cyd::protocol;
+    using firmware::domain::HostStateReducer;
+    const auto snapshot = [&](uint32_t seq, uint32_t capacity_age, uint32_t io_age) {
+      proto::Envelope env;
+      env.type = proto::MessageType::kSnapshot;
+      env.sequence = seq;
+      const proto::CpuSnapshot c{proto::Availability::kAvailable, 1, 0, proto::Freshness::kFresh,
+                                 0};
+      const proto::StorageSnapshot g{proto::Availability::kAvailable, 500, 200, capacity_age,
+                                     proto::Availability::kAvailable, 10,  20,  io_age};
+      std::vector<uint8_t> frame;
+      proto::EncodeSnapshot(env, c, nullptr, &g, &frame);
+      proto::Decoded decoded;
+      if (proto::Decode(frame, &decoded) != proto::Error::kNone || !decoded.has_storage)
+        std::abort();
+      return decoded;
+    };
+    HostStateReducer storage(1);
+    storage.ApplySnapshot(snapshot(1, 1000, 0), 100'000, 0);
+    const auto& s = storage.state().storage;
+    if (!s.has_data || s.total_bytes != 500 || s.available_bytes != 200) return 11;
+    storage.Advance(102'900);
+    if (s.io_freshness != proto::Freshness::kFresh) return 12;
+    storage.Advance(103'000);
+    if (s.io_freshness != proto::Freshness::kStale ||
+        s.capacity_freshness != proto::Freshness::kFresh)
+      return 13;
+    // Capacity sampled at 99,000; stale once 90 s old, i.e. at 189,000.
+    storage.Advance(188'999);
+    if (s.capacity_freshness != proto::Freshness::kFresh) return 14;
+    storage.Advance(189'000);
+    if (s.capacity_freshness != proto::Freshness::kStale) return 15;
+    // A new snapshot with fresh I/O that still carries the same old capacity
+    // sample (its age is now 91 s): I/O is live again, capacity stays stale.
+    storage.ApplySnapshot(snapshot(2, 91'000, 0), 190'000, 0);
+    if (s.io_freshness != proto::Freshness::kFresh ||
+        s.capacity_freshness != proto::Freshness::kStale)
+      return 16;
+    // A genuinely refreshed capacity sample becomes fresh.
+    storage.ApplySnapshot(snapshot(3, 500, 0), 191'000, 0);
+    if (s.capacity_freshness != proto::Freshness::kFresh) return 17;
   }
   std::puts("firmware_domain_host_state_tests: ok");
   return 0;

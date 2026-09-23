@@ -8,7 +8,8 @@
 //   TICK <ms>      advance the clock, then tick
 //   UNPAIR         local unpair
 // After each command: zero or more "OUT <hex>" frames, then one
-// "STATE phase=<n> paired=<0|1> seen=<0|1> cpu=<per-mille> ram=<used>/<total>|- code=<n|->" line.
+// "STATE phase=<n> paired=<0|1> seen=<0|1> cpu=<per-mille> ram=<used>/<total>|-
+// storage=<total>/<avail>/<read>/<write>|- code=<n|->" line.
 #include <cstdio>
 #include <iostream>
 #include <sstream>
@@ -83,6 +84,15 @@ int main() {
     if (state.ram.has_data) {
       std::printf("%llu/%llu", static_cast<unsigned long long>(state.ram.used_bytes),
                   static_cast<unsigned long long>(state.ram.total_bytes));
+    } else {
+      std::printf("-");
+    }
+    std::printf(" storage=");
+    if (state.storage.has_data) {
+      std::printf("%llu/%llu/%llu/%llu", static_cast<unsigned long long>(state.storage.total_bytes),
+                  static_cast<unsigned long long>(state.storage.available_bytes),
+                  static_cast<unsigned long long>(state.storage.read_bytes_per_s),
+                  static_cast<unsigned long long>(state.storage.write_bytes_per_s));
     } else {
       std::printf("-");
     }

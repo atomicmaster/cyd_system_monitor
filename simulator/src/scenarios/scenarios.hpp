@@ -48,6 +48,12 @@ int RunCpuReplay();
 // C02's `./dev run simulator -- metric-cards`.
 int RunMetricCards();
 
+// Feeds snapshots with the Storage group through HostFeed and prints the
+// Storage card at each step (no data, live, I/O unavailable with capacity
+// live, counter reset, capacity stale while I/O is live, everything stale),
+// compared with simulator/scenarios/storage-cards.expected.
+int RunStorageCards();
+
 // Draws the System shell (status bar plus the registered CPU and RAM cards)
 // and asserts label text, dimming, and RAM's missing-data behaviour. Matches
 // TB03's `./dev run simulator -- system-screen`.

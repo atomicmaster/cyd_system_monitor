@@ -228,3 +228,84 @@ write("cpu-snapshot-v1-offset-too-wide.hex", frame(envelope(4, CPU, [(8, u(1 << 
       "local UTC offset wider than 32 bits: malformed")
 write("hello-v1-offset.hex", frame(envelope(1, HELLO, [(8, u(1740))])),
       "Hello carrying a local UTC offset in its envelope: accepted")
+
+
+# Storage group (TB04), key 6: capacity and disk I/O with independent
+# availability and source ages; no freshness field (the device derives it).
+def with_storage(group, extra_body=(), ram=None):
+    items = [(0, u(0)), (1, u(723)), (2, u(1000)), (3, u(0)), (4, u(4))]
+    if ram is not None:
+        items.append((5, ram))
+    items.append((6, group))
+    items += list(extra_body)
+    return uint(5, len(items)) + kv(items)
+
+
+U64 = (1 << 64) - 1
+# 0 cap avail, 1 total, 2 available, 3 cap age, 4 io avail, 5 read/s, 6 write/s, 7 io age
+STORAGE = [(0, u(0)), (1, u(500 * 10**9)), (2, u(200 * 10**9)), (3, u(1500)),
+           (4, u(0)), (5, u(12_300_000)), (6, u(4_500_000)), (7, u(250))]
+
+
+def storage_frame(items, **kw):
+    return frame(envelope(4, with_storage(ram_group(items), **kw)))
+
+
+def replaced(index, item):
+    return STORAGE[:index] + [item] + STORAGE[index + 1:]
+
+
+write("storage-snapshot-v1.hex", storage_frame(STORAGE),
+      "CPU plus Storage group: 200 GB free of 500 GB (age 1.5 s), read 12.3 MB/s, write 4.5 MB/s (age 250 ms)")
+write("storage-snapshot-v1-max-u64.hex",
+      storage_frame([(0, u(0)), (1, u(U64)), (2, u(U64)), (3, u(0xffffffff)), (4, u(0)),
+                     (5, u(U64)), (6, u(U64)), (7, u(0xffffffff))]),
+      "Storage at every 64-bit and 32-bit maximum: valid, the largest group (58 bytes)")
+write("storage-snapshot-v1-io-unavailable.hex",
+      storage_frame([(0, u(0)), (1, u(500 * 10**9)), (2, u(200 * 10**9)), (3, u(1500)),
+                     (4, u(3)), (5, u(0)), (6, u(0)), (7, u(0))]),
+      "Storage capacity available while I/O is temporarily unavailable (zero values): valid")
+write("storage-snapshot-v1-available-exceeds-total.hex",
+      storage_frame(replaced(2, (2, u(501 * 10**9)))),
+      "Storage available larger than total: malformed")
+write("storage-snapshot-v1-missing-field.hex", storage_frame(STORAGE[:7]),
+      "Storage group without I/O source age (key 7): malformed")
+write("storage-snapshot-v1-duplicate-key.hex",
+      storage_frame(STORAGE[:2] + [STORAGE[1]] + STORAGE[2:]),
+      "Storage group key 1 twice: malformed")
+write("storage-snapshot-v1-not-a-map.hex",
+      frame(envelope(4, with_storage(uint(2, 3) + b"\x01\x02\x03"))),
+      "Storage group is a byte string, not a field map: malformed")
+write("storage-snapshot-v1-unknown-field.hex",
+      storage_frame(STORAGE + [(8, uint(4, 2) + u(1) + u(2))]),
+      "unknown optional Storage field 8 holding [1, 2]: skipped, snapshot applies")
+write("storage-snapshot-v1-unknown-too-deep.hex",
+      storage_frame(STORAGE + [(8, nest(4))]),
+      "unknown Storage field nested four arrays deep: over the skip limit, malformed")
+write("storage-snapshot-v1-unknown-nested.hex",
+      storage_frame(STORAGE + [(8, nest(3))]),
+      "unknown Storage field nested three arrays deep: depth counts from the value, accepted")
+write("storage-snapshot-v1-bad-capacity-availability.hex",
+      storage_frame(replaced(0, (0, u(5)))),
+      "Storage capacity availability 5 is not a defined value: malformed")
+write("storage-snapshot-v1-bad-io-availability.hex",
+      storage_frame(replaced(4, (4, u(5)))),
+      "Storage I/O availability 5 is not a defined value: malformed")
+write("storage-snapshot-v1-capacity-age-overflow.hex",
+      storage_frame(replaced(3, (3, u(1 << 32)))),
+      "Storage capacity source age above 32 bits: malformed")
+write("storage-snapshot-v1-io-age-overflow.hex",
+      storage_frame(replaced(7, (7, u(1 << 32)))),
+      "Storage I/O source age above 32 bits: malformed")
+write("storage-snapshot-v1-noncanonical.hex",
+      storage_frame(replaced(5, (5, b"\x18\x05"))),
+      "Storage read rate encoded with a needless extra byte: non-canonical, malformed")
+write("storage-snapshot-v1-duplicate-group.hex",
+      frame(envelope(4, with_storage(ram_group(STORAGE), extra_body=[(6, ram_group(STORAGE))]))),
+      "Storage group present twice in the snapshot body: malformed")
+write("storage-snapshot-v1-with-ram.hex",
+      frame(envelope(4, with_storage(ram_group(STORAGE), ram=ram_group(RAM)))),
+      "CPU plus both the RAM (key 5) and Storage (key 6) groups")
+write("storage-snapshot-v1-with-bad-ram.hex",
+      frame(envelope(4, with_storage(ram_group(STORAGE), ram=ram_group(RAM[:4])))),
+      "valid Storage group beside a RAM group missing a field: malformed as a whole")

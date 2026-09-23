@@ -62,11 +62,25 @@ pub struct RamSnapshot {
     pub source_age_ms: u32,
     pub freshness: Freshness,
 }
+/// Root storage group (TB04): capacity and disk I/O, independent availability
+/// and source ages, no freshness field (the device derives it from the ages).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageSnapshot {
+    pub capacity_availability: Availability,
+    pub total_bytes: u64,
+    pub available_bytes: u64,
+    pub capacity_age_ms: u32,
+    pub io_availability: Availability,
+    pub read_bytes_per_s: u64,
+    pub write_bytes_per_s: u64,
+    pub io_age_ms: u32,
+}
 /// A complete snapshot: CPU plus each optional metric group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
     pub cpu: CpuSnapshot,
     pub ram: Option<RamSnapshot>,
+    pub storage: Option<StorageSnapshot>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuSnapshot {
@@ -274,7 +288,19 @@ pub fn encode_snapshot(
     cpu: &CpuSnapshot,
     ram: Option<&RamSnapshot>,
 ) -> Result<Vec<u8>, Error> {
-    if ram.is_some_and(|r| r.used_bytes > r.total_bytes) {
+    encode_groups(envelope, cpu, ram, None)
+}
+/// Encodes a complete snapshot with every optional group given (RAM at key 5,
+/// Storage at key 6).
+pub fn encode_groups(
+    envelope: &Envelope,
+    cpu: &CpuSnapshot,
+    ram: Option<&RamSnapshot>,
+    storage: Option<&StorageSnapshot>,
+) -> Result<Vec<u8>, Error> {
+    if ram.is_some_and(|r| r.used_bytes > r.total_bytes)
+        || storage.is_some_and(|s| s.available_bytes > s.total_bytes)
+    {
         return Err(Error::Malformed);
     }
     let mut c = vec![
@@ -296,7 +322,7 @@ pub fn encode_snapshot(
     uint(&mut c, 0, 4);
     uint(&mut c, 0, envelope.sequence as u64);
     uint(&mut c, 0, 5);
-    c.push(0xa5 + ram.is_some() as u8);
+    c.push(0xa5 + ram.is_some() as u8 + storage.is_some() as u8);
     for (k, v) in [
         (0, cpu.availability as u64),
         (1, cpu.utilization_per_mille as u64),
@@ -316,6 +342,23 @@ pub fn encode_snapshot(
             (2, ram.total_bytes),
             (3, ram.source_age_ms as u64),
             (4, ram.freshness as u64),
+        ] {
+            uint(&mut c, 0, k);
+            uint(&mut c, 0, v)
+        }
+    }
+    if let Some(storage) = storage {
+        uint(&mut c, 0, 6);
+        c.push(0xa8);
+        for (k, v) in [
+            (0, storage.capacity_availability as u64),
+            (1, storage.total_bytes),
+            (2, storage.available_bytes),
+            (3, storage.capacity_age_ms as u64),
+            (4, storage.io_availability as u64),
+            (5, storage.read_bytes_per_s),
+            (6, storage.write_bytes_per_s),
+            (7, storage.io_age_ms as u64),
         ] {
             uint(&mut c, 0, k);
             uint(&mut c, 0, v)
@@ -445,6 +488,7 @@ fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
     }
     let mut cpu = [None; 5];
     let mut ram = None;
+    let mut storage = None;
     for _ in 0..count {
         let q = read_uint(body, &mut p, 0).ok_or(Error::Malformed)? as usize;
         if q == 5 {
@@ -452,6 +496,13 @@ fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
                 return Err(Error::Malformed);
             }
             ram = Some(decode_ram_group(body, &mut p)?);
+            continue;
+        }
+        if q == 6 {
+            if storage.is_some() {
+                return Err(Error::Malformed);
+            }
+            storage = Some(decode_storage_group(body, &mut p)?);
             continue;
         }
         // Unknown optional fields are skipped like any other bounded value.
@@ -493,7 +544,7 @@ fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
         },
         configuration_revision: field(4)? as u32,
     };
-    Ok(Snapshot { cpu, ram })
+    Ok(Snapshot { cpu, ram, storage })
 }
 
 /// A metric group: five required fields, unknown extra keys skipped, values
@@ -540,7 +591,54 @@ fn decode_ram_group(input: &[u8], p: &mut usize) -> Result<RamSnapshot, Error> {
     })
 }
 
-/// Decodes a complete snapshot frame: CPU plus any RAM group.
+fn availability_from(value: u64) -> Result<Availability, Error> {
+    match value {
+        0 => Ok(Availability::Available),
+        1 => Ok(Availability::Unsupported),
+        2 => Ok(Availability::Absent),
+        3 => Ok(Availability::TemporarilyUnavailable),
+        4 => Ok(Availability::Error),
+        _ => Err(Error::Malformed),
+    }
+}
+
+/// The Storage group: eight required fields, unknown extra keys skipped
+/// (mirrors the C++ `ReadStorageGroup`).
+fn decode_storage_group(input: &[u8], p: &mut usize) -> Result<StorageSnapshot, Error> {
+    let count = read_uint(input, p, 5).ok_or(Error::Malformed)?;
+    if count > 16 {
+        return Err(Error::Malformed);
+    }
+    let mut value = [None; 8];
+    for _ in 0..count {
+        let key = read_uint(input, p, 0).ok_or(Error::Malformed)? as usize;
+        if key > 7 {
+            skip_value(input, p, 0)?;
+            continue;
+        }
+        if value[key].is_some() {
+            return Err(Error::Malformed);
+        }
+        value[key] = Some(read_uint(input, p, 0).ok_or(Error::Malformed)?);
+    }
+    let field = |k: usize| value[k].ok_or(Error::Malformed);
+    let all: Vec<u64> = (0..8).map(field).collect::<Result<_, _>>()?;
+    if all[2] > all[1] || all[3] > u32::MAX.into() || all[7] > u32::MAX.into() {
+        return Err(Error::Malformed);
+    }
+    Ok(StorageSnapshot {
+        capacity_availability: availability_from(all[0])?,
+        total_bytes: all[1],
+        available_bytes: all[2],
+        capacity_age_ms: all[3] as u32,
+        io_availability: availability_from(all[4])?,
+        read_bytes_per_s: all[5],
+        write_bytes_per_s: all[6],
+        io_age_ms: all[7] as u32,
+    })
+}
+
+/// Decodes a complete snapshot frame: CPU plus any metric groups.
 pub fn decode_snapshot(frame: &[u8]) -> Result<(Envelope, Snapshot), Error> {
     let (envelope, body) = parse_envelope(frame)?;
     if envelope.kind != MessageType::Snapshot {
@@ -1327,6 +1425,54 @@ mod tests {
         };
         assert_eq!(
             encode_snapshot(&envelope, &snapshot.cpu, Some(&bad)),
+            Err(Error::Malformed)
+        );
+    }
+
+    #[test]
+    fn storage_group_round_trips_beside_ram_and_stays_within_its_bound() {
+        let (envelope, golden) = decode_snapshot(&fixture("storage-snapshot-v1.hex")).unwrap();
+        let g = golden.storage.clone().expect("storage group");
+        assert_eq!(
+            (g.total_bytes, g.available_bytes),
+            (500_000_000_000, 200_000_000_000)
+        );
+        assert_eq!(
+            (g.read_bytes_per_s, g.write_bytes_per_s),
+            (12_300_000, 4_500_000)
+        );
+        assert_eq!((g.capacity_age_ms, g.io_age_ms), (1500, 250));
+        assert_eq!(golden.ram, None);
+        assert_eq!(
+            encode_groups(&envelope, &golden.cpu, None, Some(&g)).unwrap(),
+            fixture("storage-snapshot-v1.hex")
+        );
+        let (envelope, both) =
+            decode_snapshot(&fixture("storage-snapshot-v1-with-ram.hex")).unwrap();
+        assert!(both.ram.is_some() && both.storage.is_some());
+        assert_eq!(
+            encode_groups(
+                &envelope,
+                &both.cpu,
+                both.ram.as_ref(),
+                both.storage.as_ref()
+            )
+            .unwrap(),
+            fixture("storage-snapshot-v1-with-ram.hex")
+        );
+        // The largest group: every count at its maximum, well under the frame limit.
+        let max = fixture("storage-snapshot-v1-max-u64.hex");
+        assert!(max.len() < 2048);
+        let (envelope, snap) = decode_snapshot(&max).unwrap();
+        let without = encode_groups(&envelope, &snap.cpu, None, None).unwrap();
+        // key + map header + eight keys + 2 availabilities + 4 x 9 + 2 x 5 = 58 bytes
+        assert_eq!(max.len() - without.len(), 58);
+        let bad = StorageSnapshot {
+            available_bytes: g.total_bytes + 1,
+            ..g
+        };
+        assert_eq!(
+            encode_groups(&envelope, &snap.cpu, None, Some(&bad)),
             Err(Error::Malformed)
         );
     }

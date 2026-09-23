@@ -7,3 +7,4 @@
 // else that is shared.
 CYD_CARD(cpu, MakeCpuCard)
 CYD_CARD(ram, MakeRamCard)
+CYD_CARD(storage, MakeStorageCard)

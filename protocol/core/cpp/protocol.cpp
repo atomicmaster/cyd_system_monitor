@@ -170,7 +170,8 @@ Error EncodeControlBody(const Envelope &e, std::vector<uint8_t> *cbor) {
   }
 }
 Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
-                 const RamSnapshot *ram, std::vector<uint8_t> *cbor) {
+                 const RamSnapshot *ram, const StorageSnapshot *storage,
+                 std::vector<uint8_t> *cbor) {
   cbor->clear();
   const uint8_t envelope_fields =
       6 + e.utc_ms.has_value() + e.utc_uncertainty_ms.has_value() +
@@ -188,7 +189,7 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
   UInt(cbor, 0, e.sequence);
   UInt(cbor, 0, 5);
   if (cpu) {
-    Map(cbor, ram ? 6 : 5);
+    Map(cbor, 5 + (ram ? 1 : 0) + (storage ? 1 : 0));
     UInt(cbor, 0, 0);
     UInt(cbor, 0, static_cast<uint8_t>(cpu->availability));
     UInt(cbor, 0, 1);
@@ -214,6 +215,25 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
       UInt(cbor, 0, ram->source_age_ms);
       UInt(cbor, 0, 4);
       UInt(cbor, 0, static_cast<uint8_t>(ram->freshness));
+    }
+    if (storage) {
+      if (storage->available_bytes > storage->total_bytes)
+        return Error::kMalformed;
+      UInt(cbor, 0, 6);
+      Map(cbor, 8);
+      const uint64_t values[8] = {
+          static_cast<uint8_t>(storage->capacity_availability),
+          storage->total_bytes,
+          storage->available_bytes,
+          storage->capacity_age_ms,
+          static_cast<uint8_t>(storage->io_availability),
+          storage->read_bytes_per_s,
+          storage->write_bytes_per_s,
+          storage->io_age_ms};
+      for (uint64_t key = 0; key < 8; ++key) {
+        UInt(cbor, 0, key);
+        UInt(cbor, 0, values[key]);
+      }
     }
   } else {
     const Error error = EncodeControlBody(e, cbor);
@@ -336,7 +356,7 @@ uint32_t Crc32(std::span<const uint8_t> b) {
 }
 Error Encode(const Envelope &e, std::vector<uint8_t> *out) {
   std::vector<uint8_t> c;
-  Error x = EncodeBody(e, nullptr, nullptr, &c);
+  Error x = EncodeBody(e, nullptr, nullptr, nullptr, &c);
   if (x != Error::kNone)
     return x;
   out->clear();
@@ -351,8 +371,13 @@ Error Encode(const Envelope &e, std::vector<uint8_t> *out) {
 }
 Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
                      const RamSnapshot *ram, std::vector<uint8_t> *out) {
+  return EncodeSnapshot(e, cpu, ram, nullptr, out);
+}
+Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
+                     const RamSnapshot *ram, const StorageSnapshot *storage,
+                     std::vector<uint8_t> *out) {
   std::vector<uint8_t> c;
-  Error x = EncodeBody(e, &cpu, ram, &c);
+  Error x = EncodeBody(e, &cpu, ram, storage, &c);
   if (x != Error::kNone)
     return x;
   out->clear();
@@ -402,6 +427,45 @@ bool ReadRamGroup(std::span<const uint8_t> c, std::size_t *p, RamSnapshot *ram) 
   ram->total_bytes = value[2];
   ram->source_age_ms = static_cast<uint32_t>(value[3]);
   ram->freshness = static_cast<Freshness>(value[4]);
+  return true;
+}
+// The Storage group: eight required fields, unknown extra keys skipped.
+bool ReadStorageGroup(std::span<const uint8_t> c, std::size_t *p,
+                      StorageSnapshot *storage) {
+  uint64_t count;
+  if (!ReadUInt(c, p, 5, &count) || count > 16)
+    return false;
+  bool seen[8] = {};
+  uint64_t value[8] = {};
+  for (uint64_t i = 0; i < count; ++i) {
+    uint64_t key;
+    if (!ReadUInt(c, p, 0, &key))
+      return false;
+    if (key > 7) {
+      if (!Skip(c, p))
+        return false;
+      continue;
+    }
+    if (seen[key] || !ReadUInt(c, p, 0, &value[key]))
+      return false;
+    seen[key] = true;
+  }
+  for (bool present : seen) {
+    if (!present)
+      return false;
+  }
+  const uint64_t max_availability = static_cast<uint8_t>(Availability::kError);
+  if (value[0] > max_availability || value[4] > max_availability ||
+      value[2] > value[1] || value[3] > UINT32_MAX || value[7] > UINT32_MAX)
+    return false;
+  storage->capacity_availability = static_cast<Availability>(value[0]);
+  storage->total_bytes = value[1];
+  storage->available_bytes = value[2];
+  storage->capacity_age_ms = static_cast<uint32_t>(value[3]);
+  storage->io_availability = static_cast<Availability>(value[4]);
+  storage->read_bytes_per_s = value[5];
+  storage->write_bytes_per_s = value[6];
+  storage->io_age_ms = static_cast<uint32_t>(value[7]);
   return true;
 }
 Error Decode(std::span<const uint8_t> f, Decoded *r) {
@@ -474,6 +538,12 @@ Error Decode(std::span<const uint8_t> f, Decoded *r) {
             if (d.has_ram || !ReadRamGroup(c, &p, &d.ram))
               return Error::kMalformed;
             d.has_ram = true;
+            continue;
+          }
+          if (q == 6) {
+            if (d.has_storage || !ReadStorageGroup(c, &p, &d.storage))
+              return Error::kMalformed;
+            d.has_storage = true;
             continue;
           }
           if (q > 4) {

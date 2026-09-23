@@ -64,6 +64,19 @@ struct RamSnapshot {
   uint32_t source_age_ms = 0;
   Freshness freshness = Freshness::kFresh;
 };
+// Root storage (TB04): capacity and disk I/O with independent availability and
+// their own source ages. No freshness field: the device derives freshness from
+// the age. When an availability is not kAvailable its value fields are 0.
+struct StorageSnapshot {
+  Availability capacity_availability = Availability::kTemporarilyUnavailable;
+  uint64_t total_bytes = 0;
+  uint64_t available_bytes = 0;
+  uint32_t capacity_age_ms = 0;
+  Availability io_availability = Availability::kTemporarilyUnavailable;
+  uint64_t read_bytes_per_s = 0;
+  uint64_t write_bytes_per_s = 0;
+  uint32_t io_age_ms = 0;
+};
 struct HelloBody {
   uint8_t supported_major = 1;
   uint8_t supported_minor = 0;
@@ -107,6 +120,8 @@ struct Decoded {
   // the sender did not include them.
   RamSnapshot ram{};
   bool has_ram = false;
+  StorageSnapshot storage{};
+  bool has_storage = false;
 };
 
 uint32_t Crc32(std::span<const uint8_t> bytes);
@@ -116,6 +131,9 @@ Error EncodeCpuSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
 // A complete snapshot: CPU plus each optional metric group that is non-null.
 Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
                      const RamSnapshot *ram, std::vector<uint8_t> *frame);
+Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
+                     const RamSnapshot *ram, const StorageSnapshot *storage,
+                     std::vector<uint8_t> *frame);
 Error Decode(std::span<const uint8_t> frame, Decoded *result);
 const char *ErrorName(Error error);
 

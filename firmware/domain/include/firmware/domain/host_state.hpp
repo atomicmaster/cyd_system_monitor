@@ -32,10 +32,31 @@ struct RamMetricState {
   uint64_t source_time_ms = 0;
   uint64_t received_at_ms = 0;
 };
+// Root storage (TB04): capacity and disk I/O, each with its own availability
+// and source time. The wire carries no freshness; the device derives it here:
+// I/O is stale 3 s after it was received, capacity 90 s after its *source*
+// sample (received time minus the reported age), so a new snapshot that
+// re-carries an old capacity sample does not make it fresh.
+constexpr uint64_t kStorageIoStaleMs = 3000;
+constexpr uint64_t kStorageCapacityStaleMs = 90000;
+struct StorageMetricState {
+  bool has_data = false;
+  protocol::Availability capacity_availability = protocol::Availability::kTemporarilyUnavailable;
+  protocol::Freshness capacity_freshness = protocol::Freshness::kFresh;
+  uint64_t total_bytes = 0;
+  uint64_t available_bytes = 0;
+  uint64_t capacity_source_time_ms = 0;
+  protocol::Availability io_availability = protocol::Availability::kTemporarilyUnavailable;
+  protocol::Freshness io_freshness = protocol::Freshness::kFresh;
+  uint64_t read_bytes_per_s = 0;
+  uint64_t write_bytes_per_s = 0;
+  uint64_t io_received_at_ms = 0;
+};
 struct HostState {
   ConnectionState connection = ConnectionState::kNegotiating;
   HostMetricState cpu{};
   RamMetricState ram{};
+  StorageMetricState storage{};
   uint64_t host_last_seen_ms = 0;
   bool has_seen_host = false;  // false on cold boot: last-seen is unknown, not zero
   bool time_available = false;

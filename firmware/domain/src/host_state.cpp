@@ -2,6 +2,16 @@
 #include "firmware/domain/host_state.hpp"
 
 namespace firmware::domain {
+namespace {
+void DeriveStorageFreshness(StorageMetricState* storage, uint64_t now_ms) {
+  storage->io_freshness = now_ms - storage->io_received_at_ms >= kStorageIoStaleMs
+                              ? protocol::Freshness::kStale
+                              : protocol::Freshness::kFresh;
+  storage->capacity_freshness = now_ms - storage->capacity_source_time_ms >= kStorageCapacityStaleMs
+                                    ? protocol::Freshness::kStale
+                                    : protocol::Freshness::kFresh;
+}
+}  // namespace
 void HostStateReducer::ApplySnapshot(const protocol::Decoded& decoded, uint64_t now_ms,
                                      uint64_t resolved_source_time_ms) {
   if (!decoded.has_cpu) return;
@@ -24,6 +34,21 @@ void HostStateReducer::ApplySnapshot(const protocol::Decoded& decoded, uint64_t 
                       now_ms >= decoded.ram.source_age_ms ? now_ms - decoded.ram.source_age_ms : 0,
                   .received_at_ms = now_ms};
   }
+  if (decoded.has_storage) {
+    const auto& g = decoded.storage;
+    state_.storage = {
+        .has_data = true,
+        .capacity_availability = g.capacity_availability,
+        .total_bytes = g.total_bytes,
+        .available_bytes = g.available_bytes,
+        .capacity_source_time_ms = now_ms >= g.capacity_age_ms ? now_ms - g.capacity_age_ms : 0,
+        .io_availability = g.io_availability,
+        .read_bytes_per_s = g.read_bytes_per_s,
+        .write_bytes_per_s = g.write_bytes_per_s,
+        // The I/O sample is at most io_age_ms old when received.
+        .io_received_at_ms = now_ms >= g.io_age_ms ? now_ms - g.io_age_ms : 0};
+    DeriveStorageFreshness(&state_.storage, now_ms);
+  }
 }
 void HostStateReducer::Advance(uint64_t now_ms) {
   if (state_.connection == ConnectionState::kIncompatible || !state_.has_seen_host) return;
@@ -36,6 +61,7 @@ void HostStateReducer::Advance(uint64_t now_ms) {
   }
   if (state_.ram.has_data && now_ms - state_.ram.received_at_ms >= 3000)
     state_.ram.freshness = protocol::Freshness::kStale;
+  if (state_.storage.has_data) DeriveStorageFreshness(&state_.storage, now_ms);
 }
 void HostStateReducer::MarkIncompatible() { state_.connection = ConnectionState::kIncompatible; }
 void HostStateReducer::CorrectTime() { state_.time_available = true; }

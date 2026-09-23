@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: CC0-1.0
+# Storage at every 64-bit and 32-bit maximum: valid, the largest group (58 bytes)
+0069a60001010002040350000102030405060708090a0b0c0d0e0f040105a60000011902d3021903e80300040406a80000011bffffffffffffffff021bffffffffffffffff031affffffff0400051bffffffffffffffff061bffffffffffffffff071affffffff056bfebd
