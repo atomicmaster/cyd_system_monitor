@@ -9,7 +9,8 @@
 //   UNPAIR         local unpair
 // After each command: zero or more "OUT <hex>" frames, then one
 // "STATE phase=<n> paired=<0|1> seen=<0|1> cpu=<per-mille> ram=<used>/<total>|-
-// storage=<total>/<avail>/<read>/<write>|- code=<n|->" line.
+// storage=<total>/<avail>/<read>/<write>|-
+// battery=<charge-availability>/<per-mille>/<state>/<max-capacity>|- code=<n|->" line.
 #include <cstdio>
 #include <iostream>
 #include <sstream>
@@ -93,6 +94,15 @@ int main() {
                   static_cast<unsigned long long>(state.storage.available_bytes),
                   static_cast<unsigned long long>(state.storage.read_bytes_per_s),
                   static_cast<unsigned long long>(state.storage.write_bytes_per_s));
+    } else {
+      std::printf("-");
+    }
+    std::printf(" battery=");
+    if (state.battery.has_data) {
+      std::printf("%u/%u/%u/%u", static_cast<unsigned>(state.battery.charge_availability),
+                  static_cast<unsigned>(state.battery.charge_per_mille),
+                  static_cast<unsigned>(state.battery.state),
+                  static_cast<unsigned>(state.battery.max_capacity_per_mille));
     } else {
       std::printf("-");
     }

@@ -1,0 +1,16 @@
+{
+  "SPPowerDataType": [
+    {
+      "_name": "sppower_information",
+      "AC Power": {
+        "Current Power Source": "TRUE"
+      }
+    },
+    {
+      "_name": "sppower_ac_charger_information",
+      "sppower_battery_charger_connected": "TRUE",
+      "sppower_battery_is_charging": "FALSE",
+      "sppower_ac_charger_watts": "94"
+    }
+  ]
+}

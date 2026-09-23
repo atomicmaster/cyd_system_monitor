@@ -4,6 +4,7 @@
 //! management (see `docs/macos-components.md`). Concrete collectors are
 //! added by their tracer tickets, each behind `metrics::MetricSample`.
 
+pub mod battery;
 pub mod cpu;
 pub mod ram;
 pub mod storage;

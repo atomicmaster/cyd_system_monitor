@@ -75,12 +75,34 @@ pub struct StorageSnapshot {
     pub write_bytes_per_s: u64,
     pub io_age_ms: u32,
 }
+/// Battery group (TB06): charge/state and condition, independent availability
+/// and source ages, no freshness field (the device derives it from the ages).
+/// A half that is not available carries 0 (or the unknown sentinel) values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatterySnapshot {
+    pub charge_availability: Availability,
+    pub charge_per_mille: u16,
+    /// 0 unknown, 1 charging, 2 discharging, 3 charged, 4 on AC not charging.
+    pub state: u8,
+    /// Minutes to empty or full; `BATTERY_UNKNOWN_U16` when not reported.
+    pub time_remaining_min: u16,
+    pub charge_age_ms: u32,
+    pub condition_availability: Availability,
+    pub max_capacity_per_mille: u16,
+    /// 0 unknown, 1 normal, 2 service recommended, 3 poor/replace.
+    pub condition: u8,
+    /// Charge cycles; `BATTERY_UNKNOWN_U16` when not reported.
+    pub cycle_count: u16,
+    pub condition_age_ms: u32,
+}
+pub const BATTERY_UNKNOWN_U16: u16 = 0xFFFF;
 /// A complete snapshot: CPU plus each optional metric group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
     pub cpu: CpuSnapshot,
     pub ram: Option<RamSnapshot>,
     pub storage: Option<StorageSnapshot>,
+    pub battery: Option<BatterySnapshot>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuSnapshot {
@@ -288,18 +310,25 @@ pub fn encode_snapshot(
     cpu: &CpuSnapshot,
     ram: Option<&RamSnapshot>,
 ) -> Result<Vec<u8>, Error> {
-    encode_groups(envelope, cpu, ram, None)
+    encode_groups(envelope, cpu, ram, None, None)
 }
 /// Encodes a complete snapshot with every optional group given (RAM at key 5,
-/// Storage at key 6).
+/// Storage at key 6, Battery at key 7).
 pub fn encode_groups(
     envelope: &Envelope,
     cpu: &CpuSnapshot,
     ram: Option<&RamSnapshot>,
     storage: Option<&StorageSnapshot>,
+    battery: Option<&BatterySnapshot>,
 ) -> Result<Vec<u8>, Error> {
     if ram.is_some_and(|r| r.used_bytes > r.total_bytes)
         || storage.is_some_and(|s| s.available_bytes > s.total_bytes)
+        || battery.is_some_and(|b| {
+            b.charge_per_mille > 1000
+                || b.max_capacity_per_mille > 1000
+                || b.state > 4
+                || b.condition > 3
+        })
     {
         return Err(Error::Malformed);
     }
@@ -322,7 +351,7 @@ pub fn encode_groups(
     uint(&mut c, 0, 4);
     uint(&mut c, 0, envelope.sequence as u64);
     uint(&mut c, 0, 5);
-    c.push(0xa5 + ram.is_some() as u8 + storage.is_some() as u8);
+    c.push(0xa5 + ram.is_some() as u8 + storage.is_some() as u8 + battery.is_some() as u8);
     for (k, v) in [
         (0, cpu.availability as u64),
         (1, cpu.utilization_per_mille as u64),
@@ -359,6 +388,25 @@ pub fn encode_groups(
             (5, storage.read_bytes_per_s),
             (6, storage.write_bytes_per_s),
             (7, storage.io_age_ms as u64),
+        ] {
+            uint(&mut c, 0, k);
+            uint(&mut c, 0, v)
+        }
+    }
+    if let Some(battery) = battery {
+        uint(&mut c, 0, 7);
+        c.push(0xaa);
+        for (k, v) in [
+            (0, battery.charge_availability as u64),
+            (1, battery.charge_per_mille as u64),
+            (2, battery.state as u64),
+            (3, battery.time_remaining_min as u64),
+            (4, battery.charge_age_ms as u64),
+            (5, battery.condition_availability as u64),
+            (6, battery.max_capacity_per_mille as u64),
+            (7, battery.condition as u64),
+            (8, battery.cycle_count as u64),
+            (9, battery.condition_age_ms as u64),
         ] {
             uint(&mut c, 0, k);
             uint(&mut c, 0, v)
@@ -489,6 +537,7 @@ fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
     let mut cpu = [None; 5];
     let mut ram = None;
     let mut storage = None;
+    let mut battery = None;
     for _ in 0..count {
         let q = read_uint(body, &mut p, 0).ok_or(Error::Malformed)? as usize;
         if q == 5 {
@@ -503,6 +552,13 @@ fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
                 return Err(Error::Malformed);
             }
             storage = Some(decode_storage_group(body, &mut p)?);
+            continue;
+        }
+        if q == 7 {
+            if battery.is_some() {
+                return Err(Error::Malformed);
+            }
+            battery = Some(decode_battery_group(body, &mut p)?);
             continue;
         }
         // Unknown optional fields are skipped like any other bounded value.
@@ -544,7 +600,12 @@ fn decode_cpu_body(body: &[u8]) -> Result<Snapshot, Error> {
         },
         configuration_revision: field(4)? as u32,
     };
-    Ok(Snapshot { cpu, ram, storage })
+    Ok(Snapshot {
+        cpu,
+        ram,
+        storage,
+        battery,
+    })
 }
 
 /// A metric group: five required fields, unknown extra keys skipped, values
@@ -635,6 +696,55 @@ fn decode_storage_group(input: &[u8], p: &mut usize) -> Result<StorageSnapshot, 
         read_bytes_per_s: all[5],
         write_bytes_per_s: all[6],
         io_age_ms: all[7] as u32,
+    })
+}
+
+/// The Battery group: ten required fields, unknown extra keys skipped
+/// (mirrors the C++ `ReadBatteryGroup`).
+fn decode_battery_group(input: &[u8], p: &mut usize) -> Result<BatterySnapshot, Error> {
+    let count = read_uint(input, p, 5).ok_or(Error::Malformed)?;
+    if count > 16 {
+        return Err(Error::Malformed);
+    }
+    let mut value = [None; 10];
+    for _ in 0..count {
+        let key = read_uint(input, p, 0).ok_or(Error::Malformed)? as usize;
+        if key > 9 {
+            skip_value(input, p, 0)?;
+            continue;
+        }
+        if value[key].is_some() {
+            return Err(Error::Malformed);
+        }
+        value[key] = Some(read_uint(input, p, 0).ok_or(Error::Malformed)?);
+    }
+    let all: Vec<u64> = (0..10)
+        .map(|k| value[k].ok_or(Error::Malformed))
+        .collect::<Result<_, _>>()?;
+    let max32 = u64::from(u32::MAX);
+    let max16 = u64::from(u16::MAX);
+    if all[1] > 1000
+        || all[2] > 4
+        || all[3] > max16
+        || all[4] > max32
+        || all[6] > 1000
+        || all[7] > 3
+        || all[8] > max16
+        || all[9] > max32
+    {
+        return Err(Error::Malformed);
+    }
+    Ok(BatterySnapshot {
+        charge_availability: availability_from(all[0])?,
+        charge_per_mille: all[1] as u16,
+        state: all[2] as u8,
+        time_remaining_min: all[3] as u16,
+        charge_age_ms: all[4] as u32,
+        condition_availability: availability_from(all[5])?,
+        max_capacity_per_mille: all[6] as u16,
+        condition: all[7] as u8,
+        cycle_count: all[8] as u16,
+        condition_age_ms: all[9] as u32,
     })
 }
 
@@ -1444,7 +1554,7 @@ mod tests {
         assert_eq!((g.capacity_age_ms, g.io_age_ms), (1500, 250));
         assert_eq!(golden.ram, None);
         assert_eq!(
-            encode_groups(&envelope, &golden.cpu, None, Some(&g)).unwrap(),
+            encode_groups(&envelope, &golden.cpu, None, Some(&g), None).unwrap(),
             fixture("storage-snapshot-v1.hex")
         );
         let (envelope, both) =
@@ -1455,7 +1565,8 @@ mod tests {
                 &envelope,
                 &both.cpu,
                 both.ram.as_ref(),
-                both.storage.as_ref()
+                both.storage.as_ref(),
+                None
             )
             .unwrap(),
             fixture("storage-snapshot-v1-with-ram.hex")
@@ -1464,7 +1575,7 @@ mod tests {
         let max = fixture("storage-snapshot-v1-max-u64.hex");
         assert!(max.len() < 2048);
         let (envelope, snap) = decode_snapshot(&max).unwrap();
-        let without = encode_groups(&envelope, &snap.cpu, None, None).unwrap();
+        let without = encode_groups(&envelope, &snap.cpu, None, None, None).unwrap();
         // key + map header + eight keys + 2 availabilities + 4 x 9 + 2 x 5 = 58 bytes
         assert_eq!(max.len() - without.len(), 58);
         let bad = StorageSnapshot {
@@ -1472,7 +1583,62 @@ mod tests {
             ..g
         };
         assert_eq!(
-            encode_groups(&envelope, &snap.cpu, None, Some(&bad)),
+            encode_groups(&envelope, &snap.cpu, None, Some(&bad), None),
+            Err(Error::Malformed)
+        );
+    }
+
+    #[test]
+    fn battery_group_round_trips_and_stays_within_its_bound() {
+        let (envelope, golden) = decode_snapshot(&fixture("battery-snapshot-v1.hex")).unwrap();
+        let g = golden.battery.clone().expect("battery group");
+        assert_eq!(
+            (g.charge_availability, g.charge_per_mille, g.state),
+            (Availability::Available, 870, 1)
+        );
+        assert_eq!((g.time_remaining_min, g.charge_age_ms), (95, 250));
+        assert_eq!(
+            (g.max_capacity_per_mille, g.condition, g.cycle_count),
+            (910, 1, 312)
+        );
+        assert_eq!(g.condition_age_ms, 1_800_000);
+        assert_eq!(
+            encode_groups(&envelope, &golden.cpu, None, None, Some(&g)).unwrap(),
+            fixture("battery-snapshot-v1.hex")
+        );
+        let (envelope, all) =
+            decode_snapshot(&fixture("battery-snapshot-v1-with-groups.hex")).unwrap();
+        assert!(all.ram.is_some() && all.storage.is_some() && all.battery.is_some());
+        assert_eq!(
+            encode_groups(
+                &envelope,
+                &all.cpu,
+                all.ram.as_ref(),
+                all.storage.as_ref(),
+                all.battery.as_ref()
+            )
+            .unwrap(),
+            fixture("battery-snapshot-v1-with-groups.hex")
+        );
+        // Batteryless host: explicitly absent, never a zero charge.
+        let (_, none) = decode_snapshot(&fixture("battery-snapshot-v1-absent.hex")).unwrap();
+        let absent = none.battery.unwrap();
+        assert_eq!(absent.charge_availability, Availability::Absent);
+        assert_eq!(absent.condition_availability, Availability::Absent);
+        // The largest group: every value at its maximum, under the 64-byte budget.
+        let max = fixture("battery-snapshot-v1-max.hex");
+        assert!(max.len() < 2048);
+        let (envelope, snap) = decode_snapshot(&max).unwrap();
+        let without = encode_groups(&envelope, &snap.cpu, None, None, None).unwrap();
+        // key + map header + ten keys + 4 availability/state/condition bytes
+        // + 4 x 3-byte (per-mille, sentinels) + 2 x 5-byte ages = 38 bytes
+        assert_eq!(max.len() - without.len(), 38);
+        let bad = BatterySnapshot {
+            charge_per_mille: 1001,
+            ..snap.battery.clone().unwrap()
+        };
+        assert_eq!(
+            encode_groups(&envelope, &snap.cpu, None, None, Some(&bad)),
             Err(Error::Malformed)
         );
     }

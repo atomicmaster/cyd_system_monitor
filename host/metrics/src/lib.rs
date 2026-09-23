@@ -8,6 +8,8 @@
 //! missing value never collapses into a measured zero (see
 //! `docs/host-metrics.md`).
 
+pub mod battery;
+
 /// Whether a Host Metric's current value can be trusted, independent of
 /// how fresh it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

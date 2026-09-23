@@ -309,3 +309,101 @@ write("storage-snapshot-v1-with-ram.hex",
 write("storage-snapshot-v1-with-bad-ram.hex",
       frame(envelope(4, with_storage(ram_group(STORAGE), ram=ram_group(RAM[:4])))),
       "valid Storage group beside a RAM group missing a field: malformed as a whole")
+
+
+# Battery group (TB06), key 7: charge/state and condition halves with
+# independent availability and source ages; no freshness field.
+def with_battery(group, extra_body=(), ram=None, storage=None):
+    items = [(0, u(0)), (1, u(723)), (2, u(1000)), (3, u(0)), (4, u(4))]
+    if ram is not None:
+        items.append((5, ram))
+    if storage is not None:
+        items.append((6, storage))
+    items.append((7, group))
+    items += list(extra_body)
+    return uint(5, len(items)) + kv(items)
+
+
+# 0 charge avail, 1 charge per-mille, 2 state, 3 minutes remaining, 4 charge age,
+# 5 condition avail, 6 max capacity per-mille, 7 condition, 8 cycles, 9 condition age
+BATTERY = [(0, u(0)), (1, u(870)), (2, u(1)), (3, u(95)), (4, u(250)),
+           (5, u(0)), (6, u(910)), (7, u(1)), (8, u(312)), (9, u(1_800_000))]
+BATTERY_ABSENT = [(0, u(2)), (1, u(0)), (2, u(0)), (3, u(0xFFFF)), (4, u(0)),
+                  (5, u(2)), (6, u(0)), (7, u(0)), (8, u(0xFFFF)), (9, u(0))]
+
+
+def battery_frame(items, **kw):
+    return frame(envelope(4, with_battery(ram_group(items), **kw)))
+
+
+def battery_replaced(index, item):
+    return BATTERY[:index] + [item] + BATTERY[index + 1:]
+
+
+write("battery-snapshot-v1.hex", battery_frame(BATTERY),
+      "CPU plus Battery group: 87% charging, 95 min to full (age 250 ms); health 91% normal, 312 cycles (age 30 min)")
+write("battery-snapshot-v1-absent.hex", battery_frame(BATTERY_ABSENT),
+      "Battery group on a batteryless host: charge and condition both Absent, zero/unknown values")
+write("battery-snapshot-v1-condition-unavailable.hex",
+      battery_frame(BATTERY[:5] + [(5, u(3)), (6, u(0)), (7, u(0)), (8, u(0xFFFF)), (9, u(0))]),
+      "Battery charge available while the condition source is temporarily unavailable: valid")
+write("battery-snapshot-v1-max.hex",
+      battery_frame([(0, u(4)), (1, u(1000)), (2, u(4)), (3, u(0xFFFF)), (4, u(0xffffffff)),
+                     (5, u(4)), (6, u(1000)), (7, u(3)), (8, u(0xFFFF)), (9, u(0xffffffff))]),
+      "Battery at every maximum: valid, the largest group (38 bytes)")
+write("battery-snapshot-v1-with-groups.hex",
+      frame(envelope(4, with_battery(ram_group(BATTERY), ram=ram_group(RAM), storage=ram_group(STORAGE)))),
+      "CPU plus the RAM (5), Storage (6) and Battery (7) groups")
+write("battery-snapshot-v1-with-bad-storage.hex",
+      frame(envelope(4, with_battery(ram_group(BATTERY), storage=ram_group(STORAGE[:7])))),
+      "valid Battery group beside a Storage group missing a field: malformed as a whole")
+write("battery-snapshot-v1-charge-over-1000.hex",
+      battery_frame(battery_replaced(1, (1, u(1001)))),
+      "Battery charge above 1000 per-mille: malformed")
+write("battery-snapshot-v1-capacity-over-1000.hex",
+      battery_frame(battery_replaced(6, (6, u(1001)))),
+      "Battery maximum capacity above 1000 per-mille: malformed")
+write("battery-snapshot-v1-bad-state.hex",
+      battery_frame(battery_replaced(2, (2, u(5)))),
+      "Battery state 5 is not a defined value: malformed")
+write("battery-snapshot-v1-bad-condition.hex",
+      battery_frame(battery_replaced(7, (7, u(4)))),
+      "Battery condition 4 is not a defined value: malformed")
+write("battery-snapshot-v1-time-over-16-bits.hex",
+      battery_frame(battery_replaced(3, (3, u(0x10000)))),
+      "Battery time remaining above 16 bits: malformed")
+write("battery-snapshot-v1-cycles-over-16-bits.hex",
+      battery_frame(battery_replaced(8, (8, u(0x10000)))),
+      "Battery cycle count above 16 bits: malformed")
+write("battery-snapshot-v1-bad-charge-availability.hex",
+      battery_frame(battery_replaced(0, (0, u(5)))),
+      "Battery charge availability 5 is not a defined value: malformed")
+write("battery-snapshot-v1-bad-condition-availability.hex",
+      battery_frame(battery_replaced(5, (5, u(5)))),
+      "Battery condition availability 5 is not a defined value: malformed")
+write("battery-snapshot-v1-charge-age-overflow.hex",
+      battery_frame(battery_replaced(4, (4, u(1 << 32)))),
+      "Battery charge source age above 32 bits: malformed")
+write("battery-snapshot-v1-condition-age-overflow.hex",
+      battery_frame(battery_replaced(9, (9, u(1 << 32)))),
+      "Battery condition source age above 32 bits: malformed")
+write("battery-snapshot-v1-missing-field.hex", battery_frame(BATTERY[:9]),
+      "Battery group without condition source age (key 9): malformed")
+write("battery-snapshot-v1-duplicate-key.hex",
+      battery_frame(BATTERY[:2] + [BATTERY[1]] + BATTERY[2:]),
+      "Battery group key 1 twice: malformed")
+write("battery-snapshot-v1-not-a-map.hex",
+      frame(envelope(4, with_battery(uint(2, 3) + b"\x01\x02\x03"))),
+      "Battery group is a byte string, not a field map: malformed")
+write("battery-snapshot-v1-unknown-field.hex",
+      battery_frame(BATTERY + [(10, uint(4, 2) + u(1) + u(2))]),
+      "unknown optional Battery field 10 holding [1, 2]: skipped, snapshot applies")
+write("battery-snapshot-v1-unknown-too-deep.hex",
+      battery_frame(BATTERY + [(10, nest(4))]),
+      "unknown Battery field nested four arrays deep: over the skip limit, malformed")
+write("battery-snapshot-v1-noncanonical.hex",
+      battery_frame(battery_replaced(1, (1, b"\x18\x05"))),
+      "Battery charge encoded with a needless extra byte: non-canonical, malformed")
+write("battery-snapshot-v1-duplicate-group.hex",
+      frame(envelope(4, with_battery(ram_group(BATTERY), extra_body=[(7, ram_group(BATTERY))]))),
+      "Battery group present twice in the snapshot body: malformed")

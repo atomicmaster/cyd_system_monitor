@@ -54,6 +54,12 @@ int RunMetricCards();
 // compared with simulator/scenarios/storage-cards.expected.
 int RunStorageCards();
 
+// Feeds snapshots with the Battery group through HostFeed and prints the
+// Battery card at each step (no data, charging, discharging, absent, condition
+// unavailable or stale while charge is live, charge error, everything stale),
+// compared with simulator/scenarios/battery-cards.expected.
+int RunBatteryCards();
+
 // Draws the System shell (status bar plus the registered CPU and RAM cards)
 // and asserts label text, dimming, and RAM's missing-data behaviour. Matches
 // TB03's `./dev run simulator -- system-screen`.

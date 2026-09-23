@@ -4,12 +4,25 @@
 namespace firmware::domain {
 namespace {
 void DeriveStorageFreshness(StorageMetricState* storage, uint64_t now_ms) {
-  storage->io_freshness = now_ms - storage->io_received_at_ms >= kStorageIoStaleMs
-                              ? protocol::Freshness::kStale
-                              : protocol::Freshness::kFresh;
-  storage->capacity_freshness = now_ms - storage->capacity_source_time_ms >= kStorageCapacityStaleMs
-                                    ? protocol::Freshness::kStale
-                                    : protocol::Freshness::kFresh;
+  const auto now = static_cast<int64_t>(now_ms);
+  storage->io_freshness =
+      now - storage->io_received_at_ms >= static_cast<int64_t>(kStorageIoStaleMs)
+          ? protocol::Freshness::kStale
+          : protocol::Freshness::kFresh;
+  storage->capacity_freshness =
+      now - storage->capacity_source_time_ms >= static_cast<int64_t>(kStorageCapacityStaleMs)
+          ? protocol::Freshness::kStale
+          : protocol::Freshness::kFresh;
+}
+void DeriveBatteryFreshness(BatteryMetricState* battery, uint64_t now_ms) {
+  battery->charge_freshness = static_cast<int64_t>(now_ms) - battery->charge_source_time_ms >=
+                                      static_cast<int64_t>(kBatteryChargeStaleMs)
+                                  ? protocol::Freshness::kStale
+                                  : protocol::Freshness::kFresh;
+  battery->condition_freshness = static_cast<int64_t>(now_ms) - battery->condition_source_time_ms >=
+                                         static_cast<int64_t>(kBatteryConditionStaleMs)
+                                     ? protocol::Freshness::kStale
+                                     : protocol::Freshness::kFresh;
 }
 }  // namespace
 void HostStateReducer::ApplySnapshot(const protocol::Decoded& decoded, uint64_t now_ms,
@@ -41,13 +54,31 @@ void HostStateReducer::ApplySnapshot(const protocol::Decoded& decoded, uint64_t 
         .capacity_availability = g.capacity_availability,
         .total_bytes = g.total_bytes,
         .available_bytes = g.available_bytes,
-        .capacity_source_time_ms = now_ms >= g.capacity_age_ms ? now_ms - g.capacity_age_ms : 0,
+        .capacity_source_time_ms =
+            static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.capacity_age_ms),
         .io_availability = g.io_availability,
         .read_bytes_per_s = g.read_bytes_per_s,
         .write_bytes_per_s = g.write_bytes_per_s,
         // The I/O sample is at most io_age_ms old when received.
-        .io_received_at_ms = now_ms >= g.io_age_ms ? now_ms - g.io_age_ms : 0};
+        .io_received_at_ms = static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.io_age_ms)};
     DeriveStorageFreshness(&state_.storage, now_ms);
+  }
+  if (decoded.has_battery) {
+    const auto& g = decoded.battery;
+    state_.battery = {.has_data = true,
+                      .charge_availability = g.charge_availability,
+                      .charge_per_mille = g.charge_per_mille,
+                      .state = g.state,
+                      .time_remaining_min = g.time_remaining_min,
+                      .charge_source_time_ms =
+                          static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.charge_age_ms),
+                      .condition_availability = g.condition_availability,
+                      .max_capacity_per_mille = g.max_capacity_per_mille,
+                      .condition = g.condition,
+                      .cycle_count = g.cycle_count,
+                      .condition_source_time_ms =
+                          static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.condition_age_ms)};
+    DeriveBatteryFreshness(&state_.battery, now_ms);
   }
 }
 void HostStateReducer::Advance(uint64_t now_ms) {
@@ -62,6 +93,7 @@ void HostStateReducer::Advance(uint64_t now_ms) {
   if (state_.ram.has_data && now_ms - state_.ram.received_at_ms >= 3000)
     state_.ram.freshness = protocol::Freshness::kStale;
   if (state_.storage.has_data) DeriveStorageFreshness(&state_.storage, now_ms);
+  if (state_.battery.has_data) DeriveBatteryFreshness(&state_.battery, now_ms);
 }
 void HostStateReducer::MarkIncompatible() { state_.connection = ConnectionState::kIncompatible; }
 void HostStateReducer::CorrectTime() { state_.time_available = true; }

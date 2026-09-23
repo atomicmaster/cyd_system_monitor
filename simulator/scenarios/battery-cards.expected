@@ -1,0 +1,40 @@
+no Host data yet
+  Battery | -- |  | bar=0 | has_value=0 | dimmed=0
+live charging: 87%, health 91% Normal
+  Battery | 87% Charging | Health 91% Normal | bar=870 | has_value=1 | dimmed=0
+discharging 64% with 95 min remaining
+  Battery | 64% Draining | Health 91% Normal | bar=640 | has_value=1 | dimmed=0
+charged 100%, time remaining unknown
+  Battery | 100% Charged | Health 91% Normal | bar=1000 | has_value=1 | dimmed=0
+on AC, not charging
+  Battery | 100% On AC | Health 91% Normal | bar=1000 | has_value=1 | dimmed=0
+batteryless host: absent
+  Battery | -- | No battery | bar=0 | has_value=0 | dimmed=0
+batteryless host, 114 s later: still absent, not stale-dimmed
+  Battery | -- | No battery | bar=0 | has_value=0 | dimmed=0
+condition unavailable while charge is live
+  Battery | 87% Draining | Health Unavailable | bar=870 | has_value=1 | dimmed=0
+condition 2 h 59 m 59.999 s old: fresh
+  Battery | 86% Draining | Health 91% Normal | bar=860 | has_value=1 | dimmed=0
+condition 3 h old, charge live: condition stale, charge live
+  Battery | 85% Draining | Last 91% Normal | bar=850 | has_value=1 | dimmed=1
+old condition sample re-sent 60 s later: still stale
+  Battery | 84% Draining | Last 91% Normal | bar=840 | has_value=1 | dimmed=1
+condition refreshed: fresh
+  Battery | 83% Draining | Health 91% Normal | bar=830 | has_value=1 | dimmed=0
+charge sample 91 s old in a new snapshot: stale
+  Battery | Last 83% Draining | Health 91% Normal | bar=830 | has_value=1 | dimmed=1
+charge read error
+  Battery | -- | Read error | bar=0 | has_value=0 | dimmed=0
+unknown state, service recommended 79%
+  Battery | 50% | Health 79% Service | bar=500 | has_value=1 | dimmed=0
+worst-case text: 100% charging, health 100% Replace
+  Battery | 100% Charging | Health 100% Replace | bar=1000 | has_value=1 | dimmed=0
+condition known but maximum capacity unknown
+  Battery | 50% Draining | Health Normal | bar=500 | has_value=1 | dimmed=0
+only the cycle count known: nothing to show for health
+  Battery | 50% Draining | Health -- | bar=500 | has_value=1 | dimmed=0
+last frame 2.9 s ago: still live
+  Battery | 50% Draining | Health -- | bar=500 | has_value=1 | dimmed=0
+34 s without a frame: link stale, both halves retained and dimmed
+  Battery | Last 50% Draining | Last -- | bar=500 | has_value=1 | dimmed=1

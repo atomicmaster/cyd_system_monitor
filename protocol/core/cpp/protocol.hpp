@@ -77,6 +77,22 @@ struct StorageSnapshot {
   uint64_t write_bytes_per_s = 0;
   uint32_t io_age_ms = 0;
 };
+// Battery (TB06): charge/state and condition halves with independent
+// availability and source ages; no freshness field. A half that is not
+// kAvailable carries 0 (or the unknown sentinel kBatteryUnknownU16).
+constexpr uint16_t kBatteryUnknownU16 = 0xFFFF;
+struct BatterySnapshot {
+  Availability charge_availability = Availability::kTemporarilyUnavailable;
+  uint16_t charge_per_mille = 0;
+  uint8_t state = 0;  // 0 unknown, 1 charging, 2 discharging, 3 charged, 4 AC idle
+  uint16_t time_remaining_min = kBatteryUnknownU16;
+  uint32_t charge_age_ms = 0;
+  Availability condition_availability = Availability::kTemporarilyUnavailable;
+  uint16_t max_capacity_per_mille = 0;
+  uint8_t condition = 0;  // 0 unknown, 1 normal, 2 service, 3 poor/replace
+  uint16_t cycle_count = kBatteryUnknownU16;
+  uint32_t condition_age_ms = 0;
+};
 struct HelloBody {
   uint8_t supported_major = 1;
   uint8_t supported_minor = 0;
@@ -122,6 +138,8 @@ struct Decoded {
   bool has_ram = false;
   StorageSnapshot storage{};
   bool has_storage = false;
+  BatterySnapshot battery{};
+  bool has_battery = false;
 };
 
 uint32_t Crc32(std::span<const uint8_t> bytes);
@@ -133,6 +151,10 @@ Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
                      const RamSnapshot *ram, std::vector<uint8_t> *frame);
 Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
                      const RamSnapshot *ram, const StorageSnapshot *storage,
+                     std::vector<uint8_t> *frame);
+Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
+                     const RamSnapshot *ram, const StorageSnapshot *storage,
+                     const BatterySnapshot *battery,
                      std::vector<uint8_t> *frame);
 Error Decode(std::span<const uint8_t> frame, Decoded *result);
 const char *ErrorName(Error error);

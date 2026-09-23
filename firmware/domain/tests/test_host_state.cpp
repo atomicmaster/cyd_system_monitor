@@ -130,6 +130,75 @@ int main() {
     // A genuinely refreshed capacity sample becomes fresh.
     storage.ApplySnapshot(snapshot(3, 500, 0), 191'000, 0);
     if (s.capacity_freshness != proto::Freshness::kFresh) return 17;
+    // Just after boot a capacity sample older than the uptime is still stale.
+    HostStateReducer early(1);
+    early.ApplySnapshot(snapshot(1, 200'000, 0), 5'000, 0);
+    if (early.state().storage.capacity_freshness != proto::Freshness::kStale) return 40;
+  }
+  {
+    // Battery freshness is derived from the source ages: charge is stale 90 s
+    // after it was sampled, condition 3 h after. A re-sent old sample must not
+    // look fresh.
+    namespace proto = cyd::protocol;
+    using firmware::domain::HostStateReducer;
+    const auto snapshot = [&](uint32_t seq, uint32_t charge_age, uint32_t condition_age) {
+      proto::Envelope env;
+      env.type = proto::MessageType::kSnapshot;
+      env.sequence = seq;
+      const proto::CpuSnapshot c{proto::Availability::kAvailable, 1, 0, proto::Freshness::kFresh,
+                                 0};
+      proto::BatterySnapshot g;
+      g.charge_availability = proto::Availability::kAvailable;
+      g.charge_per_mille = 870;
+      g.state = 1;
+      g.charge_age_ms = charge_age;
+      g.condition_availability = proto::Availability::kAvailable;
+      g.max_capacity_per_mille = 910;
+      g.condition = 1;
+      g.condition_age_ms = condition_age;
+      std::vector<uint8_t> frame;
+      proto::EncodeSnapshot(env, c, nullptr, nullptr, &g, &frame);
+      proto::Decoded decoded;
+      if (proto::Decode(frame, &decoded) != proto::Error::kNone || !decoded.has_battery)
+        std::abort();
+      return decoded;
+    };
+    constexpr uint64_t kHour = 3600'000;
+    HostStateReducer reducer(1);
+    reducer.ApplySnapshot(snapshot(1, 1000, 1000), 100'000, 0);
+    const auto& b = reducer.state().battery;
+    if (!b.has_data || b.charge_per_mille != 870 || b.max_capacity_per_mille != 910) return 18;
+    // Charge sampled at 99,000: fresh until 189,000. Condition likewise 3 h on.
+    reducer.Advance(188'999);
+    if (b.charge_freshness != proto::Freshness::kFresh) return 19;
+    reducer.Advance(189'000);
+    if (b.charge_freshness != proto::Freshness::kStale ||
+        b.condition_freshness != proto::Freshness::kFresh)
+      return 20;
+    reducer.Advance(99'000 + 3 * kHour - 1);
+    if (b.condition_freshness != proto::Freshness::kFresh) return 21;
+    reducer.Advance(99'000 + 3 * kHour);
+    if (b.condition_freshness != proto::Freshness::kStale) return 22;
+    // A new snapshot re-carrying the same old samples (ages now 91 s / 3 h):
+    // neither becomes fresh merely because a snapshot arrived.
+    const uint64_t later = 99'000 + 3 * kHour + 1000;
+    reducer.ApplySnapshot(
+        snapshot(2, static_cast<uint32_t>(later - 99'000), static_cast<uint32_t>(later - 99'000)),
+        later, 0);
+    if (b.charge_freshness != proto::Freshness::kStale ||
+        b.condition_freshness != proto::Freshness::kStale)
+      return 23;
+    // A genuinely refreshed charge sample is fresh while condition stays stale.
+    reducer.ApplySnapshot(snapshot(3, 500, static_cast<uint32_t>(later + 1000 - 99'000)),
+                          later + 1000, 0);
+    if (b.charge_freshness != proto::Freshness::kFresh ||
+        b.condition_freshness != proto::Freshness::kStale)
+      return 24;
+    // Just after device boot, a 3 h old condition predates the device clock;
+    // it must not be clamped to "sampled at boot" and look fresh.
+    HostStateReducer booted(1);
+    booted.ApplySnapshot(snapshot(1, 1000, 3 * kHour), 10'000, 0);
+    if (booted.state().battery.condition_freshness != proto::Freshness::kStale) return 25;
   }
   std::puts("firmware_domain_host_state_tests: ok");
   return 0;

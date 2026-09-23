@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use protocol::{
-    encode_control, Availability, CommandOperation, CommandResult, ControlBody, CpuSnapshot,
-    Envelope, Freshness, HelloBody, MessageType, RamSnapshot, StorageSnapshot,
+    encode_control, Availability, BatterySnapshot, CommandOperation, CommandResult, ControlBody,
+    CpuSnapshot, Envelope, Freshness, HelloBody, MessageType, RamSnapshot, StorageSnapshot,
 };
 use transport::client::{Event, HostClient, Phase, Refusal};
 
@@ -34,6 +34,7 @@ struct State {
     cpu: u32,
     ram: Option<(u64, u64)>,
     storage: Option<[u64; 4]>,
+    battery: Option<[u64; 4]>,
     code: Option<u32>,
 }
 
@@ -135,6 +136,12 @@ fn parse_state(rest: &str) -> State {
                 .map(|v| v.parse().unwrap());
             std::array::from_fn(|_| n.next().unwrap())
         }),
+        battery: field("battery").split_once('/').map(|(first, rest)| {
+            let mut n = std::iter::once(first)
+                .chain(rest.split('/'))
+                .map(|v| v.parse().unwrap());
+            std::array::from_fn(|_| n.next().unwrap())
+        }),
         code: field("code").parse().ok(),
     }
 }
@@ -198,7 +205,9 @@ fn first_pairing_needs_touch_then_live_data_flows() {
     ));
     assert_eq!(client.phase(), Phase::PairSent);
     assert!(
-        client.snapshot(&snapshot(1), None, None, None).is_none(),
+        client
+            .snapshot(&snapshot(1), None, None, None, None)
+            .is_none(),
         "no data before pairing"
     );
 
@@ -213,7 +222,9 @@ fn first_pairing_needs_touch_then_live_data_flows() {
     assert!(state.paired);
     assert_eq!(state.phase, OPEN);
 
-    let frame = client.snapshot(&snapshot(437), None, None, None).unwrap();
+    let frame = client
+        .snapshot(&snapshot(437), None, None, None, None)
+        .unwrap();
     let (_, state) = device.push(&frame);
     assert!(state.seen);
     assert_eq!(state.cpu, 437);
@@ -226,7 +237,11 @@ fn paired_host_reconnects_without_touch_on_a_new_session() {
     handshake(&mut device, &mut first);
     let (frames, _) = device.command("CONFIRM 1");
     deliver(&mut first, &frames);
-    let (_, state) = device.push(&first.snapshot(&snapshot(300), None, None, None).unwrap());
+    let (_, state) = device.push(
+        &first
+            .snapshot(&snapshot(300), None, None, None, None)
+            .unwrap(),
+    );
     assert_eq!(state.cpu, 300);
 
     let mut second = HostClient::new(HOST, Some(DEVICE), CODE, SESSION_B);
@@ -237,9 +252,17 @@ fn paired_host_reconnects_without_touch_on_a_new_session() {
     }));
 
     // The previous session's snapshots are rejected; the new one's are not.
-    let (_, state) = device.push(&first.snapshot(&snapshot(999), None, None, None).unwrap());
+    let (_, state) = device.push(
+        &first
+            .snapshot(&snapshot(999), None, None, None, None)
+            .unwrap(),
+    );
     assert_eq!(state.cpu, 300);
-    let (_, state) = device.push(&second.snapshot(&snapshot(650), None, None, None).unwrap());
+    let (_, state) = device.push(
+        &second
+            .snapshot(&snapshot(650), None, None, None, None)
+            .unwrap(),
+    );
     assert_eq!(state.cpu, 650);
 }
 
@@ -277,7 +300,9 @@ fn a_second_host_is_refused_by_a_paired_device() {
     let (events, state) = handshake(&mut device, &mut stranger);
     assert!(events.contains(&Event::Refused(Refusal::NotPairedWithYou)));
     assert!(state.paired);
-    assert!(stranger.snapshot(&snapshot(1), None, None, None).is_none());
+    assert!(stranger
+        .snapshot(&snapshot(1), None, None, None, None)
+        .is_none());
 }
 
 #[test]
@@ -368,14 +393,16 @@ fn a_ram_group_reaches_the_firmware_state_and_may_stop_being_sent() {
         freshness: Freshness::Fresh,
     };
     let frame = client
-        .snapshot(&snapshot(400), Some(&ram), None, None)
+        .snapshot(&snapshot(400), Some(&ram), None, None, None)
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!((state.cpu, state.ram), (400, Some((8 << 30, 16 << 30))));
 
     // A later snapshot without the group keeps the last RAM reading (it
     // goes stale on its own clock) while CPU updates.
-    let frame = client.snapshot(&snapshot(500), None, None, None).unwrap();
+    let frame = client
+        .snapshot(&snapshot(500), None, None, None, None)
+        .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!((state.cpu, state.ram), (500, Some((8 << 30, 16 << 30))));
 }
@@ -406,7 +433,7 @@ fn a_storage_group_reaches_the_firmware_state_beside_ram() {
         io_age_ms: 0,
     };
     let frame = client
-        .snapshot(&snapshot(400), Some(&ram), Some(&storage), None)
+        .snapshot(&snapshot(400), Some(&ram), Some(&storage), None, None)
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!(state.ram, Some((8 << 30, 16 << 30)));
@@ -414,4 +441,50 @@ fn a_storage_group_reaches_the_firmware_state_beside_ram() {
         state.storage,
         Some([500_000_000_000, 200_000_000_000, 12_300_000, 4_500_000])
     );
+}
+
+#[test]
+fn a_battery_group_reaches_the_firmware_state_and_absence_is_not_zero() {
+    let mut device = Device::spawn();
+    let mut client = HostClient::new(HOST, None, CODE, SESSION_A);
+    handshake(&mut device, &mut client);
+    let (frames, _) = device.command("CONFIRM 1");
+    deliver(&mut client, &frames);
+
+    let battery = BatterySnapshot {
+        charge_availability: Availability::Available,
+        charge_per_mille: 870,
+        state: 1,
+        time_remaining_min: 95,
+        charge_age_ms: 250,
+        condition_availability: Availability::Available,
+        max_capacity_per_mille: 910,
+        condition: 1,
+        cycle_count: 312,
+        condition_age_ms: 1_800_000,
+    };
+    let frame = client
+        .snapshot(&snapshot(400), None, None, Some(&battery), None)
+        .unwrap();
+    let (_, state) = device.push(&frame);
+    assert_eq!(state.battery, Some([0, 870, 1, 910]));
+
+    // A batteryless host: both halves absent, values zero.
+    let absent = BatterySnapshot {
+        charge_availability: Availability::Absent,
+        charge_per_mille: 0,
+        state: 0,
+        time_remaining_min: protocol::BATTERY_UNKNOWN_U16,
+        charge_age_ms: 0,
+        condition_availability: Availability::Absent,
+        max_capacity_per_mille: 0,
+        condition: 0,
+        cycle_count: protocol::BATTERY_UNKNOWN_U16,
+        condition_age_ms: 0,
+    };
+    let frame = client
+        .snapshot(&snapshot(500), None, None, Some(&absent), None)
+        .unwrap();
+    let (_, state) = device.push(&frame);
+    assert_eq!(state.battery, Some([2, 0, 0, 0]));
 }

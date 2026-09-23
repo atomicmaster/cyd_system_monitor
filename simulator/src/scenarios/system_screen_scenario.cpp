@@ -174,6 +174,62 @@ int RunSystemScreen() {
         "the Overview does not scroll");
     result.Expect(!clipped, "realistic worst-case card text fits without clipping");
   }
+
+  // Every Battery card text variant, laid out on a real card widget, fits the
+  // 148 px content width of both lines (value at 14 pt, note at 12 pt).
+  {
+    size_t battery_index = 0;
+    for (size_t i = 0; i < domain::Cards().size(); ++i) {
+      if (std::string(domain::Cards()[i].id) == "battery") battery_index = i;
+    }
+    const uint8_t states[] = {0, 1, 2, 3, 4};
+    const uint8_t conditions[] = {0, 1, 2, 3};
+    bool fits = true;
+    int variants = 0;
+    for (const uint32_t age : {0u, 200'000u}) {  // fresh, and both halves stale ("Last ...")
+      for (const uint8_t state : states) {
+        for (const uint8_t condition : conditions) {
+          for (const uint16_t per_mille : {uint16_t{1000}, uint16_t{870}, uint16_t{5}}) {
+            proto::BatterySnapshot g;
+            g.charge_availability = proto::Availability::kAvailable;
+            g.charge_per_mille = per_mille;
+            g.state = state;
+            g.charge_age_ms = age;
+            g.condition_availability = proto::Availability::kAvailable;
+            g.max_capacity_per_mille = per_mille;
+            g.condition = condition;
+            g.condition_age_ms = age * 100;
+            proto::Envelope envelope;
+            envelope.type = proto::MessageType::kSnapshot;
+            envelope.sequence = static_cast<uint32_t>(100 + variants);
+            envelope.session = session;
+            const proto::CpuSnapshot cpu{proto::Availability::kAvailable, 480, 0,
+                                         proto::Freshness::kFresh, 0};
+            std::vector<uint8_t> frame;
+            proto::EncodeSnapshot(envelope, cpu, nullptr, nullptr, &g, &frame);
+            clock.Set(1'000'000);
+            feed.Push(frame);
+            render(1'000'000);
+            ++variants;
+            for (lv_obj_t* label :
+                 {ui.card(battery_index).value_label(), ui.card(battery_index).note_label()}) {
+              lv_point_t text;
+              lv_text_get_size(&text, lv_label_get_text(label),
+                               lv_obj_get_style_text_font(label, 0), 0, 0, LV_COORD_MAX,
+                               LV_TEXT_FLAG_NONE);
+              if (text.x > 148) {
+                std::printf("battery text too wide (%d px): %s\n", static_cast<int>(text.x),
+                            lv_label_get_text(label));
+                fits = false;
+              }
+            }
+          }
+        }
+      }
+    }
+    result.Expect(variants == 120 && fits,
+                  "every Battery value and note variant fits 148 px (fresh and Last)");
+  }
   return result.Finish("simulator system-screen");
 }
 

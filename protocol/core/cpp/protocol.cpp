@@ -171,7 +171,7 @@ Error EncodeControlBody(const Envelope &e, std::vector<uint8_t> *cbor) {
 }
 Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
                  const RamSnapshot *ram, const StorageSnapshot *storage,
-                 std::vector<uint8_t> *cbor) {
+                 const BatterySnapshot *battery, std::vector<uint8_t> *cbor) {
   cbor->clear();
   const uint8_t envelope_fields =
       6 + e.utc_ms.has_value() + e.utc_uncertainty_ms.has_value() +
@@ -189,7 +189,7 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
   UInt(cbor, 0, e.sequence);
   UInt(cbor, 0, 5);
   if (cpu) {
-    Map(cbor, 5 + (ram ? 1 : 0) + (storage ? 1 : 0));
+    Map(cbor, 5 + (ram ? 1 : 0) + (storage ? 1 : 0) + (battery ? 1 : 0));
     UInt(cbor, 0, 0);
     UInt(cbor, 0, static_cast<uint8_t>(cpu->availability));
     UInt(cbor, 0, 1);
@@ -231,6 +231,29 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
           storage->write_bytes_per_s,
           storage->io_age_ms};
       for (uint64_t key = 0; key < 8; ++key) {
+        UInt(cbor, 0, key);
+        UInt(cbor, 0, values[key]);
+      }
+    }
+    if (battery) {
+      if (battery->charge_per_mille > 1000 ||
+          battery->max_capacity_per_mille > 1000 || battery->state > 4 ||
+          battery->condition > 3)
+        return Error::kMalformed;
+      UInt(cbor, 0, 7);
+      Map(cbor, 10);
+      const uint64_t values[10] = {
+          static_cast<uint8_t>(battery->charge_availability),
+          battery->charge_per_mille,
+          battery->state,
+          battery->time_remaining_min,
+          battery->charge_age_ms,
+          static_cast<uint8_t>(battery->condition_availability),
+          battery->max_capacity_per_mille,
+          battery->condition,
+          battery->cycle_count,
+          battery->condition_age_ms};
+      for (uint64_t key = 0; key < 10; ++key) {
         UInt(cbor, 0, key);
         UInt(cbor, 0, values[key]);
       }
@@ -356,7 +379,7 @@ uint32_t Crc32(std::span<const uint8_t> b) {
 }
 Error Encode(const Envelope &e, std::vector<uint8_t> *out) {
   std::vector<uint8_t> c;
-  Error x = EncodeBody(e, nullptr, nullptr, nullptr, &c);
+  Error x = EncodeBody(e, nullptr, nullptr, nullptr, nullptr, &c);
   if (x != Error::kNone)
     return x;
   out->clear();
@@ -371,13 +394,19 @@ Error Encode(const Envelope &e, std::vector<uint8_t> *out) {
 }
 Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
                      const RamSnapshot *ram, std::vector<uint8_t> *out) {
-  return EncodeSnapshot(e, cpu, ram, nullptr, out);
+  return EncodeSnapshot(e, cpu, ram, nullptr, nullptr, out);
 }
 Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
                      const RamSnapshot *ram, const StorageSnapshot *storage,
                      std::vector<uint8_t> *out) {
+  return EncodeSnapshot(e, cpu, ram, storage, nullptr, out);
+}
+Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
+                     const RamSnapshot *ram, const StorageSnapshot *storage,
+                     const BatterySnapshot *battery,
+                     std::vector<uint8_t> *out) {
   std::vector<uint8_t> c;
-  Error x = EncodeBody(e, &cpu, ram, storage, &c);
+  Error x = EncodeBody(e, &cpu, ram, storage, battery, &c);
   if (x != Error::kNone)
     return x;
   out->clear();
@@ -468,6 +497,49 @@ bool ReadStorageGroup(std::span<const uint8_t> c, std::size_t *p,
   storage->io_age_ms = static_cast<uint32_t>(value[7]);
   return true;
 }
+// The Battery group: ten required fields, unknown extra keys skipped.
+bool ReadBatteryGroup(std::span<const uint8_t> c, std::size_t *p,
+                      BatterySnapshot *battery) {
+  uint64_t count;
+  if (!ReadUInt(c, p, 5, &count) || count > 16)
+    return false;
+  bool seen[10] = {};
+  uint64_t value[10] = {};
+  for (uint64_t i = 0; i < count; ++i) {
+    uint64_t key;
+    if (!ReadUInt(c, p, 0, &key))
+      return false;
+    if (key > 9) {
+      if (!Skip(c, p))
+        return false;
+      continue;
+    }
+    if (seen[key] || !ReadUInt(c, p, 0, &value[key]))
+      return false;
+    seen[key] = true;
+  }
+  for (bool present : seen) {
+    if (!present)
+      return false;
+  }
+  const uint64_t max_availability = static_cast<uint8_t>(Availability::kError);
+  if (value[0] > max_availability || value[5] > max_availability ||
+      value[1] > 1000 || value[2] > 4 || value[3] > UINT16_MAX ||
+      value[4] > UINT32_MAX || value[6] > 1000 || value[7] > 3 ||
+      value[8] > UINT16_MAX || value[9] > UINT32_MAX)
+    return false;
+  battery->charge_availability = static_cast<Availability>(value[0]);
+  battery->charge_per_mille = static_cast<uint16_t>(value[1]);
+  battery->state = static_cast<uint8_t>(value[2]);
+  battery->time_remaining_min = static_cast<uint16_t>(value[3]);
+  battery->charge_age_ms = static_cast<uint32_t>(value[4]);
+  battery->condition_availability = static_cast<Availability>(value[5]);
+  battery->max_capacity_per_mille = static_cast<uint16_t>(value[6]);
+  battery->condition = static_cast<uint8_t>(value[7]);
+  battery->cycle_count = static_cast<uint16_t>(value[8]);
+  battery->condition_age_ms = static_cast<uint32_t>(value[9]);
+  return true;
+}
 Error Decode(std::span<const uint8_t> f, Decoded *r) {
   if (f.size() < 7)
     return Error::kTruncated;
@@ -544,6 +616,12 @@ Error Decode(std::span<const uint8_t> f, Decoded *r) {
             if (d.has_storage || !ReadStorageGroup(c, &p, &d.storage))
               return Error::kMalformed;
             d.has_storage = true;
+            continue;
+          }
+          if (q == 7) {
+            if (d.has_battery || !ReadBatteryGroup(c, &p, &d.battery))
+              return Error::kMalformed;
+            d.has_battery = true;
             continue;
           }
           if (q > 4) {

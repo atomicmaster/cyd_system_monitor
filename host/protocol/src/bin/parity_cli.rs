@@ -84,6 +84,21 @@ fn summary(result: &Result<Decoded, String>) -> String {
                     g.io_age_ms
                 );
             }
+            if let Some(g) = &snapshot.battery {
+                text += &format!(
+                    ";battery={},{},{},{},{},{},{},{},{},{}",
+                    g.charge_availability as u8,
+                    g.charge_per_mille,
+                    g.state,
+                    g.time_remaining_min,
+                    g.charge_age_ms,
+                    g.condition_availability as u8,
+                    g.max_capacity_per_mille,
+                    g.condition,
+                    g.cycle_count,
+                    g.condition_age_ms
+                );
+            }
             (e, text)
         }
         Ok(Message::Control(e, body)) => (
@@ -131,7 +146,13 @@ fn summary(result: &Result<Decoded, String>) -> String {
 
 fn reencode(decoded: &Decoded) -> String {
     let result = match decoded {
-        Message::Snapshot(e, s) => encode_groups(e, &s.cpu, s.ram.as_ref(), s.storage.as_ref()),
+        Message::Snapshot(e, s) => encode_groups(
+            e,
+            &s.cpu,
+            s.ram.as_ref(),
+            s.storage.as_ref(),
+            s.battery.as_ref(),
+        ),
         Message::Control(e, b) => encode_control(e, b),
     };
     match result {

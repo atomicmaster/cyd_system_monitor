@@ -1,0 +1,34 @@
+{
+  "SPPowerDataType": [
+    {
+      "_name": "spbattery_information",
+      "sppower_battery_charge_info": {
+        "sppower_battery_at_warn_level": "FALSE",
+        "sppower_battery_fully_charged": "FALSE",
+        "sppower_battery_is_charging": "TRUE",
+        "sppower_battery_state_of_charge": 87
+      },
+      "sppower_battery_health_info": {
+        "sppower_battery_cycle_count": "312",
+        "sppower_battery_health": 5,
+        "sppower_battery_health_maximum_capacity": 91
+      },
+      "sppower_battery_model_info": {
+        "sppower_battery_device_name": "redacted",
+        "sppower_battery_serial_number": "REDACTED"
+      }
+    },
+    {
+      "_name": "sppower_information",
+      "AC Power": {
+        "Current Power Source": "TRUE"
+      }
+    },
+    {
+      "_name": "sppower_ac_charger_information",
+      "sppower_battery_charger_connected": "TRUE",
+      "sppower_battery_is_charging": "FALSE",
+      "sppower_ac_charger_watts": "94"
+    }
+  ]
+}

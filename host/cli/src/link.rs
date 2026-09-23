@@ -8,12 +8,13 @@ use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use metrics::{Collector, MetricAvailability};
+use platform_macos::battery::{BatteryCollector, BatteryReading};
 use platform_macos::cpu::CpuCollector;
 use platform_macos::ram::RamCollector;
 use platform_macos::storage::{StorageCollector, StorageReading};
 use protocol::{
-    Availability, CommandOperation, CommandResult, CpuSnapshot, Freshness, RamSnapshot,
-    StorageSnapshot,
+    Availability, BatterySnapshot, CommandOperation, CommandResult, CpuSnapshot, Freshness,
+    RamSnapshot, StorageSnapshot,
 };
 use transport::client::{Event, HostClient, Phase, Refusal};
 use transport::serial::SerialPort;
@@ -145,6 +146,7 @@ impl Link {
         let mut cpu_collector = CpuCollector::new();
         let mut ram_collector = RamCollector::new();
         let mut storage_collector = StorageCollector::new();
+        let mut battery_collector = BatteryCollector::new();
         let epoch = Instant::now();
         let mut next = Instant::now();
         let mut buf = [0u8; 512];
@@ -167,11 +169,18 @@ impl Link {
                 freshness: Freshness::Fresh,
             };
             let storage = storage_snapshot(storage_collector.collect(now_ms).value);
+            let battery = battery_snapshot(battery_collector.collect(now_ms).value);
             self.client
                 .set_local_offset_minutes(platform_macos::time::local_offset_minutes());
             let frame = self
                 .client
-                .snapshot(&snapshot, Some(&ram), storage.as_ref(), Some(utc_ms()))
+                .snapshot(
+                    &snapshot,
+                    Some(&ram),
+                    storage.as_ref(),
+                    battery.as_ref(),
+                    Some(utc_ms()),
+                )
                 .ok_or(LinkError::Timeout("sending: the link is no longer paired"))?;
             self.port.write_all(&frame)?;
             if let Some(g) = &storage {
@@ -181,6 +190,19 @@ impl Link {
                     g.total_bytes as f64 / 1e9,
                     g.read_bytes_per_s,
                     g.write_bytes_per_s
+                );
+            }
+            if let Some(g) = &battery {
+                println!(
+                    "battery charge {:?} {:.1}% state {} ({} min)  health {:?} {:.1}% condition {} cycles {}",
+                    g.charge_availability,
+                    f64::from(g.charge_per_mille) / 10.0,
+                    g.state,
+                    g.time_remaining_min,
+                    g.condition_availability,
+                    f64::from(g.max_capacity_per_mille) / 10.0,
+                    g.condition,
+                    g.cycle_count
                 );
             }
             match (sample.value, ram_sample.value) {
@@ -286,9 +308,145 @@ fn storage_snapshot(reading: Option<StorageReading>) -> Option<StorageSnapshot> 
     })
 }
 
+/// The wire group for one second of battery collection. A half that is not
+/// available carries zero values (times and cycle counts the unknown sentinel)
+/// and its availability, so a batteryless host is `Absent`, never a 0% charge.
+/// A condition source that lacks one field reports that field as 0 (capacity)
+/// or the sentinel (cycles): a working battery has no 0% health capacity.
+fn battery_snapshot(reading: Option<BatteryReading>) -> Option<BatterySnapshot> {
+    let reading = reading?;
+    let no_value = |a: MetricAvailability| match availability(a) {
+        Availability::Available => Availability::Error, // no value behind it
+        other => other,
+    };
+    let charge = reading.charge.value;
+    let condition = reading.condition.value;
+    Some(BatterySnapshot {
+        charge_availability: if charge.is_some() {
+            Availability::Available
+        } else {
+            no_value(reading.charge.availability)
+        },
+        charge_per_mille: charge.map_or(0, |c| c.per_mille.min(1000)),
+        state: charge.map_or(0, |c| c.state as u8),
+        time_remaining_min: charge
+            .and_then(|c| c.time_remaining_min)
+            .unwrap_or(protocol::BATTERY_UNKNOWN_U16),
+        charge_age_ms: if charge.is_some() {
+            reading.charge_age_ms
+        } else {
+            0
+        },
+        condition_availability: if condition.is_some() {
+            Availability::Available
+        } else {
+            no_value(reading.condition.availability)
+        },
+        max_capacity_per_mille: condition
+            .and_then(|c| c.max_capacity_per_mille)
+            .unwrap_or(0),
+        condition: condition.map_or(0, |c| c.condition as u8),
+        cycle_count: condition
+            .and_then(|c| c.cycle_count)
+            .unwrap_or(protocol::BATTERY_UNKNOWN_U16),
+        condition_age_ms: if condition.is_some() {
+            reading.condition_age_ms
+        } else {
+            0
+        },
+    })
+}
+
 fn protocol_error(error: protocol::Error) -> LinkError {
     LinkError::Io(io::Error::new(
         io::ErrorKind::InvalidData,
         format!("encode failed: {error:?}"),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use metrics::battery::{
+        BatteryChargeReading, BatteryCondition, BatteryConditionReading, BatteryState,
+    };
+    use metrics::MetricSample;
+
+    fn reading(
+        charge: MetricSample<BatteryChargeReading>,
+        condition: MetricSample<BatteryConditionReading>,
+    ) -> BatteryReading {
+        BatteryReading {
+            charge,
+            charge_age_ms: 12_000,
+            condition,
+            condition_age_ms: 600_000,
+        }
+    }
+
+    #[test]
+    fn a_batteryless_host_is_absent_on_the_wire_never_zero_percent() {
+        let g = battery_snapshot(Some(reading(
+            MetricSample::unavailable(MetricAvailability::Absent),
+            MetricSample::unavailable(MetricAvailability::Absent),
+        )))
+        .unwrap();
+        assert_eq!(g.charge_availability, Availability::Absent);
+        assert_eq!(g.condition_availability, Availability::Absent);
+        assert_eq!((g.charge_per_mille, g.charge_age_ms), (0, 0));
+        assert_eq!(g.time_remaining_min, protocol::BATTERY_UNKNOWN_U16);
+        assert_eq!(g.cycle_count, protocol::BATTERY_UNKNOWN_U16);
+    }
+
+    #[test]
+    fn live_halves_carry_values_and_their_own_ages_and_partial_health_is_zero_or_unknown() {
+        let g = battery_snapshot(Some(reading(
+            MetricSample::available(BatteryChargeReading {
+                per_mille: 870,
+                state: BatteryState::Charging,
+                time_remaining_min: None,
+            }),
+            MetricSample::available(BatteryConditionReading {
+                max_capacity_per_mille: None,
+                condition: BatteryCondition::ServiceRecommended,
+                cycle_count: None,
+            }),
+        )))
+        .unwrap();
+        assert_eq!(
+            (g.charge_availability, g.charge_per_mille, g.state),
+            (Availability::Available, 870, 1)
+        );
+        assert_eq!(
+            (g.time_remaining_min, g.charge_age_ms),
+            (protocol::BATTERY_UNKNOWN_U16, 12_000)
+        );
+        assert_eq!(
+            (
+                g.condition_availability,
+                g.max_capacity_per_mille,
+                g.condition
+            ),
+            (Availability::Available, 0, 2)
+        );
+        assert_eq!(
+            (g.cycle_count, g.condition_age_ms),
+            (protocol::BATTERY_UNKNOWN_U16, 600_000)
+        );
+    }
+
+    #[test]
+    fn a_missing_condition_leaves_the_charge_live_and_errors_carry_no_values() {
+        let g = battery_snapshot(Some(reading(
+            MetricSample::unavailable(MetricAvailability::Error),
+            MetricSample::unavailable(MetricAvailability::TemporarilyUnavailable),
+        )))
+        .unwrap();
+        assert_eq!(g.charge_availability, Availability::Error);
+        assert_eq!(
+            g.condition_availability,
+            Availability::TemporarilyUnavailable
+        );
+        assert_eq!((g.charge_age_ms, g.condition_age_ms, g.state), (0, 0, 0));
+    }
 }
