@@ -4,7 +4,7 @@
 
 This is the repository-local MVP backlog. The [implementation plan](../../IMPLEMENTATION_PLAN.md) defines milestone acceptance; ticket prerequisites define the order in which work can start. A tracer bullet carries one observable behavior through the required layers. Toolchains, contract foundations, and measurement gates are identified separately rather than presented as user features.
 
-**C01, TB01, TB02 and C02 are done**; the first working Host path (agreed snapshot bytes, shared display state under replay, a physically paired Mac showing live CPU with stale/reconnect behavior) is complete. TB03 is code-complete awaiting a recorded physical smoke, TB09 is in progress (scheduler, coverage model, and status line done), and TB04–TB08 are next. The remaining tickets are specified or outlined below.
+**C01, TB01, TB02 and C02 are done**; the first working Host path (agreed snapshot bytes, shared display state under replay, a physically paired Mac showing live CPU with stale/reconnect behavior) is complete. TB03 is code-complete awaiting a recorded physical smoke, TB08 is code-complete on the desktop awaiting signing, consent and hardware steps, TB09 is in progress (scheduler, coverage model, and status line done), and TB04–TB08 are next. The remaining tickets are specified or outlined below.
 
 ## Start here
 
@@ -84,7 +84,7 @@ The dependency column repeats each ticket's prerequisite links for navigation. E
 | [TB05](TB05.md) | Display network rates and Host WiFi coverage | Executable | [C02](C02.md) |
 | [TB06](TB06.md) | Display battery charge and condition without blocking collection | Executable | [C02](C02.md) |
 | [TB07](TB07.md) | Show supported agent process presence | Executable | [C02](C02.md) |
-| [TB08](TB08.md) | Run the Host as a per-user service with setup status | Outline | [C02](C02.md) |
+| [TB08](TB08.md) | Run the Host as a per-user service with setup status | Executable | [C02](C02.md) |
 | [TB09](TB09.md) | Show the real radio schedule and coverage | Executable | [C02](C02.md) |
 | [TB10](TB10.md) | Observe WiFi traffic through to an inspectable view | Outline | [TB09](TB09.md) |
 | [TB11](TB11.md) | Observe BLE advertisements through to an inspectable view | Outline | [TB09](TB09.md) |

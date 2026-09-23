@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Foreground Host session over the board's serial port: handshake, pairing,
-//! one-second CPU snapshots, and the unpair / calibration-reset commands.
+//! Host session over the board's serial port, shared by the foreground CLI
+//! and the per-user daemon: handshake, pairing, one-second complete snapshots,
+//! and the unpair / calibration-reset commands. The byte channel is a trait so
+//! the daemon's integration tests can drive a scripted device.
 
 use std::io;
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use metrics::network::{Coverage, NetworkReading, RouteKind as NetRouteKind};
-use metrics::wifi_context::{ContextAvailability, FixtureProvider, WifiContextProvider};
+use metrics::network::{Coverage, NetworkCollector, NetworkReading, RouteKind as NetRouteKind};
+use metrics::wifi_context::{ContextAvailability, WifiContextProvider};
 use metrics::{Collector, MetricAvailability};
 use platform_macos::agents::{AgentsCollector, AgentsReading};
 use platform_macos::battery::{BatteryCollector, BatteryReading};
 use platform_macos::cpu::CpuCollector;
 use platform_macos::ram::RamCollector;
 use platform_macos::storage::{StorageCollector, StorageReading};
-use platform_macos::wifi_context_server::{ServerConfig, WifiContextServer};
 use protocol::{
     AgentsSnapshot, AssociationContext, Availability, BatterySnapshot, CommandOperation,
     CommandResult, CpuSnapshot, Freshness, NetworkSnapshot, RamSnapshot, RouteKind,
@@ -27,17 +28,38 @@ use transport::serial::SerialPort;
 use crate::identity::{self, Identity};
 
 /// Opening the port resets the ESP32; give it time to boot to the console.
-const BOOT_WAIT: Duration = Duration::from_millis(3_000);
+pub const BOOT_WAIT: Duration = Duration::from_millis(3_000);
 const HELLO_RETRY: Duration = Duration::from_millis(1_500);
 /// Longer than the board's own touch-confirmation timeout.
 const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(75);
 const SNAPSHOT_PERIOD: Duration = Duration::from_secs(1);
+/// A gap this much longer than the snapshot period between two ticks means the
+/// Mac slept: the link is resynchronized with a fresh session.
+const WAKE_GAP_MS: u64 = 5_000;
+
+/// The byte channel to the display: a serial port, or a scripted device.
+pub trait Channel: Send {
+    /// Reads up to `buf.len()` bytes, waiting at most `timeout`; 0 on timeout.
+    fn read_timeout(&mut self, buf: &mut [u8], timeout: Duration) -> io::Result<usize>;
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()>;
+}
+
+impl Channel for SerialPort {
+    fn read_timeout(&mut self, buf: &mut [u8], timeout: Duration) -> io::Result<usize> {
+        SerialPort::read_timeout(self, buf, timeout)
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        SerialPort::write_all(self, bytes)
+    }
+}
 
 #[derive(Debug)]
 pub enum LinkError {
     Io(io::Error),
     Refused(Refusal),
     Timeout(&'static str),
+    /// The caller asked to stop while connecting or serving.
+    Cancelled,
 }
 
 impl From<io::Error> for LinkError {
@@ -63,11 +85,12 @@ impl std::fmt::Display for LinkError {
             }
             LinkError::Refused(other) => write!(f, "the display refused the request ({other:?})"),
             LinkError::Timeout(what) => write!(f, "timed out {what}"),
+            LinkError::Cancelled => write!(f, "stopped"),
         }
     }
 }
 
-fn utc_ms() -> u64 {
+pub fn utc_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -79,19 +102,88 @@ fn matching_code() -> io::Result<u32> {
     Ok(100_000 + u32::from_le_bytes(bytes) % 900_000)
 }
 
+/// What a connection attempt reports while it runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Progress {
+    Opened,
+    Negotiated {
+        major: u8,
+        minor: u8,
+    },
+    /// First pairing: the operator must confirm this code on the display.
+    AwaitingConfirmation {
+        code: u32,
+    },
+    Paired,
+}
+
+/// Knobs and callbacks for [`Link::connect_with`].
+pub struct ConnectOptions<'a> {
+    pub boot_wait: Duration,
+    pub deadline: Duration,
+    /// Polled about every 100 ms; `true` abandons the attempt.
+    pub cancel: &'a mut dyn FnMut() -> bool,
+    pub on_progress: &'a mut dyn FnMut(Progress),
+    /// Persists the identity after a first pairing.
+    pub save_identity: &'a mut dyn FnMut(&Identity) -> io::Result<()>,
+}
+
 /// One serial connection with a completed handshake.
 pub struct Link {
-    port: SerialPort,
+    port: Box<dyn Channel>,
     client: HostClient,
 }
 
 impl Link {
     /// Opens the port, negotiates, and pairs (asking the operator to confirm
-    /// on the display the first time). Persists the device identity.
+    /// on the display the first time). Persists the device identity. The
+    /// foreground CLI's entry point: it prints its progress.
     pub fn connect(port_path: &str, identity: &mut Identity) -> Result<Link, LinkError> {
-        let mut port = SerialPort::open(port_path)?;
+        let port = SerialPort::open(port_path)?;
         println!("Opened {port_path}; waiting for the board to boot...");
-        sleep(BOOT_WAIT);
+        let mut cancel = || false;
+        let mut progress = |p: Progress| match p {
+            Progress::Opened | Progress::Paired => {
+                if p == Progress::Paired {
+                    println!("Paired. Sending live data.");
+                }
+            }
+            Progress::Negotiated { major, minor } => {
+                println!("Display speaks protocol {major}.{minor}.");
+            }
+            Progress::AwaitingConfirmation { code } => {
+                println!("Waiting for the display. If it asks, confirm code {code:06}.");
+            }
+        };
+        Link::connect_with(
+            Box::new(port),
+            identity,
+            ConnectOptions {
+                boot_wait: BOOT_WAIT,
+                deadline: HANDSHAKE_DEADLINE,
+                cancel: &mut cancel,
+                on_progress: &mut progress,
+                save_identity: &mut |id| identity::save(id),
+            },
+        )
+    }
+
+    /// The handshake over any [`Channel`]. `identity.device` decides whether
+    /// this reconnects to a known display or starts a first pairing.
+    pub fn connect_with(
+        mut port: Box<dyn Channel>,
+        identity: &mut Identity,
+        options: ConnectOptions<'_>,
+    ) -> Result<Link, LinkError> {
+        let ConnectOptions {
+            boot_wait,
+            deadline,
+            cancel,
+            on_progress,
+            save_identity,
+        } = options;
+        on_progress(Progress::Opened);
+        sleep_cancellable(boot_wait, cancel)?;
 
         let code = matching_code()?;
         let session = identity::random_bytes()?;
@@ -101,7 +193,10 @@ impl Link {
         let mut announced = false;
         let mut buf = [0u8; 512];
 
-        while started.elapsed() < HANDSHAKE_DEADLINE {
+        while started.elapsed() < deadline {
+            if cancel() {
+                return Err(LinkError::Cancelled);
+            }
             if client.phase() != Phase::PairSent
                 && last_hello.is_none_or(|t| t.elapsed() >= HELLO_RETRY)
             {
@@ -122,168 +217,92 @@ impl Link {
                     Event::Negotiated {
                         device_major,
                         device_minor,
-                    } => {
-                        println!("Display speaks protocol {device_major}.{device_minor}.");
-                    }
+                    } => on_progress(Progress::Negotiated {
+                        major: device_major,
+                        minor: device_minor,
+                    }),
                     Event::Refused(reason) => return Err(LinkError::Refused(reason)),
                     Event::Paired { device_identity } => {
                         if identity.device != Some(device_identity) {
                             identity.device = Some(device_identity);
-                            identity::save(identity)?;
+                            save_identity(identity)?;
                         }
-                        println!("Paired. Sending live data.");
+                        on_progress(Progress::Paired);
                         return Ok(Link { port, client });
                     }
                     Event::CommandReply { .. } => {}
                 }
             }
-            if client.phase() == Phase::PairSent && !announced && started.elapsed() > Duration::ZERO
-            {
+            if client.phase() == Phase::PairSent && !announced {
                 announced = true;
-                println!("Waiting for the display. If it asks, confirm code {code:06}.");
+                on_progress(Progress::AwaitingConfirmation { code });
             }
         }
         Err(LinkError::Timeout("waiting for the display to pair"))
     }
 
-    /// Sends one snapshot per second forever; returns only on a link error.
-    pub fn serve(&mut self) -> Result<(), LinkError> {
-        let mut cpu_collector = CpuCollector::new();
-        let mut ram_collector = RamCollector::new();
-        let mut storage_collector = StorageCollector::new();
-        let mut battery_collector = BatteryCollector::new();
-        let mut agents_collector = AgentsCollector::new();
-        let epoch = Instant::now();
-        // The WiFi context provider socket. Failing to open it costs only the
-        // optional context: traffic and Host Station Identity still flow.
-        let (context_server, provider): (Option<WifiContextServer>, Box<dyn WifiContextProvider>) =
-            match WifiContextServer::start(ServerConfig {
-                dir: run_dir(),
-                expected_uid: platform_macos::wifi_context_server::current_uid(),
-                epoch,
-            }) {
-                Ok(server) => {
-                    println!("WiFi context socket: {}", server.socket_path().display());
-                    let provider = Box::new(server.provider());
-                    (Some(server), provider)
-                }
-                Err(error) => {
-                    println!("WiFi context provider unavailable ({error}); continuing without it");
-                    (None, Box::new(FixtureProvider::absent()))
-                }
-            };
-        let mut network_collector = platform_macos::network::collector(provider);
+    /// Sends one complete snapshot per second until the link fails, the
+    /// observer asks to stop, or a sleep/wake gap requires a fresh session.
+    pub fn serve(
+        &mut self,
+        collectors: &mut Collectors,
+        clock: &dyn Fn() -> u64,
+        wall: &dyn Fn() -> u64,
+        observer: &mut dyn ServeObserver,
+    ) -> Result<ServeEnd, LinkError> {
         let mut next = Instant::now();
+        let mut last_wall = wall();
         let mut buf = [0u8; 512];
         loop {
-            let now_ms = epoch.elapsed().as_millis() as u64;
-            let sample = cpu_collector.collect(now_ms);
-            let snapshot = CpuSnapshot {
-                availability: availability(sample.availability),
-                utilization_per_mille: sample.value.unwrap_or(0),
-                source_age_ms: 0,
-                freshness: Freshness::Fresh,
-                configuration_revision: 0,
-            };
-            let ram_sample = ram_collector.collect(now_ms);
-            let ram = RamSnapshot {
-                availability: availability(ram_sample.availability),
-                used_bytes: ram_sample.value.map_or(0, |r| r.used_bytes),
-                total_bytes: ram_sample.value.map_or(0, |r| r.total_bytes),
-                source_age_ms: 0,
-                freshness: Freshness::Fresh,
-            };
-            let storage = storage_snapshot(storage_collector.collect(now_ms).value);
-            let battery = battery_snapshot(battery_collector.collect(now_ms).value);
-            let agents = agents_snapshot(agents_collector.collect(now_ms));
-            let network = network_snapshot(network_collector.collect(now_ms).value);
+            let wall_now = wall();
+            if wall_now.saturating_sub(last_wall) > SNAPSHOT_PERIOD.as_millis() as u64 + WAKE_GAP_MS
+            {
+                // The Mac slept: whatever the display saw is stale and the
+                // USB link may have been reset. Start over with a new session.
+                return Ok(ServeEnd::Resync);
+            }
+            last_wall = wall_now;
+            let collected = collectors.collect(clock());
             self.client
                 .set_local_offset_minutes(platform_macos::time::local_offset_minutes());
             let frame = self
                 .client
                 .snapshot(
-                    &snapshot,
-                    Some(&ram),
-                    storage.as_ref(),
-                    battery.as_ref(),
-                    Some(&agents),
-                    Some(&network),
+                    &collected.cpu,
+                    Some(&collected.ram),
+                    collected.storage.as_ref(),
+                    collected.battery.as_ref(),
+                    Some(&collected.agents),
+                    Some(&collected.network),
                     Some(utc_ms()),
                 )
                 .ok_or(LinkError::Timeout("sending: the link is no longer paired"))?;
             self.port.write_all(&frame)?;
-            if let Some(g) = &storage {
-                println!(
-                    "storage {:.1} / {:.1} GB  read {} B/s  write {} B/s",
-                    (g.total_bytes - g.available_bytes) as f64 / 1e9,
-                    g.total_bytes as f64 / 1e9,
-                    g.read_bytes_per_s,
-                    g.write_bytes_per_s
-                );
-            }
-            if let Some(g) = &battery {
-                println!(
-                    "battery charge {:?} {:.1}% state {} ({} min)  health {:?} {:.1}% condition {} cycles {}",
-                    g.charge_availability,
-                    f64::from(g.charge_per_mille) / 10.0,
-                    g.state,
-                    g.time_remaining_min,
-                    g.condition_availability,
-                    f64::from(g.max_capacity_per_mille) / 10.0,
-                    g.condition,
-                    g.cycle_count
-                );
-            }
-            // States only, never a path or a process name.
-            println!(
-                "agents {:?}: codex {} claude {} grok {}",
-                agents.availability, agents.state[0], agents.state[1], agents.state[2]
-            );
-            // Presence and states only: never a MAC address, SSID or BSSID.
-            println!(
-                "network {:?} kind {:?}{} rate {} context {:?} coverage {:?} ch {} station {} ssid {} bssid {}{}",
-                network.traffic_availability,
-                network.route_kind,
-                if network.via_tunnel { " via tunnel" } else { "" },
-                if network.traffic_availability == Availability::Available {
-                    format!("{}/{} B/s", network.rx_bytes_per_s, network.tx_bytes_per_s)
-                } else {
-                    "unavailable".to_string()
-                },
-                network.context_availability,
-                network.coverage,
-                network.channel,
-                if network.station.is_some() { "present" } else { "absent" },
-                if network.ssid.is_empty() { "absent" } else { "present" },
-                if network.bssid.is_some() { "present" } else { "absent" },
-                context_server.as_ref().map_or(String::new(), |s| {
-                    let n = s.stats();
-                    if n.malformed + n.oversized + n.out_of_order + n.wrong_uid + n.rate_limited > 0 {
-                        format!(
-                            " (dropped: {} malformed, {} oversized, {} out of order, {} wrong uid, {} rate limited)",
-                            n.malformed, n.oversized, n.out_of_order, n.wrong_uid, n.rate_limited
-                        )
-                    } else {
-                        String::new()
-                    }
-                })
-            );
-            match (sample.value, ram_sample.value) {
-                (Some(v), Some(r)) => println!(
-                    "cpu {:.1}%  ram {:.1} / {:.1} GB",
-                    f64::from(v) / 10.0,
-                    r.used_bytes as f64 / (1u64 << 30) as f64,
-                    r.total_bytes as f64 / (1u64 << 30) as f64
-                ),
-                (Some(v), None) => println!("cpu {:.1}%  ram unavailable", f64::from(v) / 10.0),
-                (None, _) => println!("cpu unavailable"),
-            }
+            observer.on_snapshot(&collected);
             next += SNAPSHOT_PERIOD;
             while Instant::now() < next {
+                match observer.poll() {
+                    ServeAction::Continue => {}
+                    ServeAction::Stop => return Ok(ServeEnd::Stopped),
+                    ServeAction::Command(operation) => {
+                        let result = self.command(operation);
+                        let done = matches!(
+                            result,
+                            Ok(CommandResult::Applied | CommandResult::AlreadyApplied)
+                        );
+                        observer.on_command(operation, result);
+                        if done && operation == CommandOperation::Unpair {
+                            return Ok(ServeEnd::Unpaired);
+                        }
+                        // The command may have taken seconds: restart the pace.
+                        next = Instant::now();
+                        last_wall = wall();
+                    }
+                }
                 let wait = next.saturating_duration_since(Instant::now());
                 let n = self
                     .port
-                    .read_timeout(&mut buf, wait.min(Duration::from_millis(200)))?;
+                    .read_timeout(&mut buf, wait.min(Duration::from_millis(100)))?;
                 for event in self.client.receive(&buf[..n]).events {
                     if let Event::Refused(reason) = event {
                         return Err(LinkError::Refused(reason));
@@ -326,6 +345,210 @@ impl Link {
             }
         }
         Err(LinkError::Timeout("waiting for the command reply"))
+    }
+}
+
+fn sleep_cancellable(total: Duration, cancel: &mut dyn FnMut() -> bool) -> Result<(), LinkError> {
+    let end = Instant::now() + total;
+    while Instant::now() < end {
+        if cancel() {
+            return Err(LinkError::Cancelled);
+        }
+        sleep(
+            end.saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(50)),
+        );
+    }
+    Ok(())
+}
+
+/// Why [`Link::serve`] returned without an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServeEnd {
+    Stopped,
+    /// A sleep/wake gap: reconnect with a fresh session.
+    Resync,
+    /// The display accepted an unpair.
+    Unpaired,
+}
+
+pub enum ServeAction {
+    Continue,
+    Stop,
+    Command(CommandOperation),
+}
+
+/// The caller's view of a running session.
+pub trait ServeObserver {
+    /// Called after each snapshot was written.
+    fn on_snapshot(&mut self, collected: &Collected);
+    /// Polled about every 100 ms between snapshots.
+    fn poll(&mut self) -> ServeAction {
+        ServeAction::Continue
+    }
+    fn on_command(
+        &mut self,
+        _operation: CommandOperation,
+        _result: Result<CommandResult, LinkError>,
+    ) {
+    }
+}
+
+/// All metric collectors, kept across reconnects so rates stay continuous.
+pub struct Collectors {
+    cpu: CpuCollector,
+    ram: RamCollector,
+    storage: StorageCollector,
+    battery: BatteryCollector,
+    agents: AgentsCollector,
+    network: NetworkCollector,
+}
+
+/// One second of every wire group, plus what the CLI prints about it.
+pub struct Collected {
+    pub cpu: CpuSnapshot,
+    pub ram: RamSnapshot,
+    pub storage: Option<StorageSnapshot>,
+    pub battery: Option<BatterySnapshot>,
+    pub agents: AgentsSnapshot,
+    pub network: NetworkSnapshot,
+    cpu_per_mille: Option<u16>,
+    ram_bytes: Option<(u64, u64)>,
+}
+
+impl Collectors {
+    pub fn new(provider: Box<dyn WifiContextProvider>) -> Self {
+        Self {
+            cpu: CpuCollector::new(),
+            ram: RamCollector::new(),
+            storage: StorageCollector::new(),
+            battery: BatteryCollector::new(),
+            agents: AgentsCollector::new(),
+            network: platform_macos::network::collector(provider),
+        }
+    }
+
+    pub fn collect(&mut self, now_ms: u64) -> Collected {
+        let sample = self.cpu.collect(now_ms);
+        let cpu = CpuSnapshot {
+            availability: availability(sample.availability),
+            utilization_per_mille: sample.value.unwrap_or(0),
+            source_age_ms: 0,
+            freshness: Freshness::Fresh,
+            configuration_revision: 0,
+        };
+        let ram_sample = self.ram.collect(now_ms);
+        let ram = RamSnapshot {
+            availability: availability(ram_sample.availability),
+            used_bytes: ram_sample.value.map_or(0, |r| r.used_bytes),
+            total_bytes: ram_sample.value.map_or(0, |r| r.total_bytes),
+            source_age_ms: 0,
+            freshness: Freshness::Fresh,
+        };
+        Collected {
+            cpu,
+            ram,
+            storage: storage_snapshot(self.storage.collect(now_ms).value),
+            battery: battery_snapshot(self.battery.collect(now_ms).value),
+            agents: agents_snapshot(self.agents.collect(now_ms)),
+            network: network_snapshot(self.network.collect(now_ms).value),
+            cpu_per_mille: sample.value,
+            ram_bytes: ram_sample.value.map(|r| (r.used_bytes, r.total_bytes)),
+        }
+    }
+}
+
+impl Collected {
+    /// Per-metric-group availability, for the status summary.
+    pub fn group_availability(&self) -> Vec<(&'static str, Availability)> {
+        let mut groups = vec![
+            ("cpu", self.cpu.availability),
+            ("ram", self.ram.availability),
+        ];
+        if let Some(g) = &self.storage {
+            groups.push(("storage", worst(g.capacity_availability, g.io_availability)));
+        }
+        if let Some(g) = &self.battery {
+            groups.push((
+                "battery",
+                worst(g.charge_availability, g.condition_availability),
+            ));
+        }
+        groups.push(("agents", self.agents.availability));
+        groups.push(("network", self.network.traffic_availability));
+        groups
+    }
+
+    /// The foreground CLI's per-second report. States and numbers only: never
+    /// a path, process name, MAC address, SSID or BSSID.
+    pub fn log_lines(&self, drops: Option<String>) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some(g) = &self.storage {
+            lines.push(format!(
+                "storage {:.1} / {:.1} GB  read {} B/s  write {} B/s",
+                (g.total_bytes - g.available_bytes) as f64 / 1e9,
+                g.total_bytes as f64 / 1e9,
+                g.read_bytes_per_s,
+                g.write_bytes_per_s
+            ));
+        }
+        if let Some(g) = &self.battery {
+            lines.push(format!(
+                "battery charge {:?} {:.1}% state {} ({} min)  health {:?} {:.1}% condition {} cycles {}",
+                g.charge_availability,
+                f64::from(g.charge_per_mille) / 10.0,
+                g.state,
+                g.time_remaining_min,
+                g.condition_availability,
+                f64::from(g.max_capacity_per_mille) / 10.0,
+                g.condition,
+                g.cycle_count
+            ));
+        }
+        let agents = &self.agents;
+        lines.push(format!(
+            "agents {:?}: codex {} claude {} grok {}",
+            agents.availability, agents.state[0], agents.state[1], agents.state[2]
+        ));
+        let network = &self.network;
+        lines.push(format!(
+            "network {:?} kind {:?}{} rate {} context {:?} coverage {:?} ch {} station {} ssid {} bssid {}{}",
+            network.traffic_availability,
+            network.route_kind,
+            if network.via_tunnel { " via tunnel" } else { "" },
+            if network.traffic_availability == Availability::Available {
+                format!("{}/{} B/s", network.rx_bytes_per_s, network.tx_bytes_per_s)
+            } else {
+                "unavailable".to_string()
+            },
+            network.context_availability,
+            network.coverage,
+            network.channel,
+            if network.station.is_some() { "present" } else { "absent" },
+            if network.ssid.is_empty() { "absent" } else { "present" },
+            if network.bssid.is_some() { "present" } else { "absent" },
+            drops.unwrap_or_default()
+        ));
+        lines.push(match (self.cpu_per_mille, self.ram_bytes) {
+            (Some(v), Some((used, total))) => format!(
+                "cpu {:.1}%  ram {:.1} / {:.1} GB",
+                f64::from(v) / 10.0,
+                used as f64 / (1u64 << 30) as f64,
+                total as f64 / (1u64 << 30) as f64
+            ),
+            (Some(v), None) => format!("cpu {:.1}%  ram unavailable", f64::from(v) / 10.0),
+            (None, _) => "cpu unavailable".to_string(),
+        });
+        lines
+    }
+}
+
+/// The less healthy of two independent halves of one group.
+fn worst(a: Availability, b: Availability) -> Availability {
+    if a == Availability::Available {
+        b
+    } else {
+        a
     }
 }
 
@@ -439,16 +662,6 @@ fn agents_snapshot(sample: metrics::MetricSample<AgentsReading>) -> AgentsSnapsh
             state: [0; 3],
         },
     }
-}
-
-/// The per-user run directory that holds the provider socket:
-/// `$CYD_RUN_DIR`, else `~/Library/Application Support/CYD System Monitor/run`.
-fn run_dir() -> std::path::PathBuf {
-    if let Some(dir) = std::env::var_os("CYD_RUN_DIR") {
-        return dir.into();
-    }
-    let home = std::env::var_os("HOME").map_or_else(|| "/tmp".into(), std::path::PathBuf::from);
-    home.join("Library/Application Support/CYD System Monitor/run")
 }
 
 /// The wire group for one second of network collection. Each half carries its

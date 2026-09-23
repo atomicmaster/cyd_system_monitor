@@ -148,6 +148,16 @@ fn availability_for(status: PermissionStatus) -> ContextAvailability {
 }
 
 impl ContextTracker {
+    /// The last permission status the provider reported, if any.
+    pub fn permission(&self) -> Option<PermissionStatus> {
+        self.permission
+    }
+
+    /// Whether a provider connection that said `hello` is currently open.
+    pub fn is_connected(&self) -> bool {
+        self.connected
+    }
+
     pub fn on_connected(&mut self) {
         self.connected = true;
     }
@@ -263,7 +273,7 @@ pub enum MessageError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Value {
+pub enum Value {
     Str(String),
     Int(i64),
     Bool(bool),
@@ -272,7 +282,7 @@ enum Value {
 
 /// Parses `{"key": value, ...}` where values are strings without escapes,
 /// integers, booleans or null. Nothing nested, no floats, no duplicate keys.
-fn parse_flat_object(line: &[u8]) -> Result<Vec<(String, Value)>, MessageError> {
+pub fn parse_flat_object(line: &[u8]) -> Result<Vec<(String, Value)>, MessageError> {
     if line.len() > MAX_LINE_BYTES {
         return Err(MessageError::TooLong);
     }

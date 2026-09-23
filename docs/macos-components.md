@@ -29,7 +29,7 @@ Host WiFi band/channel context, when available, also lets the display show that 
 
 Future Linux and Windows adapters implement the same optional capability with native permission and availability states. No platform may invent or retain stale association identity when current access is unavailable.
 
-The provider socket contract between the daemon and the setup application is in [wifi-context-provider.md](wifi-context-provider.md).
+The provider socket contract between the daemon and the setup application is in [wifi-context-provider.md](wifi-context-provider.md); the daemon's local status and control socket used by the CLI and the setup application is in [host-control-ipc.md](host-control-ipc.md). The LaunchAgent is generated and driven by `cyd-host service` (label `com.cydsystemmonitor.hostd`, a placeholder until R01 fixes the product identifier); its daemon log `hostd.log` in `~/Library/Logs/CYD System Monitor` follows the rotation policy below (one previous file is kept).
 
 ## Local lifecycle tools
 

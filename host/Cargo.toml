@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 [workspace]
 resolver = "2"
-members = ["daemon", "cli", "metrics", "platform-macos", "transport", "protocol"]
+members = ["daemon", "cli", "hostcore", "metrics", "platform-macos", "transport", "protocol"]
 
 [workspace.package]
 edition = "2021"

@@ -117,7 +117,8 @@ plus one heartbeat per second is far below that.
 Drops are counted, never silent: `malformed`, `oversized`, `out_of_order`
 (a `seq` or `t_ms` that went backwards), `rate_limited`, `wrong_uid`,
 `bad_version`, `replaced`, `closed_for_bad_lines`. The foreground `cyd-host run`
-prints them when any is non-zero, so TB08's status UI can surface them.
+prints them when any is non-zero, and `status` reports them
+([host-control-ipc.md](host-control-ipc.md)) for the setup UI.
 
 ## What the daemon reports
 
@@ -187,10 +188,12 @@ state one snapshot later.
   (`parse_provider_message`, `ContextTracker`, `FixtureProvider`); the
   `WifiContextProvider` trait is the seam the network collector reads.
 - Socket server: `host/platform-macos/src/wifi_context_server.rs`
-  (`WifiContextServer`), wired into the foreground link in
-  `host/cli/src/link.rs`.
+  (`WifiContextServer`), hosted by the daemon (`host/hostcore/src/daemon.rs`) and the
+  foreground `cyd-host run`; the Swift provider is
+  `macos/setup-app/Sources/SetupCore/{ProviderProtocol,ProviderRunner}.swift`.
 - Tests: `cargo test -p metrics wifi_context` and
   `cargo test -p platform-macos wifi_context_server` (temp-dir sockets, wrong
   uid, oversized, malformed, fuzz-style, replacement, stale socket, mode bits).
-- The real granted/denied integration with the SwiftUI provider is TB08's
-  gate, recorded jointly with TB05 and R03.
+- The Swift provider client and its wire tests are in `macos/setup-app`
+  (`swift test`). The real granted/denied integration with macOS Location is
+  TB08's gate, recorded jointly with TB05 and R03.

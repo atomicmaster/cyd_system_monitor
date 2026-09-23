@@ -18,11 +18,14 @@ build() {
 check() {
   require_tool swift "install Xcode / Command Line Tools" || return 1
   if command -v swift-format >/dev/null 2>&1; then
-    (cd "$(_macos_dir)" && swift-format lint --recursive Sources)
+    (cd "$(_macos_dir)" && swift-format lint --recursive Sources Tests)
   else
     echo "note: swift-format not installed; skipping lint (see ./dev doctor)"
   fi
   build
+  # Swift Testing (XCTest needs Xcode). Pure logic, temp-dir sockets only: no
+  # real Location, WiFi, launchd or user directory is touched.
+  (cd "$(_macos_dir)" && swift test)
 }
 
 run() {

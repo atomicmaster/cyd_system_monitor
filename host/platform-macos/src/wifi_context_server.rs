@@ -51,7 +51,7 @@ pub fn current_uid() -> u32 {
     unsafe { geteuid() }
 }
 
-fn peer_uid(stream: &UnixStream) -> Option<u32> {
+pub fn peer_uid(stream: &UnixStream) -> Option<u32> {
     let (mut uid, mut gid) = (0u32, 0u32);
     // SAFETY: a valid socket fd and valid out pointers.
     (unsafe { getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) } == 0).then_some(uid)
@@ -111,7 +111,7 @@ pub struct WifiContextServer {
 
 /// Creates (or tightens) the run directory: real directory, owned by the
 /// caller, no group or other access.
-fn prepare_dir(dir: &Path, uid: u32) -> io::Result<()> {
+pub fn prepare_dir(dir: &Path, uid: u32) -> io::Result<()> {
     DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     let meta = fs::symlink_metadata(dir)?;
     if !meta.file_type().is_dir() {
@@ -132,7 +132,7 @@ fn prepare_dir(dir: &Path, uid: u32) -> io::Result<()> {
 
 /// Removes a leftover socket from a crashed daemon; refuses when the path is
 /// something else or a live daemon still answers on it.
-fn clear_stale_socket(path: &Path, uid: u32) -> io::Result<()> {
+pub fn clear_stale_socket(path: &Path, uid: u32) -> io::Result<()> {
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),

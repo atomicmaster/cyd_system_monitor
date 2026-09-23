@@ -9,3 +9,6 @@ publish.workspace = true
 [[bin]]
 name = "cyd-hostd"
 path = "src/main.rs"
+
+[dependencies]
+hostcore = { path = "../hostcore" }

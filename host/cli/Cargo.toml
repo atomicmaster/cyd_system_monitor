@@ -11,7 +11,7 @@ name = "cyd-host"
 path = "src/main.rs"
 
 [dependencies]
+hostcore = { path = "../hostcore" }
 metrics = { path = "../metrics" }
 platform-macos = { path = "../platform-macos" }
 protocol = { path = "../protocol" }
-transport = { path = "../transport" }

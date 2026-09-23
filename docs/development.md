@@ -164,3 +164,21 @@ cyd-host unpair|reset-calibration --port ...                       # recovery co
 ```
 
 First pairing needs a touch on the display within 60 s; see `docs/tickets/TB02.md` for the operator steps.
+
+## Host service and setup status (TB08)
+
+```sh
+cd host && cargo build                      # cyd-host and cyd-hostd in host/target/debug
+cyd-host service install --dry-run --daemon-path "$PWD/target/debug/cyd-hostd"   # prints the plist
+cyd-host service install|uninstall|start|stop|restart|status   # the real per-user LaunchAgent
+cyd-host status | monitors | pair [--port P] | pair-cancel | stop  # talk to the running daemon
+```
+
+While `cyd-hostd` runs it owns the serial port: `cyd-host run` refuses and
+`unpair`/`reset-calibration`/`forget` are sent to the daemon. To try the daemon
+without touching real state:
+`CYD_RUN_DIR=$(mktemp -d) CYD_HOME=$(mktemp -d) target/debug/cyd-hostd &`.
+Tests use temp directories, a scripted device and a fake `launchctl`, never the
+real `~/Library/LaunchAgents`. `./dev check macos` runs `swift build` and
+`swift test` (Swift Testing; XCTest needs Xcode). Protocol:
+[host-control-ipc.md](host-control-ipc.md).

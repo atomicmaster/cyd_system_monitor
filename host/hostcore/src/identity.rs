@@ -5,7 +5,7 @@
 
 use std::fs;
 use std::io::{self, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identity {
@@ -19,12 +19,12 @@ pub fn random_bytes<const N: usize>() -> io::Result<[u8; N]> {
     Ok(bytes)
 }
 
-fn path() -> PathBuf {
-    let base = std::env::var_os("CYD_HOME")
+/// The Host's state directory: `$CYD_HOME`, else `~/.cyd-host`.
+pub fn state_dir() -> PathBuf {
+    std::env::var_os("CYD_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cyd-host")))
-        .unwrap_or_else(|| PathBuf::from(".cyd-host"));
-    base.join("identity")
+        .unwrap_or_else(|| PathBuf::from(".cyd-host"))
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -58,29 +58,44 @@ fn parse(text: &str) -> Option<Identity> {
     })
 }
 
-/// Loads the identity, creating a fresh Host identity on first use.
+/// Loads the identity from the default state directory, creating a fresh
+/// Host identity on first use.
 pub fn load_or_create() -> io::Result<Identity> {
-    if let Some(identity) = fs::read_to_string(path()).ok().and_then(|t| parse(&t)) {
+    load_or_create_in(&state_dir())
+}
+
+pub fn save(identity: &Identity) -> io::Result<()> {
+    save_in(&state_dir(), identity)
+}
+
+pub fn load_or_create_in(dir: &Path) -> io::Result<Identity> {
+    if let Some(identity) = fs::read_to_string(dir.join("identity"))
+        .ok()
+        .and_then(|t| parse(&t))
+    {
         return Ok(identity);
     }
     let identity = Identity {
         host: random_bytes()?,
         device: None,
     };
-    save(&identity)?;
+    save_in(dir, &identity)?;
     Ok(identity)
 }
 
-pub fn save(identity: &Identity) -> io::Result<()> {
-    let path = path();
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
+pub fn save_in(dir: &Path, identity: &Identity) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
     let mut text = format!("host={}\n", hex(&identity.host));
     if let Some(device) = identity.device {
         text.push_str(&format!("device={}\n", hex(&device)));
     }
-    fs::write(path, text)
+    fs::write(dir.join("identity"), text)
+}
+
+/// The first four bytes of a Pairing Identity as hex: enough for the Operator
+/// to tell displays apart, never the whole identity.
+pub fn short_form(identity: &[u8; 16]) -> String {
+    hex(&identity[..4])
 }
 
 #[cfg(test)]
@@ -95,8 +110,9 @@ mod tests {
         };
         let mut text = format!("host={}\n", hex(&original.host));
         text.push_str(&format!("device={}\n", hex(&original.device.unwrap())));
-        assert_eq!(parse(&text), Some(original));
+        assert_eq!(parse(&text), Some(original.clone()));
         assert_eq!(parse("host=zz\n"), None);
         assert_eq!(parse("device=00\n"), None);
+        assert_eq!(short_form(&original.host), "a5a5a5a5");
     }
 }

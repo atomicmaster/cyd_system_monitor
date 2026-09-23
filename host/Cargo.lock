@@ -6,15 +6,28 @@ version = 4
 name = "cli"
 version = "0.0.0"
 dependencies = [
+ "hostcore",
  "metrics",
  "platform-macos",
  "protocol",
- "transport",
 ]
 
 [[package]]
 name = "daemon"
 version = "0.0.0"
+dependencies = [
+ "hostcore",
+]
+
+[[package]]
+name = "hostcore"
+version = "0.0.0"
+dependencies = [
+ "metrics",
+ "platform-macos",
+ "protocol",
+ "transport",
+]
 
 [[package]]
 name = "metrics"

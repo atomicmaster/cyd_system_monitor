@@ -18,7 +18,7 @@ one line in one list.
 | Wire group | `protocol/CORE_PROTOCOL.md` group table row; `protocol/core/cpp/protocol.{hpp,cpp}` and `host/protocol/src/lib.rs` group types and codec; fixtures in `protocol/tools/gen_vectors.py` + `parity-matrix.txt` rows; group key = the next free body key | protocol files are serial: one metric at a time, gated by `parity_diff.py` |
 | Device state | a field on `HostState` and its apply/advance in `firmware/domain/src/host_state.cpp` | serial with the wire step |
 | Card | `firmware/domain/src/cards/<id>_card.cpp` (`Make<Id>Card`) | one `CYD_CARD(id, MakeIdCard)` line in `firmware/domain/include/firmware/domain/card_registry.def` |
-| Host collector | a `metrics::Collector` impl under `host/platform-macos/src/<id>.rs`; wire it into the snapshot in `host/cli/src/link.rs` | `link.rs` collector list (one line) |
+| Host collector | a `metrics::Collector` impl under `host/platform-macos/src/<id>.rs`; wire it into the snapshot in `host/hostcore/src/link.rs` | `link.rs` collector list (one line) |
 | Scenario | fixtures/expectations under `simulator/scenarios/<id>-*.expected` and a scenario file | one scenario registration in `simulator/src/main.cpp` |
 
 New card files are found by a CMake glob; re-run `./dev build` (or touch

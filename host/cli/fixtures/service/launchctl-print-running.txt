@@ -1,0 +1,15 @@
+gui/501/com.cydsystemmonitor.hostd = {
+	active count = 1
+	path = /Users/example/Library/LaunchAgents/com.cydsystemmonitor.hostd.plist
+	type = LaunchAgent
+	state = running
+
+	program = /opt/cyd/bin/cyd-hostd
+	arguments = {
+		/opt/cyd/bin/cyd-hostd
+	}
+
+	pid = 4242
+	immediate reason = ipc (mach)
+	properties = keepalive | runatload
+}

@@ -1,0 +1,9 @@
+gui/501/com.cydsystemmonitor.hostd = {
+	active count = 0
+	path = /Users/example/Library/LaunchAgents/com.cydsystemmonitor.hostd.plist
+	type = LaunchAgent
+	state = not running
+
+	last exit code = 1
+	properties = keepalive | runatload
+}
