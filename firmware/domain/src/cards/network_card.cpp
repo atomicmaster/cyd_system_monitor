@@ -102,9 +102,9 @@ std::string RouteNote(const NetworkMetricState& network, bool context_retained) 
 // primary route reports the tunnel's own rate labelled "VPN" and is never
 // summed with the interface beneath it. An unavailable rate is `--` with the
 // reason (a first sample or a route change is unavailable, never 0); offline
-// says so. The traffic and WiFi-context halves have their own freshness; a
-// stale context reads "WiFi context ?" while live rates continue. No bar: a
-// rate is not a proportion.
+// says so ("Last Offline", dimmed, once stale). The traffic and WiFi-context halves have their own
+// freshness; a stale context reads "WiFi context ?" while live rates continue. No bar: a rate is
+// not a proportion.
 MetricCardView MakeNetworkCard(const HostState& state, uint64_t /*now_ms*/) {
   MetricCardView view{.title = "Network", .value = "--", .show_bar = false};
   const NetworkMetricState& network = state.network;
@@ -117,7 +117,10 @@ MetricCardView MakeNetworkCard(const HostState& state, uint64_t /*now_ms*/) {
   const bool context_retained =
       link_lost || network.context_freshness == protocol::Freshness::kStale;
   if (network.route_kind == protocol::RouteKind::kNone) {
-    view.note = "Offline";
+    // Offline is a reading like a rate: once stale or the link is lost it is
+    // retained and dimmed as "Last Offline", never shown as current.
+    view.note = traffic_retained ? "Last Offline" : "Offline";
+    view.dimmed = traffic_retained;
     return view;
   }
   if (network.traffic_availability != protocol::Availability::kAvailable) {

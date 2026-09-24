@@ -172,9 +172,12 @@ state one snapshot later.
    (`locationManagerDidChangeAuthorization`). Use `unsupported` if the platform
    cannot provide it and `error` for failures.
 4. Send `context` whenever the association, channel, band or permission changes
-   and every second while connected. Set `availability` to `available` only if
-   CoreWLAN returned an SSID or BSSID; if permission is granted and it returned
-   neither, send `authorized_unavailable`; use the permission states otherwise.
+   and every second while connected (never more than 1 s between two
+   `context` lines, counting the time a poll takes). Set `availability` to
+   `available` only if CoreWLAN returned an SSID or BSSID that is valid and
+   will actually be sent (1-32 octets; six hex pairs); if permission is granted
+   and it returned neither, or only invalid ones, send `authorized_unavailable`;
+   use the permission states otherwise.
    Send band and channel whenever CoreWLAN gives them, with SSID/BSSID `null`
    when not `available`.
 5. Never send coordinates, location objects, place names, timestamps of

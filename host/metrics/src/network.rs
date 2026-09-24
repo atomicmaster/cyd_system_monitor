@@ -84,6 +84,9 @@ pub struct SystemView {
 /// Reads the system view. `None` when it cannot be read at all.
 pub trait NetworkSystem {
     fn read(&mut self) -> Option<SystemView>;
+    /// Drop anything cached between reads (after a sleep the hardware may
+    /// have changed).
+    fn invalidate(&mut self) {}
 }
 
 /// The interface the Monitored Host's primary route uses.
@@ -385,6 +388,13 @@ impl Collector for NetworkCollector {
         let wifi = self.wifi(view.as_ref(), now_ms);
         MetricSample::available(NetworkReading { traffic, wifi })
     }
+
+    /// The provider's context needs nothing: it is aged by the same clock and
+    /// dropped past 15 s.
+    fn on_wake(&mut self) {
+        self.sampler.reset();
+        self.system.invalidate();
+    }
 }
 
 #[cfg(test)]
@@ -619,6 +629,39 @@ mod tests {
         assert_eq!(second.wifi.coverage, Coverage::Unknown);
         assert_eq!(second.wifi.station, Some([2, 0, 0, 0, 0, 6]));
         assert!(second.wifi.ssid.is_empty() && second.wifi.bssid.is_none());
+    }
+
+    #[test]
+    fn a_wake_forgets_the_rate_baseline_and_the_system_view_cache() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+        struct Counting(u64, Arc<AtomicU32>);
+        impl NetworkSystem for Counting {
+            fn read(&mut self) -> Option<SystemView> {
+                self.0 += 1_000;
+                Some(wifi_view(self.0, 0))
+            }
+            fn invalidate(&mut self) {
+                self.1.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let invalidated = Arc::new(AtomicU32::new(0));
+        let mut c = NetworkCollector::new(
+            Box::new(Counting(0, invalidated.clone())),
+            Box::new(FixtureProvider::absent()),
+        );
+        c.collect(0);
+        assert!(c.collect(1000).value.unwrap().traffic.rate.is_some());
+        // Even a wake that the rate interval alone would not reveal is never
+        // averaged across: the first post-wake sample is a new baseline.
+        c.on_wake();
+        assert_eq!(invalidated.load(Ordering::SeqCst), 1);
+        let woke = c.collect(2000).value.unwrap().traffic;
+        assert_eq!(
+            (woke.availability, woke.rate),
+            (MetricAvailability::TemporarilyUnavailable, None)
+        );
+        assert!(c.collect(3000).value.unwrap().traffic.rate.is_some());
     }
 
     #[test]

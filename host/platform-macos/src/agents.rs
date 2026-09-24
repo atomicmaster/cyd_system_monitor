@@ -19,7 +19,9 @@
 //! make the whole source an error. A budget overrun or a failed listing is a
 //! failed scan: the last good sample is retained (its age keeps growing, and
 //! the device marks it stale after 15 s) until [`RETAIN_MS`], then the source
-//! is reported as an error.
+//! is reported as an error. With no good sample yet, the source is temporarily
+//! unavailable until scans have failed for [`RETAIN_MS`], then an error. A
+//! failed scan is retried at the normal [`REFRESH_MS`] cadence.
 
 use metrics::agents::{classify, AgentState, ProcessRecord, AGENT_COUNT};
 use metrics::{Collector, MetricAvailability, MetricSample};
@@ -53,7 +55,8 @@ pub struct AgentsCollector {
     home: String,
     sample: Option<([AgentState; AGENT_COUNT], u64)>,
     next_scan_ms: u64,
-    last_scan_failed: bool,
+    /// When the current run of failed scans began; `None` after a success.
+    failing_since_ms: Option<u64>,
 }
 
 impl AgentsCollector {
@@ -73,7 +76,7 @@ impl AgentsCollector {
             home,
             sample: None,
             next_scan_ms: 0,
-            last_scan_failed: false,
+            failing_since_ms: None,
         }
     }
 }
@@ -88,24 +91,25 @@ impl Collector for AgentsCollector {
     type Reading = AgentsReading;
 
     fn collect(&mut self, now_ms: u64) -> MetricSample<AgentsReading> {
-        if self.sample.is_none() || now_ms >= self.next_scan_ms {
+        if now_ms >= self.next_scan_ms {
+            // Success or failure, the next scan is one refresh away: a failing
+            // listing is not retried on every one-second tick.
+            self.next_scan_ms = now_ms.saturating_add(REFRESH_MS);
             match (self.source)() {
                 Some(records) => {
                     self.sample = Some((classify(&records, self.uid, &self.home), now_ms));
-                    self.next_scan_ms = now_ms.saturating_add(REFRESH_MS);
-                    self.last_scan_failed = false;
+                    self.failing_since_ms = None;
                 }
-                // A failed scan is retried on the next call.
                 None => {
-                    self.next_scan_ms = 0;
-                    self.last_scan_failed = true;
+                    self.failing_since_ms.get_or_insert(now_ms);
                 }
             }
         }
+        let failing = self.failing_since_ms.is_some();
         match self.sample {
             Some((states, sampled_ms)) => {
                 let age = now_ms.saturating_sub(sampled_ms);
-                if age >= RETAIN_MS && self.last_scan_failed {
+                if age >= RETAIN_MS && failing {
                     // Scans have kept failing: stop showing an old presence.
                     MetricSample::unavailable(MetricAvailability::Error)
                 } else {
@@ -115,8 +119,21 @@ impl Collector for AgentsCollector {
                     })
                 }
             }
-            None => MetricSample::unavailable(MetricAvailability::TemporarilyUnavailable),
+            // Never listed: a transient failure first, an error once scans
+            // have failed as long as a retained sample would have lasted.
+            None => MetricSample::unavailable(match self.failing_since_ms {
+                Some(since) if now_ms.saturating_sub(since) >= RETAIN_MS => {
+                    MetricAvailability::Error
+                }
+                _ => MetricAvailability::TemporarilyUnavailable,
+            }),
         }
+    }
+
+    /// Scan again before the next snapshot; a failing rescan leaves the old
+    /// presence to age out by its sleep-inclusive age.
+    fn on_wake(&mut self) {
+        self.next_scan_ms = 0;
     }
 }
 
@@ -348,18 +365,49 @@ mod tests {
     }
 
     #[test]
+    fn scans_failing_from_startup_become_an_error_after_15_s_at_the_normal_cadence() {
+        let calls = Rc::new(Cell::new(0));
+        let script = Rc::new(RefCell::new(vec![None]));
+        let mut c = collector(script.clone(), calls.clone());
+        for now in (0..RETAIN_MS).step_by(1_000) {
+            assert_eq!(
+                c.collect(now).availability,
+                MetricAvailability::TemporarilyUnavailable,
+                "at {now} ms"
+            );
+        }
+        // Retried every 5 s, not on every one-second tick.
+        assert_eq!(calls.get(), 3);
+        assert_eq!(c.collect(RETAIN_MS).availability, MetricAvailability::Error);
+        assert_eq!(
+            c.collect(RETAIN_MS + 1_000).availability,
+            MetricAvailability::Error
+        );
+        assert_eq!(calls.get(), 4);
+        // The listing comes back: presence is reported at once from that scan.
+        *script.borrow_mut() = vec![Some(vec![rec(CLAUDE)])];
+        let back = c.collect(RETAIN_MS + 5_000).value.unwrap();
+        assert_eq!(
+            (back.states[1], back.age_ms),
+            (AgentState::RunningActivityUnknown, 0)
+        );
+    }
+
+    #[test]
     fn a_failed_refresh_retains_the_old_sample_then_reports_an_error() {
         let calls = Rc::new(Cell::new(0));
         let script = Rc::new(RefCell::new(vec![Some(vec![rec(CLAUDE)]), None]));
         let mut c = collector(script, calls.clone());
         c.collect(1_000);
         // Refresh fails: the sample stays, with its growing age, and the scan
-        // is retried on every call.
+        // is retried at the normal 5 s cadence.
         let kept = c.collect(6_000).value.unwrap();
         assert_eq!(kept.states[1], AgentState::RunningActivityUnknown);
         assert_eq!(kept.age_ms, 5_000);
         let kept = c.collect(7_000).value.unwrap();
-        assert_eq!((kept.age_ms, calls.get()), (6_000, 3));
+        assert_eq!((kept.age_ms, calls.get()), (6_000, 2));
+        c.collect(11_000);
+        assert_eq!(calls.get(), 3);
         // Retention lapses: an error, not a stale "running" forever.
         let gone = c.collect(16_000);
         assert_eq!(gone.availability, MetricAvailability::Error);
@@ -379,8 +427,39 @@ mod tests {
         c.collect(5_000);
         c.collect(10_000);
         assert_eq!(c.collect(15_000).availability, MetricAvailability::Error);
-        let back = c.collect(16_000).value.unwrap();
+        assert_eq!(c.collect(16_000).availability, MetricAvailability::Error);
+        let back = c.collect(20_000).value.unwrap();
         assert_eq!((back.states, back.age_ms), ([AgentState::NotRunning; 3], 0));
+    }
+
+    #[test]
+    fn a_wake_rescans_at_once_and_a_failed_rescan_shows_the_sleep() {
+        let calls = Rc::new(Cell::new(0));
+        let script = Rc::new(RefCell::new(vec![
+            Some(vec![rec(CLAUDE)]),
+            Some(vec![]),
+            None,
+        ]));
+        let mut c = collector(script, calls.clone());
+        c.collect(1_000);
+        c.collect(2_000);
+        assert_eq!(calls.get(), 1);
+        // Woken 1 s later by the monotonic clock's reckoning (a short nap):
+        // the scan runs before the next snapshot anyway.
+        c.on_wake();
+        let r = c.collect(3_000).value.unwrap();
+        assert_eq!(
+            (calls.get(), r.states, r.age_ms),
+            (2, [AgentState::NotRunning; 3], 0)
+        );
+        // A two-hour sleep and a failing rescan: the old presence is past its
+        // retention by the sleep-inclusive age, so it is an error, not shown.
+        c.on_wake();
+        assert_eq!(
+            c.collect(3_000 + 7_200_000).availability,
+            MetricAvailability::Error
+        );
+        assert_eq!(calls.get(), 3);
     }
 
     #[test]

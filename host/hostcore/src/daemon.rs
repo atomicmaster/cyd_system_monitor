@@ -38,11 +38,15 @@ use crate::logging::Logger;
 /// How long the control server waits for the supervisor to answer a command.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// Monotonic milliseconds since the daemon started, with an injectable skew
-/// so tests can jump time (provider staleness, sleep/wake) without waiting.
+pub use platform_macos::time::NowMs;
+
+/// Monotonic milliseconds since the daemon started, counting time the Mac
+/// spent asleep ([`platform_macos::time::monotonic_ms`]), with an injectable
+/// skew so tests can jump time (provider staleness, sleep/wake) without
+/// waiting. Every sample age, staleness limit and rate interval uses it.
 #[derive(Clone)]
 pub struct Clock {
-    epoch: Instant,
+    origin_ms: u64,
     skew_ms: Arc<AtomicU64>,
 }
 
@@ -55,17 +59,20 @@ impl Default for Clock {
 impl Clock {
     pub fn new() -> Self {
         Self {
-            epoch: Instant::now(),
+            origin_ms: platform_macos::time::monotonic_ms(),
             skew_ms: Arc::new(AtomicU64::new(0)),
         }
     }
 
-    pub fn epoch(&self) -> Instant {
-        self.epoch
+    pub fn now_ms(&self) -> u64 {
+        platform_macos::time::monotonic_ms().saturating_sub(self.origin_ms)
+            + self.skew_ms.load(Ordering::Relaxed)
     }
 
-    pub fn now_ms(&self) -> u64 {
-        self.epoch.elapsed().as_millis() as u64 + self.skew_ms.load(Ordering::Relaxed)
+    /// This clock as a shareable function, for the provider socket's tracker.
+    pub fn now_fn(&self) -> NowMs {
+        let clock = self.clone();
+        Arc::new(move || clock.now_ms())
     }
 
     /// Wall-clock milliseconds; a jump larger than the snapshot period means
@@ -77,7 +84,7 @@ impl Clock {
             + self.skew_ms.load(Ordering::Relaxed)
     }
 
-    /// Test hook: jumps both clocks forward.
+    /// Test hook: jumps both clocks forward, as a sleep does.
     pub fn advance(&self, ms: u64) {
         self.skew_ms.fetch_add(ms, Ordering::Relaxed);
     }
@@ -218,7 +225,8 @@ struct LinkStatus {
 struct Shared {
     link: LinkStatus,
     last_snapshot_utc_ms: Option<u64>,
-    last_snapshot_at: Option<Instant>,
+    /// [`Clock::now_ms`] of the latest snapshot.
+    last_snapshot_ms: Option<u64>,
     snapshots: u64,
     groups: Vec<(&'static str, &'static str)>,
 }
@@ -276,7 +284,7 @@ struct DaemonHandler {
     tracker: Option<Arc<Mutex<ContextTracker>>>,
     discovery: Arc<dyn PortDiscovery>,
     clock: Clock,
-    started: Instant,
+    started_ms: u64,
     version: &'static str,
 }
 
@@ -342,7 +350,7 @@ impl DaemonHandler {
              \"unknown_command\":{},\"busy\":{},\"closed_for_bad_lines\":{}}}}}}}",
             json_string(self.version),
             std::process::id(),
-            self.started.elapsed().as_secs(),
+            now.saturating_sub(self.started_ms) / 1000,
             current_uid(),
             link.state.name(),
             opt_str(link.detail.as_deref()),
@@ -354,8 +362,8 @@ impl DaemonHandler {
             s.snapshots,
             s.last_snapshot_utc_ms
                 .map_or("null".into(), |v| v.to_string()),
-            s.last_snapshot_at
-                .map_or("null".into(), |t| t.elapsed().as_millis().to_string()),
+            s.last_snapshot_ms
+                .map_or("null".into(), |t| now.saturating_sub(t).to_string()),
             metrics.join(","),
             provider_state,
             context,
@@ -831,7 +839,7 @@ impl ServeObserver for Observer<'_> {
     fn on_snapshot(&mut self, collected: &Collected) {
         let mut s = lock(&self.sup.shared);
         s.snapshots += 1;
-        s.last_snapshot_at = Some(Instant::now());
+        s.last_snapshot_ms = Some(self.sup.config.clock.now_ms());
         s.last_snapshot_utc_ms = Some(crate::link::utc_ms());
         s.groups = collected
             .group_availability()
@@ -918,7 +926,7 @@ impl Daemon {
         let provider = match WifiContextServer::start(ServerConfig {
             dir: config.run_dir.clone(),
             expected_uid: current_uid(),
-            epoch: clock.epoch(),
+            now_ms: clock.now_fn(),
         }) {
             Ok(server) => Some(Arc::new(server)),
             Err(e) => {
@@ -940,7 +948,7 @@ impl Daemon {
                 sessions: 0,
             },
             last_snapshot_utc_ms: None,
-            last_snapshot_at: None,
+            last_snapshot_ms: None,
             snapshots: 0,
             groups: Vec::new(),
         }));
@@ -953,7 +961,7 @@ impl Daemon {
             tracker,
             discovery: config.discovery.clone(),
             clock: clock.clone(),
-            started: Instant::now(),
+            started_ms: clock.now_ms(),
             version: env!("CARGO_PKG_VERSION"),
         });
         let control = match ControlServer::start(&config.run_dir, current_uid(), handler) {

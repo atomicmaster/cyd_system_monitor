@@ -30,7 +30,10 @@ pub const MAX_REQUEST_BYTES: usize = MAX_LINE_BYTES;
 pub const MAX_RESPONSE_BYTES: usize = 8192;
 const MAX_CONNECTIONS: usize = 8;
 const MAX_CONSECUTIVE_BAD: u32 = 16;
-const IDLE_LIMIT: Duration = Duration::from_secs(10);
+/// Each request line must be complete this long after the connection opened
+/// or the previous reply was sent; a slower client is closed, so clients
+/// trickling bytes cannot hold every connection slot.
+const LINE_DEADLINE: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(50);
 const MAX_SOCKET_PATH: usize = 104;
 
@@ -205,6 +208,16 @@ pub struct ControlServer {
 
 impl ControlServer {
     pub fn start(dir: &Path, expected_uid: u32, handler: Arc<dyn Handler>) -> io::Result<Self> {
+        Self::start_with_deadline(dir, expected_uid, handler, LINE_DEADLINE)
+    }
+
+    /// [`ControlServer::start`] with another per-line deadline (tests).
+    pub fn start_with_deadline(
+        dir: &Path,
+        expected_uid: u32,
+        handler: Arc<dyn Handler>,
+        line_deadline: Duration,
+    ) -> io::Result<Self> {
         let path = dir.join(SOCKET_NAME);
         if path.as_os_str().len() >= MAX_SOCKET_PATH {
             return Err(io::Error::other("the socket path is too long for sun_path"));
@@ -220,7 +233,16 @@ impl ControlServer {
             let (counters, stop) = (counters.clone(), stop.clone());
             thread::Builder::new()
                 .name("control-ipc".into())
-                .spawn(move || accept_loop(listener, expected_uid, handler, counters, stop))?
+                .spawn(move || {
+                    accept_loop(
+                        listener,
+                        expected_uid,
+                        handler,
+                        counters,
+                        stop,
+                        line_deadline,
+                    )
+                })?
         };
         Ok(Self {
             path,
@@ -255,6 +277,7 @@ fn accept_loop(
     handler: Arc<dyn Handler>,
     counters: Arc<Counters>,
     stop: Arc<AtomicBool>,
+    line_deadline: Duration,
 ) {
     let mut workers: Vec<JoinHandle<()>> = Vec::new();
     while !stop.load(Ordering::Relaxed) {
@@ -275,7 +298,13 @@ fn accept_loop(
                         thread::Builder::new()
                             .name("control-conn".into())
                             .spawn(move || {
-                                serve_connection(stream, handler.as_ref(), &counters, &stop);
+                                serve_connection(
+                                    stream,
+                                    handler.as_ref(),
+                                    &counters,
+                                    &stop,
+                                    line_deadline,
+                                );
                                 counters.active.fetch_sub(1, Ordering::Relaxed);
                             });
                     match spawned {
@@ -301,6 +330,7 @@ fn serve_connection(
     handler: &dyn Handler,
     counters: &Counters,
     stop: &AtomicBool,
+    line_deadline: Duration,
 ) {
     if stream.set_read_timeout(Some(POLL)).is_err()
         || stream
@@ -312,9 +342,10 @@ fn serve_connection(
     let mut line: Vec<u8> = Vec::new();
     let mut discarding = false;
     let mut consecutive_bad = 0u32;
-    let mut last_activity = Instant::now();
+    // Absolute, not idle: bytes arriving do not extend it, only a whole line.
+    let mut line_started = Instant::now();
     let mut buf = [0u8; 512];
-    while !stop.load(Ordering::Relaxed) && last_activity.elapsed() < IDLE_LIMIT {
+    while !stop.load(Ordering::Relaxed) && line_started.elapsed() < line_deadline {
         let n = match stream.read(&mut buf) {
             Ok(0) => return,
             Ok(n) => n,
@@ -330,7 +361,6 @@ fn serve_connection(
             }
             Err(_) => return,
         };
-        last_activity = Instant::now();
         for &byte in &buf[..n] {
             if byte != b'\n' {
                 if discarding {
@@ -395,6 +425,9 @@ fn serve_connection(
                     return;
                 }
             }
+            // The next line's clock starts once this one is answered (a
+            // command may take the supervisor many seconds).
+            line_started = Instant::now();
             if consecutive_bad >= MAX_CONSECUTIVE_BAD {
                 bump(&counters.closed_for_bad_lines);
                 return;
@@ -615,6 +648,77 @@ mod tests {
         std::thread::sleep(Duration::from_millis(100));
         let stats = server.stats();
         assert_eq!((stats.wrong_uid, stats.requests), (1, 0));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clients_trickling_bytes_are_closed_at_the_line_deadline_and_cannot_lock_others_out() {
+        let dir = temp("trickle");
+        let deadline = Duration::from_millis(400);
+        let server =
+            ControlServer::start_with_deadline(&dir, current_uid(), Arc::new(Echo), deadline)
+                .unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        // Every slot taken by a client sending one byte every 20 ms, never a
+        // whole line.
+        let tricklers: Vec<_> = (0..MAX_CONNECTIONS)
+            .map(|_| {
+                let mut stream = UnixStream::connect(dir.join(SOCKET_NAME)).unwrap();
+                let stop = stop.clone();
+                thread::spawn(move || {
+                    let opened = Instant::now();
+                    while !stop.load(Ordering::Relaxed) {
+                        if stream.write_all(b" ").is_err() {
+                            return Some(opened.elapsed());
+                        }
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    None
+                })
+            })
+            .collect();
+        let end = Instant::now() + Duration::from_secs(5);
+        while server.stats().accepted < MAX_CONNECTIONS as u64 {
+            assert!(Instant::now() < end, "tricklers not accepted");
+            thread::sleep(Duration::from_millis(10));
+        }
+        thread::sleep(deadline * 2);
+        // The slow clients are gone: the app or CLI is answered.
+        let reply = request(&dir, &simple_request("status"), Duration::from_secs(2));
+        stop.store(true, Ordering::Relaxed);
+        assert!(reply.is_ok_and(|r| r.contains("\"ok\":true")));
+        for trickler in tricklers {
+            let closed_after = trickler.join().unwrap().expect("closed by the server");
+            assert!(closed_after < deadline * 3, "{closed_after:?}");
+        }
+        drop(server);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_line_on_time_after_a_slow_reply_is_still_served() {
+        let dir = temp("ontime");
+        let deadline = Duration::from_millis(300);
+        let _server =
+            ControlServer::start_with_deadline(&dir, current_uid(), Arc::new(Echo), deadline)
+                .unwrap();
+        let mut stream = UnixStream::connect(dir.join(SOCKET_NAME)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut buf = [0u8; 256];
+        for _ in 0..3 {
+            // Each request arrives within the deadline of the previous reply,
+            // though the connection as a whole lives longer than it.
+            thread::sleep(deadline / 2);
+            stream
+                .write_all(format!("{}\n", simple_request("status")).as_bytes())
+                .unwrap();
+            let n = stream.read(&mut buf).unwrap();
+            assert!(std::str::from_utf8(&buf[..n])
+                .unwrap()
+                .contains("\"ok\":true"));
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 

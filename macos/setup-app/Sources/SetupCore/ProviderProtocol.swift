@@ -31,9 +31,9 @@ public struct ProviderMessageBuilder {
         sample: WifiSample?
     ) -> String {
         defer { seq += 1 }
-        let identityAllowed = availability == .available
-        let ssid = identityAllowed ? sample?.ssid.flatMap { $0.count <= 32 && !$0.isEmpty ? $0 : nil } : nil
-        let bssid = identityAllowed ? sample?.bssid.flatMap(Self.validMac) : nil
+        let identity = availability == .available ? sample.map(sanitizedIdentity) : nil
+        let ssid = identity?.ssid
+        let bssid = identity?.bssid
         let channel = sample?.channel.flatMap { (1...233).contains($0) ? $0 : nil }
         return line(
             "{\"v\":1,\"type\":\"context\",\"seq\":\(seq),\"t_ms\":\(min(tMs, 1 << 53)),"
@@ -57,22 +57,51 @@ public struct ProviderMessageBuilder {
         return "\"\(clean)\""
     }
 
-    static func validMac(_ text: String) -> String? {
-        let parts = text.lowercased().split(separator: ":", omittingEmptySubsequences: false)
-        guard parts.count == 6,
-            parts.allSatisfy({ $0.count == 2 && $0.allSatisfy(\.isHexDigit) })
-        else { return nil }
-        return parts.joined(separator: ":")
+}
+
+/// When a heartbeat `context` goes out so that two context lines are never
+/// more than `heartbeatMs` apart, although the runner only looks every
+/// `pollMs` and each look (a CoreWLAN read, a socket write, a late wake-up)
+/// takes time: a heartbeat is due `leadMs` before the second is up, and the
+/// wait before the next look is cut short to land on that moment.
+public struct HeartbeatSchedule: Equatable, Sendable {
+    public let heartbeatMs: UInt64
+    public let pollMs: UInt64
+    /// Slack for one look's own duration; must exceed it.
+    public let leadMs: UInt64
+
+    public init(heartbeatMs: UInt64 = 1_000, pollMs: UInt64 = 250, leadMs: UInt64 = 100) {
+        self.heartbeatMs = heartbeatMs
+        self.pollMs = pollMs
+        self.leadMs = min(leadMs, heartbeatMs)
+    }
+
+    private func deadline(_ lastSentMs: UInt64) -> UInt64 {
+        lastSentMs + heartbeatMs - leadMs
+    }
+
+    /// Whether a context must be sent now. A clock that went backwards is due.
+    public func due(nowMs: UInt64, lastSentMs: UInt64?) -> Bool {
+        guard let last = lastSentMs else { return true }
+        return nowMs < last || nowMs >= deadline(last)
+    }
+
+    /// How long to wait before looking again.
+    public func waitMs(nowMs: UInt64, lastSentMs: UInt64?) -> UInt64 {
+        guard let last = lastSentMs, nowMs >= last else { return pollMs }
+        let untilDue = deadline(last) > nowMs ? deadline(last) - nowMs : 0
+        return min(pollMs, untilDue)
     }
 }
 
 /// One provider connection's send policy. A `context` goes out on every change
-/// and at least once per second; `permission_status` goes out right after
-/// `hello` and whenever the permission changes. A new session per connection
-/// (`seq` and `t_ms` restart).
+/// and at least once per second ([`HeartbeatSchedule`]); `permission_status`
+/// goes out right after `hello` and whenever the permission changes. A new
+/// session per connection (`seq` and `t_ms` restart).
 public struct ProviderSession {
     public static let heartbeatMs: UInt64 = 1_000
 
+    private let schedule: HeartbeatSchedule
     private var builder = ProviderMessageBuilder()
     private var lastPermission: PermissionStatus?
     private var lastContext: (availability: ContextAvailability, read: WifiReadResult)?
@@ -80,9 +109,16 @@ public struct ProviderSession {
     private let provider: String
     private let version: String
 
-    public init(provider: String, version: String) {
+    /// `pollMs`: how often the caller looks (and calls `tick`) at most.
+    public init(provider: String, version: String, pollMs: UInt64 = 250) {
         self.provider = provider
         self.version = version
+        self.schedule = HeartbeatSchedule(heartbeatMs: Self.heartbeatMs, pollMs: pollMs)
+    }
+
+    /// How long the caller may wait before the next `tick`.
+    public func nextWaitMs(tMs: UInt64) -> UInt64 {
+        schedule.waitMs(nowMs: tMs, lastSentMs: lastContextAt)
     }
 
     public func helloLine() -> String {
@@ -104,7 +140,7 @@ public struct ProviderSession {
         let availability = contextAvailability(permission: permission, read: read)
         let changed =
             lastContext.map { $0.availability != availability || $0.read != read } ?? true
-        let due = lastContextAt.map { tMs >= $0 + Self.heartbeatMs } ?? true
+        let due = schedule.due(nowMs: tMs, lastSentMs: lastContextAt)
         if permissionChanged || changed || due {
             var sample: WifiSample?
             if case .sample(let s) = read { sample = s }

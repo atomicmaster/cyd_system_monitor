@@ -17,7 +17,7 @@ Privacy rules, each covered by a test or by construction:
 - Identity is never a bare name (`a_same_named_unrelated_binary_never_counts`).
 - A path must be absolute, at most 1024 bytes, without NUL, empty, `.`, `..` or empty segments, or it is rejected, not truncated.
 - Version-numbered directories match a strict `N.N.N[-|+tail]` segment (tail at most 32 of `[A-Za-z0-9.-]`), not a wildcard: `latest`, `1.2`, `1.2.3.4` and `..` do not match.
-- A process that exits between listing and inspection is skipped; it does not make the source an error. A failed listing, a pid table above 4,096 entries, or a scan over 100 ms is a failed scan: the last good sample is kept with its growing age (the device dims it after 15 s) and after 15 s the source is an error (`--`, `Read error`), never "not running".
+- A process that exits between listing and inspection is skipped; it does not make the source an error. A failed listing, a pid table above 4,096 entries, or a scan over 100 ms is a failed scan: the last good sample is kept with its growing age (the device dims it after 15 s) and after 15 s the source is an error (`--`, `Read error`), never "not running". With no good sample yet (failing from startup) the source is temporarily unavailable, then an error once scans have failed for 15 s. A failed scan is retried at the normal 5 s cadence, never every second.
 
 Allowlist (`~` is the current user's `realpath`ed home; a version segment is `<semver>`). "Verified" rows were resolved on the development Mac by reading symlinks only (no agent was run and no agent file was read); the rest are the documented layouts of the same installers and are unverified there.
 

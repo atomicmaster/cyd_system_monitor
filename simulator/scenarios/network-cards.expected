@@ -40,3 +40,9 @@ last frame 2.9 s ago: still live
   Network | D1.2M U340K | WiFi ch6 2.4GHz | show_bar=0 | has_value=1 | dimmed=0
 35 s without a frame: link lost
   Network | Last D1.2M U340K | WiFi context ? | show_bar=0 | has_value=1 | dimmed=1
+offline again, fresh
+  Network | -- | Offline | show_bar=0 | has_value=0 | dimmed=0
+offline sample 3 s old
+  Network | -- | Last Offline | show_bar=0 | has_value=0 | dimmed=1
+offline, then 34 s without a frame: link lost
+  Network | -- | Last Offline | show_bar=0 | has_value=0 | dimmed=1

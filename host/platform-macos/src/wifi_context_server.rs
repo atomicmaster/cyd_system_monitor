@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::time::NowMs;
 use metrics::wifi_context::{
     parse_provider_message, ContextTracker, MessageError, ProviderMessage, TrackerProvider,
     IPC_VERSION, MAX_LINE_BYTES,
@@ -57,15 +58,16 @@ pub fn peer_uid(stream: &UnixStream) -> Option<u32> {
     (unsafe { getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) } == 0).then_some(uid)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ServerConfig {
     /// The per-user run directory; created 0700 if missing.
     pub dir: PathBuf,
     /// The only uid whose connections are accepted: the daemon's own
     /// ([`current_uid`]); tests pass another to exercise the refusal.
     pub expected_uid: u32,
-    /// The monotonic clock the collector uses, so context ages line up.
-    pub epoch: Instant,
+    /// The monotonic clock the collector uses (it counts sleep), so context
+    /// ages line up and a context from before a sleep is as old as the sleep.
+    pub now_ms: NowMs,
 }
 
 /// What the server has refused or dropped since it started.
@@ -237,10 +239,6 @@ enum Verdict {
     Close,
 }
 
-fn now_ms(epoch: Instant) -> u64 {
-    epoch.elapsed().as_millis() as u64
-}
-
 fn serve(
     listener: UnixListener,
     config: ServerConfig,
@@ -290,7 +288,7 @@ fn serve(
             Ok(n) => {
                 let mut verdict = Verdict::Keep;
                 for &byte in &buf[..n] {
-                    if let Verdict::Close = feed(conn, byte, &tracker, &counters, config.epoch) {
+                    if let Verdict::Close = feed(conn, byte, &tracker, &counters, &config.now_ms) {
                         verdict = Verdict::Close;
                         break;
                     }
@@ -336,7 +334,7 @@ fn feed(
     byte: u8,
     tracker: &Arc<Mutex<ContextTracker>>,
     counters: &Counters,
-    epoch: Instant,
+    now_ms: &NowMs,
 ) -> Verdict {
     if byte != b'\n' {
         if conn.discarding {
@@ -360,7 +358,7 @@ fn feed(
     if line.is_empty() {
         return Verdict::Keep; // a blank line is harmless
     }
-    handle_line(conn, &line, tracker, counters, epoch)
+    handle_line(conn, &line, tracker, counters, now_ms)
 }
 
 fn bad_line(conn: &mut Connection, counters: &Counters) -> Verdict {
@@ -378,7 +376,7 @@ fn handle_line(
     line: &[u8],
     tracker: &Arc<Mutex<ContextTracker>>,
     counters: &Counters,
-    epoch: Instant,
+    now_ms: &NowMs,
 ) -> Verdict {
     let now = Instant::now();
     while conn
@@ -456,7 +454,7 @@ fn handle_line(
         } => {
             conn.last_seq = Some(seq);
             conn.last_t_ms = t_ms;
-            t.on_context(context, age_ms, now_ms(epoch));
+            t.on_context(context, age_ms, now_ms());
             bump(&counters.applied);
         }
     }
@@ -482,11 +480,16 @@ mod tests {
         dir
     }
 
+    /// A server on a test clock that stands still at 0 unless moved.
     fn config(dir: &Path) -> ServerConfig {
+        config_with_clock(dir, Arc::new(AtomicU64::new(0)))
+    }
+
+    fn config_with_clock(dir: &Path, clock: Arc<AtomicU64>) -> ServerConfig {
         ServerConfig {
             dir: dir.to_path_buf(),
             expected_uid: current_uid(),
-            epoch: Instant::now(),
+            now_ms: Arc::new(move || clock.load(Ordering::SeqCst)),
         }
     }
 
@@ -541,9 +544,7 @@ mod tests {
         server.provider().latest(now).context.availability
     }
     fn server_now(_: &WifiContextServer) -> u64 {
-        // Ages are only compared against the tracker's own receive time, and
-        // the tests read within milliseconds.
-        0
+        0 // the clock of `config`
     }
 
     #[test]
@@ -597,6 +598,42 @@ mod tests {
                 .availability
                 == ContextAvailability::Error
         });
+        drop(server);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_context_received_before_a_sleep_is_as_old_as_the_sleep_and_is_dropped() {
+        let dir = temp_dir();
+        let clock = Arc::new(AtomicU64::new(50_000));
+        let server = WifiContextServer::start(config_with_clock(&dir, clock.clone())).unwrap();
+        let mut client = Client::connect(&server).hello();
+        client.send(&context(1, 100, "available", "6", r#""4359442d54657374""#));
+        wait_until("context applied", || server.stats().applied == 1);
+        let mut provider = server.provider();
+        clock.store(51_000, Ordering::SeqCst);
+        let fresh = provider.latest(clock.load(Ordering::SeqCst));
+        assert_eq!(fresh.context.availability, ContextAvailability::Available);
+        assert_eq!(fresh.age_ms, 1_000);
+        // The Mac sleeps for two hours with the provider still connected: the
+        // daemon's clock counts the sleep, so the context is 2 h old on wake
+        // and is dropped (15 s limit), never shown as a seconds-old context.
+        clock.store(51_000 + 2 * 3_600_000, Ordering::SeqCst);
+        let woke = provider.latest(clock.load(Ordering::SeqCst));
+        assert_eq!(woke.context.availability, ContextAvailability::Error);
+        assert!(woke.context.ssid.is_none() && woke.context.channel.is_none());
+        // The provider's fresh context on wake is reported again.
+        client.send(&context(2, 200, "available", "11", "null"));
+        wait_until("wake context applied", || server.stats().applied == 2);
+        let again = provider.latest(clock.load(Ordering::SeqCst));
+        assert_eq!(
+            (
+                again.context.availability,
+                again.context.channel,
+                again.age_ms
+            ),
+            (ContextAvailability::Available, Some(11), 0)
+        );
         drop(server);
         fs::remove_dir_all(&dir).unwrap();
     }

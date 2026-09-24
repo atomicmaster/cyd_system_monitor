@@ -453,10 +453,18 @@ fn provider_context_degrades_to_error_after_15_s_of_silence_or_disconnect() {
         "granted",
         "last reported state kept"
     );
+    // The provider socket receives on the daemon's own (sleep-inclusive)
+    // clock, so a context sent after the jump is fresh again.
+    send_provider(
+        &mut stream,
+        &[CONTEXT.replace("\"seq\":2", "\"seq\":3").as_str()],
+    );
+    rig.wait_status("fresh context after the jump", |s| {
+        field(s, "availability") == "available"
+    });
 
     // A provider that goes away: the value ages out the same way, and the
-    // daemon carries on. (Separate rig: the injected skew is permanent, so a
-    // "fresh" message after it would already look old to the real-time server.)
+    // daemon carries on.
     let rig2 = Rig::new("provider2");
     let mut stream = UnixStream::connect(rig2.run_dir().join("wifi-context.sock")).unwrap();
     send_provider(&mut stream, &[HELLO, PERMISSION, CONTEXT]);

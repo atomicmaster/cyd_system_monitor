@@ -33,7 +33,7 @@ public final class ProviderRunner {
     private var generation = 0
     private var connectionState = ProviderConnection.stopped
     private var thread: Thread?
-    private let origin = DispatchTime.now().uptimeNanoseconds
+    private let origin = ProviderRunner.continuousNs()
 
     public init(
         socketPath: String = RunPaths.providerSocket(),
@@ -93,8 +93,14 @@ public final class ProviderRunner {
         lock.unlock()
     }
 
+    /// Counts time asleep (unlike `DispatchTime`), so on wake the heartbeat
+    /// is overdue and a fresh `context` goes out at once.
+    private static func continuousNs() -> UInt64 {
+        clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW)
+    }
+
     private func monotonicMs() -> UInt64 {
-        (DispatchTime.now().uptimeNanoseconds - origin) / 1_000_000
+        (Self.continuousNs() - origin) / 1_000_000
     }
 
     private func sleep(ms: Int, run: Int) {
@@ -122,7 +128,7 @@ public final class ProviderRunner {
     /// One connection: hello, wait for the ack, then send until stopped or the
     /// daemon goes away (a write fails).
     func serve(_ socket: UnixSocket, run: Int) throws {
-        var session = ProviderSession(provider: provider, version: version)
+        var session = ProviderSession(provider: provider, version: version, pollMs: UInt64(pollMs))
         try socket.writeLine(session.helloLine())
         let ack = try socket.readLine(maxBytes: ProviderMessageBuilder.maxLineBytes)
         guard ack.contains("\"hello_ack\"") else { throw SocketError.closed }
@@ -134,7 +140,8 @@ public final class ProviderRunner {
             for line in session.tick(tMs: tMs, permission: sensor.authorization(), read: sensor.read()) {
                 try socket.writeLine(line)
             }
-            sleep(ms: pollMs, run: run)
+            // At most `pollMs`, less when the heartbeat falls due sooner.
+            sleep(ms: Int(session.nextWaitMs(tMs: monotonicMs())), run: run)
         }
     }
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <cstdio>
+#include <string>
 
 #include "firmware/domain/coverage.hpp"
 
@@ -111,24 +112,52 @@ int main() {
   }
 
   // The persistent status text distinguishes observed, gap, unknown, off, fault, and Host only.
+  // The status line names the current (or most recent) Observation Window and
+  // each radio's problem state. It never shows a percentage: observed share of
+  // the requested window time is not capture coverage of a channel.
   {
     ObservationScheduler scheduler;
     CoverageLedger ledger;
-    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 0)) == "WiFi ? BLE ?",
-           "no report reads unknown, never quiet");
-    ledger.Record({*scheduler.NextWindow(0), 205, 0});
-    ledger.Record({*scheduler.NextWindow(205), 0, 0});
-    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 410)) == "WiFi 100% BLE gap",
-           "observed share and a lost window read differently");
+    const auto text = [&](uint64_t now_ms) {
+      return CoverageStatusText(MakeCoverageView(scheduler, ledger, now_ms));
+    };
+    Expect(text(0) == "WiFi ? BLE ?", "no report reads unknown, never quiet");
+    ledger.Record({*scheduler.NextWindow(0), 205, 0});  // WiFi ch1, observed
+    Expect(text(205) == "WiFi ch1 BLE ?",
+           "the WiFi window names its channel; BLE is still unknown");
+    ledger.Record({*scheduler.NextWindow(205), 205, 0});  // BLE, observed
+    Expect(text(410) == "BLE scan",
+           "the BLE window is current; healthy WiFi between windows is not listed");
+    ledger.Record({*scheduler.NextWindow(410), 205, 0});  // WiFi ch2, observed
+    Expect(text(615) == "WiFi ch2", "the next WiFi window names its own channel");
+    Expect(text(615).find('%') == std::string::npos, "no percentage in the status line");
+    ledger.Record({*scheduler.NextWindow(615), 0, 0});  // BLE, lost
+    Expect(text(820) == "BLE gap", "a lost window reads gap");
+    ledger.Record({*scheduler.NextWindow(820), 205, 0});  // WiFi ch3, observed
+    Expect(text(1025) == "WiFi ch3 BLE gap",
+           "the gap stays visible while the other radio observes");
+    Expect(FormatCoverage(MakeCoverageView(scheduler, ledger, 1025)).find("ble=gap 500/1000") !=
+               std::string::npos,
+           "the replay checkpoint keeps the observed share");
     ledger.SetFault(Radio::kWifi, "init failed");
-    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 410)) == "WiFi fault BLE gap",
-           "a fault reads fault");
+    Expect(text(1025) == "WiFi fault BLE gap", "a fault reads fault");
     scheduler.Configure({.wifi_enabled = false});
-    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 410)).find("WiFi off") == 0,
-           "a disabled radio reads off");
+    Expect(text(1025) == "WiFi off BLE gap", "a disabled radio reads off");
     scheduler.Configure({.wifi_enabled = false, .ble_enabled = false});
-    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 410)) == "Host only",
-           "both radios off reads Host only");
+    Expect(text(1025) == "Host only", "both radios off reads Host only");
+    scheduler.Configure({});
+    ledger.ClearFault(Radio::kWifi);
+    Expect(text(60'000) == "WiFi ? BLE ?", "reports gone stale read unknown, not the last window");
+  }
+  {
+    ObservationScheduler scheduler({.ble_enabled = false, .wifi_channels = {6, 11}});
+    CoverageLedger ledger;
+    ledger.Record({*scheduler.NextWindow(0), 205, 0});
+    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 205)) == "WiFi ch6 BLE off",
+           "WiFi alone: its window and BLE off");
+    ledger.Record({*scheduler.NextWindow(205), 60, 0});  // under half observed
+    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 410)) == "WiFi gap BLE off",
+           "a lost current WiFi window reads gap, not its channel");
   }
 
   // The gap list is bounded; older gaps roll off but stay in the totals.

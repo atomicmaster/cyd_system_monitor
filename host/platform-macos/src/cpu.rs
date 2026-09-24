@@ -48,6 +48,10 @@ impl Collector for CpuCollector {
             }
         }
     }
+
+    fn on_wake(&mut self) {
+        self.sampler.reset();
+    }
 }
 
 #[cfg(test)]
@@ -78,6 +82,9 @@ mod collector_tests {
         let mut cpu = CpuCollector::with_source(ticks);
         assert_eq!(cpu.collect(0).value, None, "first sample is a baseline");
         assert_eq!(cpu.collect(1000).value, Some(300));
+        cpu.on_wake();
+        assert_eq!(cpu.collect(2000).value, None, "no rate across a sleep");
+        assert_eq!(cpu.collect(3000).value, Some(300));
     }
 }
 

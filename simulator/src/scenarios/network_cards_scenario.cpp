@@ -222,6 +222,22 @@ int RunNetworkCards() {
   result.Expect(view.dimmed && view.value == "Last D1.2M U340K" && view.note == "WiFi context ?",
                 "link loss retains rates as Last and drops the context to unknown");
 
+  // Offline goes stale like any reading: a stale route sample or a lost link
+  // retains it dimmed as "Last Offline", never a live-looking "Offline".
+  push(90'000, ++seq, offline);
+  view = at(90'000, "offline again, fresh");
+  result.Expect(view.note == "Offline" && !view.dimmed, "a fresh offline route is not dimmed");
+  auto old_offline = offline;
+  old_offline.traffic_age_ms = 3'000;
+  push(91'000, ++seq, old_offline);
+  view = at(91'000, "offline sample 3 s old");
+  result.Expect(view.value == "--" && view.note == "Last Offline" && view.dimmed && !view.has_value,
+                "a stale offline sample is retained as Last Offline, dimmed");
+  push(92'000, ++seq, offline);
+  view = at(126'000, "offline, then 34 s without a frame: link lost");
+  result.Expect(view.note == "Last Offline" && view.dimmed,
+                "link loss retains offline as Last Offline, dimmed");
+
   const std::string path = std::string(CYD_SIMULATOR_SCENARIO_DIR) + "/network-cards.expected";
   if (std::getenv("CYD_UPDATE_EXPECTED") != nullptr) std::ofstream(path) << transcript.str();
   std::ifstream expected_file(path);

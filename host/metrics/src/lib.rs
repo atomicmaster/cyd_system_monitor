@@ -55,9 +55,18 @@ impl<T> MetricSample<T> {
 /// decides how its value is displayed. A slow source (a subprocess, a
 /// permission prompt) keeps its own cache and returns the last sample with
 /// its age, or an unavailable sample, rather than stalling this call.
+///
+/// `now_ms` is a monotonic clock that keeps counting while the Mac sleeps, so
+/// a cached sample's age includes any sleep since it was taken.
 pub trait Collector {
     type Reading;
     fn collect(&mut self, now_ms: u64) -> MetricSample<Self::Reading>;
+
+    /// The Mac slept. Forget every rate baseline (the next rate is
+    /// unavailable, never an average across the sleep) and make every cached
+    /// slow sample refresh on the next `collect`. A refresh that fails keeps
+    /// the old sample with its true, sleep-inclusive age.
+    fn on_wake(&mut self) {}
 }
 
 /// Physical RAM Occupied as two byte counts (total minus free pages).
@@ -480,6 +489,13 @@ mod tests {
             )
         };
         assert_eq!(physical_disk_name("disk1s1", &loops), None);
+    }
+
+    #[test]
+    fn a_wake_is_a_no_op_for_a_stateless_collector() {
+        let mut ram = ScriptedCollector::new(vec![MetricSample::available(1u8)]);
+        ram.on_wake();
+        assert_eq!(ram.collect(0).value, Some(1));
     }
 
     #[test]

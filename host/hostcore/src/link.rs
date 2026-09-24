@@ -37,6 +37,11 @@ const SNAPSHOT_PERIOD: Duration = Duration::from_secs(1);
 /// Mac slept: the link is resynchronized with a fresh session.
 const WAKE_GAP_MS: u64 = 5_000;
 
+/// Whether a clock moved from `last` to `now` by more than a tick can explain.
+fn slept(last: u64, now: u64) -> bool {
+    now.saturating_sub(last) > SNAPSHOT_PERIOD.as_millis() as u64 + WAKE_GAP_MS
+}
+
 /// The byte channel to the display: a serial port, or a scripted device.
 pub trait Channel: Send {
     /// Reads up to `buf.len()` bytes, waiting at most `timeout`; 0 on timeout.
@@ -251,18 +256,22 @@ impl Link {
         observer: &mut dyn ServeObserver,
     ) -> Result<ServeEnd, LinkError> {
         let mut next = Instant::now();
-        let mut last_wall = wall();
+        let (mut last_wall, mut last_mono) = (wall(), clock());
         let mut buf = [0u8; 512];
         loop {
-            let wall_now = wall();
-            if wall_now.saturating_sub(last_wall) > SNAPSHOT_PERIOD.as_millis() as u64 + WAKE_GAP_MS
-            {
+            let (wall_now, mono_now) = (wall(), clock());
+            // The pacing `Instant` stops while the Mac sleeps; the wall clock
+            // and the sleep-inclusive monotonic clock do not.
+            if slept(last_wall, wall_now) || slept(last_mono, mono_now) {
                 // The Mac slept: whatever the display saw is stale and the
-                // USB link may have been reset. Start over with a new session.
+                // USB link may have been reset. No rate may span the sleep and
+                // no cached sample may be re-sent as current: start over with
+                // a new session and freshly read sources.
+                collectors.on_wake();
                 return Ok(ServeEnd::Resync);
             }
-            last_wall = wall_now;
-            let collected = collectors.collect(clock());
+            (last_wall, last_mono) = (wall_now, mono_now);
+            let collected = collectors.collect(mono_now);
             self.client
                 .set_local_offset_minutes(platform_macos::time::local_offset_minutes());
             let frame = self
@@ -296,7 +305,7 @@ impl Link {
                         }
                         // The command may have taken seconds: restart the pace.
                         next = Instant::now();
-                        last_wall = wall();
+                        (last_wall, last_mono) = (wall(), clock());
                     }
                 }
                 let wait = next.saturating_duration_since(Instant::now());
@@ -394,7 +403,8 @@ pub trait ServeObserver {
     }
 }
 
-/// All metric collectors, kept across reconnects so rates stay continuous.
+/// All metric collectors, kept across reconnects so rates stay continuous
+/// (except across a sleep: see [`Collectors::on_wake`]).
 pub struct Collectors {
     cpu: CpuCollector,
     ram: RamCollector,
@@ -418,14 +428,42 @@ pub struct Collected {
 
 impl Collectors {
     pub fn new(provider: Box<dyn WifiContextProvider>) -> Self {
+        Self::from_parts(
+            CpuCollector::new(),
+            StorageCollector::new(),
+            BatteryCollector::new(),
+            AgentsCollector::new(),
+            platform_macos::network::collector(provider),
+        )
+    }
+
+    /// Collectors over given sources (RAM is always the real one).
+    pub fn from_parts(
+        cpu: CpuCollector,
+        storage: StorageCollector,
+        battery: BatteryCollector,
+        agents: AgentsCollector,
+        network: NetworkCollector,
+    ) -> Self {
         Self {
-            cpu: CpuCollector::new(),
+            cpu,
             ram: RamCollector::new(),
-            storage: StorageCollector::new(),
-            battery: BatteryCollector::new(),
-            agents: AgentsCollector::new(),
-            network: platform_macos::network::collector(provider),
+            storage,
+            battery,
+            agents,
+            network,
         }
+    }
+
+    /// The Mac slept: every rate re-baselines and every cached slow source
+    /// is read again before the next snapshot (`Collector::on_wake`).
+    pub fn on_wake(&mut self) {
+        self.cpu.on_wake();
+        self.ram.on_wake();
+        self.storage.on_wake();
+        self.battery.on_wake();
+        self.agents.on_wake();
+        self.network.on_wake();
     }
 
     pub fn collect(&mut self, now_ms: u64) -> Collected {
@@ -856,6 +894,178 @@ mod tests {
         ));
         assert_eq!(down.availability, Availability::TemporarilyUnavailable);
         assert_eq!((down.state, down.source_age_ms), ([0; 3], 0));
+    }
+
+    #[test]
+    fn a_gap_on_either_clock_means_the_mac_slept() {
+        assert!(!slept(10_000, 11_000));
+        assert!(!slept(10_000, 10_000 + 6_000), "a late tick is not a sleep");
+        assert!(slept(10_000, 10_000 + 6_001));
+        assert!(!slept(10_000, 9_000), "a clock set back is not a sleep");
+    }
+
+    /// Every slow source and rate of the real collectors, over fakes: a
+    /// simulated two-hour sleep (a monotonic jump plus the wake `serve`
+    /// reports) never lets a pre-sleep reading through as current.
+    #[test]
+    fn a_simulated_sleep_restarts_every_rate_and_refreshes_or_ages_every_cached_source() {
+        use metrics::network::{
+            InterfaceCounters, InterfaceInfo, LinkKind, NetworkSystem, SystemView,
+        };
+        use metrics::wifi_context::{
+            AssociationContext as Context, ContextTracker, TrackerProvider, WifiBand,
+        };
+        use metrics::{CpuTicks, DiskCounters, StorageCapacityReading};
+        use platform_macos::battery::ChargeProbe;
+        use std::cell::Cell;
+        use std::rc::Rc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        static CPU_READS: AtomicU32 = AtomicU32::new(0);
+        fn ticks() -> Option<CpuTicks> {
+            let n = CPU_READS.fetch_add(1, Ordering::SeqCst);
+            Some(CpuTicks {
+                user: 10 * n,
+                system: 0,
+                idle: 90 * n,
+                nice: 0,
+            })
+        }
+        struct Wifi(u64);
+        impl NetworkSystem for Wifi {
+            fn read(&mut self) -> Option<SystemView> {
+                self.0 += 1_000;
+                Some(SystemView {
+                    interfaces: vec![InterfaceInfo {
+                        name: "en0".into(),
+                        index: 6,
+                        kind: LinkKind::Wifi,
+                        up_running: true,
+                        station: Some([2, 0, 0, 0, 0, 6]),
+                        counters: Some(InterfaceCounters {
+                            rx_bytes: self.0,
+                            tx_bytes: self.0,
+                        }),
+                    }],
+                    default_routes: vec![metrics::network::DefaultRoute {
+                        interface: "en0".into(),
+                        scoped: false,
+                    }],
+                })
+            }
+        }
+        // After the sleep the charge and process listing fail; capacity works.
+        let awake = Rc::new(Cell::new(true));
+        let (charge_ok, scan_ok) = (awake.clone(), awake.clone());
+        let capacity_reads = Rc::new(Cell::new(0u32));
+        let capacity_seen = capacity_reads.clone();
+        let mut disk = 0u64;
+        let tracker = Arc::new(Mutex::new(ContextTracker::default()));
+        let mut collectors = Collectors::from_parts(
+            CpuCollector::with_source(ticks),
+            StorageCollector::with_sources(
+                Box::new(move || {
+                    capacity_seen.set(capacity_seen.get() + 1);
+                    Some(StorageCapacityReading {
+                        total_bytes: 500,
+                        available_bytes: 200,
+                    })
+                }),
+                Box::new(move || {
+                    disk += 4_096;
+                    Some((
+                        DiskCounters {
+                            read_bytes: disk,
+                            write_bytes: disk,
+                        },
+                        "disk0".into(),
+                    ))
+                }),
+            ),
+            BatteryCollector::with_sources(
+                Box::new(move || {
+                    if charge_ok.get() {
+                        ChargeProbe::Battery(BatteryChargeReading {
+                            per_mille: 800,
+                            state: BatteryState::Discharging,
+                            time_remaining_min: Some(120),
+                        })
+                    } else {
+                        ChargeProbe::Failed
+                    }
+                }),
+                Box::new(|| Some("Battery Power".into())),
+                Arc::new(|| Ok(metrics::battery::PowerProfile::NoBattery)),
+            ),
+            AgentsCollector::with_source(
+                Box::new(move || scan_ok.get().then(Vec::new)),
+                501,
+                "/Users/tester".into(),
+            ),
+            NetworkCollector::new(
+                Box::new(Wifi(0)),
+                Box::new(TrackerProvider(tracker.clone())),
+            ),
+        );
+        tracker.lock().unwrap().on_context(
+            Context {
+                availability: ContextAvailability::Available,
+                band: Some(WifiBand::Ghz2_4),
+                channel: Some(6),
+                ssid: Some(b"CYD".to_vec()),
+                bssid: None,
+            },
+            0,
+            1_000,
+        );
+        collectors.collect(1_000);
+        let before = collectors.collect(2_000);
+        assert_eq!(before.cpu.availability, Availability::Available);
+        let storage = before.storage.unwrap();
+        assert_eq!(storage.io_availability, Availability::Available);
+        assert_eq!(before.network.traffic_availability, Availability::Available);
+        assert_eq!(before.battery.unwrap().charge_age_ms, 1_000);
+        assert_eq!(before.agents.availability, Availability::Available);
+        assert_eq!(
+            (
+                before.network.context_availability,
+                before.network.context_age_ms
+            ),
+            (AssociationContext::Available, 1_000)
+        );
+
+        // Two hours asleep: the daemon's clock jumps by the sleep.
+        awake.set(false);
+        collectors.on_wake();
+        let after = collectors.collect(2_000 + 7_200_000);
+        // No rate is averaged across the sleep.
+        assert_eq!(after.cpu.availability, Availability::TemporarilyUnavailable);
+        let storage = after.storage.unwrap();
+        assert_eq!(
+            storage.io_availability,
+            Availability::TemporarilyUnavailable
+        );
+        assert_eq!(
+            after.network.traffic_availability,
+            Availability::TemporarilyUnavailable
+        );
+        // Capacity was read again; the charge re-read failed, so the 80% from
+        // before the sleep carries its full age and the display shows it stale.
+        assert_eq!((capacity_reads.get(), storage.capacity_age_ms), (2, 0));
+        let battery = after.battery.unwrap();
+        assert_eq!(
+            (battery.charge_per_mille, battery.charge_age_ms),
+            (800, 7_201_000)
+        );
+        // The failed rescan leaves presence past its retention: an error.
+        assert_eq!(after.agents.availability, Availability::Error);
+        // The context from before the sleep is dropped, not re-sent as fresh.
+        assert_eq!(
+            after.network.context_availability,
+            AssociationContext::Error
+        );
+        assert!(after.network.ssid.is_empty() && after.network.channel == 0);
     }
 
     #[test]

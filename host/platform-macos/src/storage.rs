@@ -118,6 +118,12 @@ impl Collector for StorageCollector {
             io,
         })
     }
+
+    fn on_wake(&mut self) {
+        self.next_capacity_ms = 0;
+        self.sampler.reset();
+        self.device = None;
+    }
 }
 
 /// What the real source resolved for `/`, for diagnostics.
@@ -521,6 +527,45 @@ mod tests {
         let kept = c.collect(31_000).value.unwrap();
         assert_eq!(kept.capacity.value, Some(cap(500, 100)));
         assert_eq!(kept.capacity_age_ms, 30_000, "the old sample keeps ageing");
+    }
+
+    #[test]
+    fn a_wake_rereads_capacity_and_rebaselines_io_and_a_failed_reread_shows_the_sleep() {
+        let calls = Rc::new(RefCell::new(0u32));
+        let seen = calls.clone();
+        let fail = Rc::new(RefCell::new(false));
+        let failing = fail.clone();
+        let mut n = 0u64;
+        let mut c = StorageCollector::with_sources(
+            Box::new(move || {
+                *seen.borrow_mut() += 1;
+                (!*failing.borrow()).then(|| cap(500, 200))
+            }),
+            Box::new(move || {
+                n += 1;
+                counters(n * 1_000, n * 1_000, "disk0")
+            }),
+        );
+        c.collect(1_000);
+        assert!(c.collect(2_000).value.unwrap().io.value.is_some());
+        // A 10 s sleep: shorter than the 30 s capacity cadence, but the
+        // capacity is read again at once and the rate starts over.
+        c.on_wake();
+        let woke = c.collect(12_000).value.unwrap();
+        assert_eq!(*calls.borrow(), 2, "capacity re-read on wake");
+        assert_eq!(woke.capacity_age_ms, 0);
+        assert_eq!(
+            woke.io.availability,
+            MetricAvailability::TemporarilyUnavailable
+        );
+        // After a two-hour sleep a failed re-read keeps the old sample aged by
+        // the sleep, so the device shows it stale rather than seconds old.
+        *fail.borrow_mut() = true;
+        c.on_wake();
+        let late = c.collect(12_000 + 7_200_000).value.unwrap();
+        assert_eq!(late.capacity.value, Some(cap(500, 200)));
+        assert_eq!(late.capacity_age_ms, 7_200_000);
+        assert_eq!(late.io.value, None);
     }
 
     #[test]

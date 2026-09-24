@@ -67,8 +67,8 @@ private func sequence(_ lines: [String]) -> [Int] {
     all += first
 
     #expect(session.tick(tMs: 250, permission: .notRequested, read: read).isEmpty)
-    #expect(session.tick(tMs: 999, permission: .notRequested, read: read).isEmpty)
-    let heartbeat = session.tick(tMs: 1000, permission: .notRequested, read: read)
+    #expect(session.tick(tMs: 899, permission: .notRequested, read: read).isEmpty)
+    let heartbeat = session.tick(tMs: 900, permission: .notRequested, read: read)
     #expect(heartbeat.count == 1 && heartbeat[0].contains(#""type":"context""#))
     all += heartbeat
 
@@ -96,4 +96,56 @@ private func sequence(_ lines: [String]) -> [Int] {
     var next = ProviderSession(provider: "CYD Setup", version: "0.0.0")
     let lines = next.tick(tMs: 0, permission: .denied, read: .noInterface)
     #expect(sequence(lines) == [0, 1])
+}
+
+@Test func theHeartbeatIsDueBeforeTheNextLookCouldMakeItLate() {
+    let schedule = HeartbeatSchedule(heartbeatMs: 1_000, pollMs: 250, leadMs: 100)
+    #expect(schedule.due(nowMs: 0, lastSentMs: nil))
+    #expect(!schedule.due(nowMs: 899, lastSentMs: 0))
+    #expect(schedule.due(nowMs: 900, lastSentMs: 0))
+    // The wait is the poll interval, cut short so the look lands on time.
+    #expect(schedule.waitMs(nowMs: 0, lastSentMs: nil) == 250)
+    #expect(schedule.waitMs(nowMs: 100, lastSentMs: 0) == 250)
+    #expect(schedule.waitMs(nowMs: 750, lastSentMs: 0) == 150)
+    #expect(schedule.waitMs(nowMs: 950, lastSentMs: 0) == 0)
+    // A clock that went backwards (never with a monotonic clock) is due.
+    #expect(schedule.due(nowMs: 0, lastSentMs: 5_000))
+}
+
+@Test func heartbeatsNeverMoreThanOneSecondApartDespiteSlowTicksAndLateWakeups() {
+    // A polling loop whose every tick (sensor read plus send) and every sleep
+    // overrun take up to 99 ms in total: the gap between two context lines
+    // stays within one second, where a plain 250 ms poll let it reach 1.25 s.
+    let schedule = HeartbeatSchedule(heartbeatMs: 1_000, pollMs: 250, leadMs: 100)
+    var state: UInt64 = 0x9E37_79B9_7F4A_7C15
+    func jitter(_ bound: UInt64) -> UInt64 {
+        state ^= state << 13
+        state ^= state >> 7
+        state ^= state << 17
+        return state % bound
+    }
+    var now: UInt64 = 0
+    var last: UInt64?
+    var sends: [UInt64] = []
+    while now < 600_000 {
+        if schedule.due(nowMs: now, lastSentMs: last) {
+            sends.append(now)
+            last = now
+        }
+        let overrun = jitter(100)
+        now += overrun / 2  // the tick itself
+        now += schedule.waitMs(nowMs: now, lastSentMs: last) + (overrun - overrun / 2)
+    }
+    let gaps = zip(sends.dropFirst(), sends).map { $0 - $1 }
+    #expect(gaps.max()! <= 1_000)
+    #expect(gaps.min()! >= 800, "not much more often than needed")
+}
+
+@Test func aSessionSendsTheHeartbeatAheadOfTheSecond() {
+    var session = ProviderSession(provider: "CYD Setup", version: "0.0.0", pollMs: 250)
+    let read = WifiReadResult.sample(WifiSample(band: .ghz5, channel: 36))
+    #expect(session.tick(tMs: 0, permission: .denied, read: read).count == 2)
+    #expect(session.tick(tMs: 750, permission: .denied, read: read).isEmpty)
+    #expect(session.nextWaitMs(tMs: 750) == 150)
+    #expect(session.tick(tMs: 900, permission: .denied, read: read).count == 1)
 }

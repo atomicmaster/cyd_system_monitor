@@ -168,6 +168,9 @@ struct RadioCoverageView {
 struct CoverageView {
   RadioCoverageView wifi;
   RadioCoverageView ble;
+  // The radio whose Observation Window is current or most recently reported
+  // (fresh reports only); nullopt when neither radio has one.
+  std::optional<Radio> current;
   // Both radios disabled: only Host metrics are monitored.
   bool host_only = false;
   uint32_t wifi_revisit_ms = 0;
@@ -184,8 +187,12 @@ CoverageView MakeCoverageView(const ObservationScheduler& scheduler, const Cover
 // replay checkpoints.
 std::string FormatCoverage(const CoverageView& view);
 
-// Compact persistent-status text: "WiFi 93% BLE gap", "WiFi ? BLE off", "Host only".
-// A percentage is observed time, "gap" a lost window, "?" unknown (never quiet).
+// Compact persistent-status text: the current Observation Window plus each
+// radio's problem state, e.g. "WiFi ch6", "BLE scan", "WiFi ch6 BLE gap",
+// "WiFi ? BLE off", "Host only". A radio observing normally is named only while
+// its window is the current one; `gap` (a lost window), `?` (unknown, never
+// quiet), `off` and `fault` are always shown. No percentage: an observed share
+// of window time is not capture coverage of any channel.
 std::string CoverageStatusText(const CoverageView& view);
 
 }  // namespace firmware::domain

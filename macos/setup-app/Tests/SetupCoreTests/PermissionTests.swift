@@ -50,6 +50,40 @@ import Testing
     #expect(contextAvailability(permission: .error, read: .sample(ssid)) == .error)
 }
 
+@Test func identityThatWouldBeDroppedIsNotAvailable() {
+    // A malformed BSSID or an SSID over 32 octets is never sent, so it cannot
+    // make the context `available`: granted with nothing valid is
+    // `authorized_unavailable`.
+    let badMac = WifiSample(band: .ghz2_4, channel: 6, ssid: nil, bssid: "not-a-mac")
+    let longSSID = WifiSample(band: .ghz2_4, channel: 6, ssid: [UInt8](repeating: 0x61, count: 33))
+    let both = WifiSample(ssid: [UInt8](repeating: 0x61, count: 40), bssid: "aa:bb:cc:dd:ee")
+    for sample in [badMac, longSSID, both] {
+        #expect(contextAvailability(permission: .granted, read: .sample(sample)) == .authorizedUnavailable)
+        #expect(sanitizedIdentity(sample).isEmpty)
+    }
+    // One valid half is enough, and it is exactly what the builder sends.
+    let validMac = WifiSample(ssid: [UInt8](repeating: 0x61, count: 33), bssid: "AA:BB:CC:DD:EE:FF")
+    #expect(contextAvailability(permission: .granted, read: .sample(validMac)) == .available)
+    #expect(sanitizedIdentity(validMac) == WifiIdentity(ssid: nil, bssid: "aa:bb:cc:dd:ee:ff"))
+    let maxSSID = WifiSample(ssid: [UInt8](repeating: 0x61, count: 32), bssid: "bad")
+    #expect(sanitizedIdentity(maxSSID) == WifiIdentity(ssid: [UInt8](repeating: 0x61, count: 32), bssid: nil))
+}
+
+@Test func availableIsSentExactlyWhenTheLineCarriesAnSSIDOrBSSID() {
+    let ssids: [[UInt8]?] = [nil, [], [0x61], [UInt8](repeating: 1, count: 32), [UInt8](repeating: 1, count: 33)]
+    let bssids: [String?] = [nil, "", "aa:bb:cc:dd:ee:ff", "AA:BB:CC:DD:EE:FF", "aa:bb:cc:dd:ee", "aa-bb-cc-dd-ee-ff", "gg:bb:cc:dd:ee:ff"]
+    var builder = ProviderMessageBuilder()
+    for ssid in ssids {
+        for bssid in bssids {
+            let sample = WifiSample(band: .ghz2_4, channel: 6, ssid: ssid, bssid: bssid)
+            let availability = contextAvailability(permission: .granted, read: .sample(sample))
+            let line = builder.context(tMs: 0, availability: availability, sample: sample)
+            let carriesIdentity = !line.contains(#""ssid_hex":null,"bssid":null"#)
+            #expect((availability == .available) == carriesIdentity, "\(line)")
+        }
+    }
+}
+
 @Test func theRequestActionNeedsTheDisclosureAndAnUnaskedPermission() {
     #expect(!canRequestLocationPermission(disclosureShown: false, status: .notRequested))
     #expect(canRequestLocationPermission(disclosureShown: true, status: .notRequested))

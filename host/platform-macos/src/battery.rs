@@ -262,6 +262,13 @@ impl Collector for BatteryCollector {
             condition_age_ms,
         })
     }
+
+    /// The charge is read again before the next snapshot. The hourly
+    /// condition is not re-run: its sleep-inclusive age already says how old
+    /// it is, and it is re-run when that age makes it due.
+    fn on_wake(&mut self) {
+        self.next_charge_ms = 0;
+    }
 }
 
 /// Runs `program` with a hard timeout and an output cap; the child is killed on
@@ -553,6 +560,45 @@ mod tests {
         c.collect(31_000);
         assert_eq!(calls.get(), 2, "re-read after 30 s");
         assert_eq!(c.collect(31_000).value.unwrap().charge_age_ms, 0);
+    }
+
+    #[test]
+    fn a_wake_rereads_the_charge_and_a_failed_reread_shows_the_sleep() {
+        let reads = Rc::new(Cell::new(0u32));
+        let counter = Rc::clone(&reads);
+        let mut c = BatteryCollector::with_sources(
+            Box::new(move || {
+                counter.set(counter.get() + 1);
+                match counter.get() {
+                    1 => charge(800),
+                    2 => charge(640),
+                    _ => ChargeProbe::Failed,
+                }
+            }),
+            Box::new(|| Some("Battery Power".to_string())),
+            quick_runner(Ok(PowerProfile::NoBattery)),
+        );
+        assert_eq!(c.collect(1_000).value.unwrap().charge_age_ms, 0);
+        c.collect(5_000);
+        assert_eq!(reads.get(), 1);
+        // A 10 s sleep: inside the 30 s cadence, yet the charge is re-read
+        // before the next snapshot instead of re-sending 80% as current.
+        c.on_wake();
+        let r = c.collect(15_000).value.unwrap();
+        assert_eq!(reads.get(), 2);
+        assert_eq!(
+            (r.charge.value.unwrap().per_mille, r.charge_age_ms),
+            (640, 0)
+        );
+        // Two hours asleep and the re-read fails: the old charge is kept with
+        // its sleep-inclusive age (stale on the device), never as fresh.
+        c.on_wake();
+        let r = c.collect(15_000 + 7_200_000).value.unwrap();
+        assert_eq!(reads.get(), 3);
+        assert_eq!(
+            (r.charge.value.unwrap().per_mille, r.charge_age_ms),
+            (640, 7_200_000)
+        );
     }
 
     #[test]

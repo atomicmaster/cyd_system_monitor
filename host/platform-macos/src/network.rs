@@ -275,6 +275,10 @@ impl NetworkSystem for MacNetworkSystem {
             default_routes,
         })
     }
+
+    fn invalidate(&mut self) {
+        self.sc_read_at = None;
+    }
 }
 
 /// One `AF_LINK` entry of `getifaddrs`.

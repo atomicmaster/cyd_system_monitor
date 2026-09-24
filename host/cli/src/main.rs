@@ -121,7 +121,7 @@ fn run(port: &str) -> ExitCode {
         match WifiContextServer::start(ServerConfig {
             dir: paths::run_dir(),
             expected_uid: current_uid(),
-            epoch: clock.epoch(),
+            now_ms: clock.now_fn(),
         }) {
             Ok(server) => {
                 println!("WiFi context socket: {}", server.socket_path().display());

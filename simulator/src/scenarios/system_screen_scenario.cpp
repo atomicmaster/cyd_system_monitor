@@ -123,20 +123,96 @@ int RunSystemScreen() {
                 "coverage is unknown, not quiet, before the radio reports");
   run_windows(8000, 2, false);
   render(8500);
-  result.Expect(Has(ui.coverage_label(), "WiFi 100% BLE 100%"),
-                "reported observed time appears in the status bar");
-  run_windows(8500, 2, true);
-  render(9000);
+  result.Expect(Has(ui.coverage_label(), "BLE scan") && !Has(ui.coverage_label(), "%"),
+                "the bar names the current Observation Window, never a percentage");
+  run_windows(8500, 1, false);
+  render(8750);
+  result.Expect(Has(ui.coverage_label(), "WiFi ch2"), "a WiFi window names its channel");
+  run_windows(8705, 2, true);
+  render(9200);
   result.Expect(Has(ui.coverage_label(), "gap"), "a lost window shows as a gap in the status bar");
   scheduler.Configure({.wifi_enabled = false});
-  render(9100);
+  render(9300);
   result.Expect(Has(ui.coverage_label(), "WiFi off"), "a disabled radio reads off");
   scheduler.Configure({.wifi_enabled = false, .ble_enabled = false});
-  render(9200);
+  render(9400);
   result.Expect(Has(ui.coverage_label(), "Host only"), "both radios off reads Host only");
   render(200000);
   result.Expect(Has(ui.coverage_label(), "Host only") && !Has(ui.connection_label(), "Connected"),
                 "coverage stays in the bar while the Host link goes stale");
+
+  // The persistent bar: connection, coverage and clock side by side. Every
+  // coverage text is measured against the longest connection and clock texts.
+  {
+    lv_obj_update_layout(screen);
+    const auto width = [&](lv_obj_t* label, const std::string& text) {
+      lv_point_t size;
+      lv_text_get_size(&size, text.c_str(), lv_obj_get_style_text_font(label, 0), 0, 0,
+                       LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+      return static_cast<int>(size.x);
+    };
+    const auto widest = [&](lv_obj_t* label, const std::vector<std::string>& texts,
+                            std::string* which) {
+      int best = 0;
+      for (const auto& text : texts) {
+        if (width(label, text) > best) {
+          best = width(label, text);
+          *which = text;
+        }
+      }
+      return best;
+    };
+    const std::vector<std::string> connections = {"Waiting for Host", "Connected", "Stale",
+                                                  "Disconnected", "Incompatible Host"};
+    const std::vector<std::string> clocks = {"Time unavailable",  "12:58 PM UTC+12:45",
+                                             "10:58 PM UTC-9:30", "12:58 PM",
+                                             "23:58 UTC+12:45",   "23:58"};
+    std::vector<std::string> coverages = {"Host only"};
+    const domain::RadioState states[] = {domain::RadioState::kOperatorDisabled,
+                                         domain::RadioState::kFault, domain::RadioState::kNoData,
+                                         domain::RadioState::kObserving, domain::RadioState::kGap};
+    for (const auto wifi : states) {
+      for (const auto ble : states) {
+        for (int current = 0; current < 3; ++current) {
+          for (uint8_t channel = 1; channel <= 14; ++channel) {
+            domain::CoverageView v;
+            v.wifi.state = wifi;
+            v.wifi.last_channel = channel;
+            v.ble.state = ble;
+            if (current == 1) v.current = domain::Radio::kWifi;
+            if (current == 2) v.current = domain::Radio::kBle;
+            coverages.push_back(domain::CoverageStatusText(v));
+          }
+        }
+      }
+    }
+    std::string long_connection, long_clock, long_coverage, short_clock = "23:58";
+    const int connection_w = widest(ui.connection_label(), connections, &long_connection);
+    const int clock_w = widest(ui.clock_label(), clocks, &long_clock);
+    const int coverage_w = widest(ui.coverage_label(), coverages, &long_coverage);
+    const int bar_w = lv_obj_get_content_width(ui.status_bar());
+    const int gaps = 2 * lv_obj_get_style_pad_column(ui.status_bar(), 0);
+    const int need_worst = connection_w + coverage_w + clock_w + gaps;
+    const int connected_w = width(ui.connection_label(), "Connected");
+    const int need_24h = connected_w + coverage_w + width(ui.clock_label(), "23:58") + gaps;
+    const int need_12h = connected_w + coverage_w + width(ui.clock_label(), "12:58 PM") + gaps;
+    const int need_typical = connected_w + width(ui.coverage_label(), "WiFi ch11") +
+                             width(ui.clock_label(), "12:58 PM") + gaps;
+    // Known overflow (docs/tickets/TB09.md, Slice 2): the longest connection
+    // and clock texts do not fit together even with no coverage text at all.
+    std::printf(
+        "status bar %d px: worst connection \"%s\" %d + coverage \"%s\" %d + clock \"%s\" %d "
+        "+ gaps %d = %d; with Connected: 24 h %d, 12 h %d; typical \"WiFi ch11\" 12 h %d\n",
+        bar_w, long_connection.c_str(), connection_w, long_coverage.c_str(), coverage_w,
+        long_clock.c_str(), clock_w, gaps, need_worst, need_24h, need_12h, need_typical);
+    bool no_percentage = true;
+    for (const auto& text : coverages)
+      no_percentage = no_percentage && text.find('%') == std::string::npos;
+    result.Expect(no_percentage, "no coverage text is a percentage");
+    result.Expect(need_24h <= bar_w, "every coverage text fits beside Connected and a 24 h clock");
+    result.Expect(need_typical <= bar_w,
+                  "a current-window text fits beside Connected and a 12 h clock");
+  }
 
   // Six cards (the Overview's 2x3 grid) fit the 320x240 display with no
   // scrolling, and realistic worst-case text fits its card without clipping.
@@ -390,6 +466,18 @@ int RunSystemScreen() {
       g.route_kind = proto::RouteKind::kWifi;
       push_network(g);
       measure("unavailable");
+    }
+    // Offline retained after the Host link is lost: "Last Offline", dimmed.
+    {
+      proto::NetworkSnapshot g;
+      g.traffic_availability = proto::Availability::kAbsent;
+      g.route_kind = proto::RouteKind::kNone;
+      push_network(g);
+      render(3'040'000);
+      measure("offline, link lost");
+      result.Expect(Has(ui.card(network_index).note_label(), "Last Offline") &&
+                        ui.card(network_index).dimmed(),
+                    "offline after link loss reads Last Offline, dimmed");
     }
     std::printf("network widest value %d px, widest note %d px\n", widest_value, widest_note);
     result.Expect(variants > 500 && fits,

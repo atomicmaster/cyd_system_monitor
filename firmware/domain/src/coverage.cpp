@@ -147,6 +147,17 @@ CoverageView MakeCoverageView(const ObservationScheduler& scheduler, const Cover
                             ledger.fault(Radio::kWifi), view.wifi_revisit_ms, now_ms);
   view.ble = MakeRadioView(config.ble_enabled, ledger.totals(Radio::kBle),
                            ledger.fault(Radio::kBle), ble_revisit, now_ms);
+  // The current window: the radio with the latest fresh report.
+  const auto fresh = [](const RadioCoverageView& v) {
+    return v.state == RadioState::kObserving || v.state == RadioState::kGap;
+  };
+  const auto& wifi_report = ledger.totals(Radio::kWifi).last_report_ms;
+  const auto& ble_report = ledger.totals(Radio::kBle).last_report_ms;
+  if (fresh(view.wifi) && (!fresh(view.ble) || *wifi_report >= *ble_report)) {
+    view.current = Radio::kWifi;
+  } else if (fresh(view.ble)) {
+    view.current = Radio::kBle;
+  }
   return view;
 }
 
@@ -165,23 +176,30 @@ std::string FormatCoverage(const CoverageView& view) {
 
 std::string CoverageStatusText(const CoverageView& view) {
   if (view.host_only) return "Host only";
-  const auto radio = [](const char* name, const RadioCoverageView& v) {
-    std::string text = std::string(name) + " ";
+  const auto radio = [&](Radio which, const RadioCoverageView& v) -> std::string {
+    const std::string name = which == Radio::kWifi ? "WiFi " : "BLE ";
     switch (v.state) {
       case RadioState::kOperatorDisabled:
-        return text + "off";
+        return name + "off";
       case RadioState::kFault:
-        return text + "fault";
+        return name + "fault";
       case RadioState::kNoData:
-        return text + "?";
+        return name + "?";
       case RadioState::kGap:
-        return text + "gap";
+        return name + "gap";
       case RadioState::kObserving:
-        return text + std::to_string(v.observed_permille / 10) + "%";
+        // Named only while its window is the current one: between windows a
+        // radio is not receiving, so it is not shown as if it were.
+        if (view.current != which) return "";
+        return which == Radio::kWifi ? name + "ch" + std::to_string(v.last_channel) : name + "scan";
     }
-    return text + "?";
+    return name + "?";
   };
-  return radio("WiFi", view.wifi) + " " + radio("BLE", view.ble);
+  const std::string wifi = radio(Radio::kWifi, view.wifi);
+  const std::string ble = radio(Radio::kBle, view.ble);
+  if (wifi.empty()) return ble;
+  if (ble.empty()) return wifi;
+  return wifi + " " + ble;
 }
 
 }  // namespace firmware::domain

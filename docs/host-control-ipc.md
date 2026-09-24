@@ -23,9 +23,12 @@ WiFi-context channel is a separate socket with its own contract
   uid is not the daemon's is closed without a byte read or written and counted
   (`wrong_uid`). The Swift client refuses a directory or socket that is not
   private to its own uid before connecting, and verifies the peer uid after.
-- At most 8 concurrent connections (`busy` beyond that). A connection idle for
-  10 s is closed. Clients may use one connection per request (the setup
-  application does) or several requests on one.
+- At most 8 concurrent connections (`busy` beyond that). Each request line must
+  arrive complete within 10 s of the connection opening or of the previous
+  reply; otherwise the connection is closed. The deadline is absolute (bytes
+  trickling in do not extend it), so slow clients cannot hold every slot.
+  Clients may use one connection per request (the setup application does) or
+  several requests on one.
 - A leftover socket from a crashed daemon is removed only if nothing answers on
   it. The path plus NUL must fit `sun_path` (104 bytes); otherwise the daemon
   runs without the control socket and logs it.
@@ -155,9 +158,17 @@ throttle interval limits any respawn.
 - Unplug and replug: the write or read error moves the state to `stale`, then
   `no_device`; on replug the daemon reconnects the same way, without a touch
   (the display remembers the Host).
-- Sleep and wake: a gap of more than 5 s between two ticks (wall clock) ends the
-  session and reconnects with a fresh session and an immediate snapshot,
-  whether or not the USB link reported an error.
+- Sleep and wake: a gap of more than 5 s between two ticks (on the wall clock
+  or on the daemon's monotonic clock, which keeps counting while the Mac
+  sleeps) ends the session and reconnects with a fresh session and an
+  immediate snapshot, whether or not the USB link reported an error. Every
+  sample age is measured on that monotonic clock, so a reading from before the
+  sleep is as old as the sleep. On wake every rate re-baselines (the first
+  post-wake rate is `temporarily_unavailable`) and battery charge, storage
+  capacity, agent presence and the network view are read again before the
+  next snapshot; a re-read that fails keeps the old value with its true age,
+  which the display shows stale. A provider context older than 15 s is
+  dropped.
 - A provider, a permission or the setup application being absent never stops the
   daemon or its snapshots.
 
