@@ -116,7 +116,7 @@ Tickets can cross several milestones; completing a tracer bullet does not close 
 | M6 | TB12–TB16 and Radio History export/erase in TB18 |
 | M7 | TB16/TB18, R01–R03 |
 
-The final [validation gate](../mvp-validation.md) remains authoritative. Per-rule evidence/Confidence/recovery semantics must be documented before rule fixtures are fixed; numeric defaults are validated against physical observations. F08 counts are provisional until durable storage validates actual maximum record sizes and write behavior.
+Per-rule specifications for the M6 rules are in [alert-rules.md](../alert-rules.md). The final [validation gate](../mvp-validation.md) remains authoritative. Per-rule evidence/Confidence/recovery semantics must be documented before rule fixtures are fixed; numeric defaults are validated against physical observations. F08 counts are provisional until durable storage validates actual maximum record sizes and write behavior.
 
 ## Deferred scope
 

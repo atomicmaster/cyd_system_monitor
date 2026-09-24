@@ -41,7 +41,7 @@ An unusual deauthentication/disassociation rate starts at Medium and becomes Hig
 
 Extreme is deferred to the release where all detections relevant to its claim are implemented and sufficient validation data supports it; no version is assigned. That release must establish Confidence, corroboration, timing/uncertainty limits, benign-event controls, and a false-Extreme acceptance gate.
 
-Rules use versioned conservative thresholds normalized by Observed Time. Before fixing each rule's scenario expectations, document its evidence eligibility, minimum Observed Time and evidence counts, Confidence criteria, and observed-quiet recovery condition. Tracer bullets introduce these contracts as needed; complete rule/domain coverage remains part of M2 acceptance. Numeric thresholds are tuned and validated against M5/M6 measurements. Safe numeric thresholds are configurable, while rule logic changes with firmware.
+Rules use versioned conservative thresholds normalized by Observed Time. Before fixing each rule's scenario expectations, document its evidence eligibility, minimum Observed Time and evidence counts, Confidence criteria, and observed-quiet recovery condition. Tracer bullets introduce these contracts as needed; complete rule/domain coverage remains part of M2 acceptance. The per-rule specifications are in [alert-rules.md](alert-rules.md). Numeric thresholds are tuned and validated against M5/M6 measurements. Safe numeric thresholds are configurable, while rule logic changes with firmware.
 
 ## Episode lifecycle
 
