@@ -40,8 +40,9 @@ One JSON object per line, UTF-8, `\n`-terminated, each way.
 - **Requests** are flat objects of at most **512 bytes**: `"v"` (integer, must be
   `1`), `"cmd"` (string) and, for `pair_start` only, an optional `"port"`
   (`/dev/` plus at most 64 characters of `A-Za-z0-9._-`). Strings carry no escape
-  sequences, keys are unique, at most 16 fields. It is the parser of the
-  provider contract (`parse_flat_object`), so both sockets accept the same
+  sequences, keys are unique, at most 16 fields. Both sockets use the same
+  parser (`metrics::flat_json::parse_flat_object`) and the same socket setup,
+  line bound and peer check (`platform_macos::ipc`), so they accept the same
   subset.
 - **Responses** are at most **8192 bytes**. Every response carries `"v":1` and
   `"ok"`. Success: `{"v":1,"ok":true,"cmd":"<cmd>"}` plus one payload key for

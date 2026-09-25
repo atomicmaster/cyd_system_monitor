@@ -7,22 +7,6 @@
 namespace firmware::domain {
 namespace {
 
-const char* NoteText(protocol::Availability availability) {
-  switch (availability) {
-    case protocol::Availability::kAvailable:
-      return "";
-    case protocol::Availability::kUnsupported:
-      return "Unsupported";
-    case protocol::Availability::kAbsent:
-      return "Not present";
-    case protocol::Availability::kTemporarilyUnavailable:
-      return "Unavailable";
-    case protocol::Availability::kError:
-      return "Read error";
-  }
-  return "";
-}
-
 // One rate in at most five ASCII characters ("812B", "1.2K", "340K", "1.2M",
 // "12M", "999G"), so "Last D999M U999M" stays inside 148 px at 14 pt. No arrow
 // glyphs: the built-in font's arrows are not guaranteed, and D/U read clearly.
@@ -109,9 +93,7 @@ MetricCardView MakeNetworkCard(const HostState& state, uint64_t /*now_ms*/) {
   MetricCardView view{.title = "Network", .value = "--", .show_bar = false};
   const NetworkMetricState& network = state.network;
   if (!network.has_data) return view;
-  const bool link_lost = state.connection == ConnectionState::kStale ||
-                         state.connection == ConnectionState::kIncompatible ||
-                         state.connection == ConnectionState::kDisconnected;
+  const bool link_lost = state.LinkLost();
   const bool traffic_retained =
       link_lost || network.traffic_freshness == protocol::Freshness::kStale;
   const bool context_retained =
@@ -124,7 +106,7 @@ MetricCardView MakeNetworkCard(const HostState& state, uint64_t /*now_ms*/) {
     return view;
   }
   if (network.traffic_availability != protocol::Availability::kAvailable) {
-    view.note = NoteText(network.traffic_availability);
+    view.note = AvailabilityNote(network.traffic_availability);
     return view;
   }
   view.value = std::string(traffic_retained ? "Last " : "") + "D" +

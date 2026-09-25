@@ -1,79 +1,29 @@
 // SPDX-License-Identifier: GPL-3.0-only
-#include <cstdlib>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <vector>
 
-#include "../expect.hpp"
-#include "firmware/domain/card_registry.hpp"
-#include "firmware/domain/host_feed.hpp"
+#include "../card_scenario.hpp"
 #include "protocol.hpp"
 #include "scenarios.hpp"
 
 namespace simulator::scenarios {
 namespace {
 
-namespace domain = firmware::domain;
 namespace proto = cyd::protocol;
-
-class ScriptedClock : public domain::MonotonicClock {
- public:
-  uint64_t NowMs() const override { return now_ms_; }
-  void Set(uint64_t now_ms) { now_ms_ = now_ms; }
-
- private:
-  uint64_t now_ms_ = 1000;
-};
 
 constexpr uint64_t kGB = 1'000'000'000ULL;
 constexpr auto kOk = proto::Availability::kAvailable;
 constexpr auto kNo = proto::Availability::kTemporarilyUnavailable;
 
-std::vector<uint8_t> Frame(uint32_t sequence, const proto::StorageSnapshot* storage) {
-  proto::Envelope envelope;
-  envelope.type = proto::MessageType::kSnapshot;
-  envelope.sequence = sequence;
-  for (uint8_t i = 0; i < envelope.session.size(); ++i) envelope.session[i] = i;
-  const proto::CpuSnapshot cpu{kOk, 100, 0, proto::Freshness::kFresh, 0};
-  std::vector<uint8_t> frame;
-  proto::EncodeSnapshot(envelope, cpu, nullptr, storage, &frame);
-  return frame;
-}
-
-const domain::CardDescriptor* StorageCard() {
-  for (const auto& card : domain::Cards()) {
-    if (std::string(card.id) == "storage") return &card;
-  }
-  return nullptr;
-}
-
 }  // namespace
 
 int RunStorageCards() {
-  ScenarioResult result;
-  ScriptedClock clock;
-  domain::HostFeed feed(clock, 1);
-  std::array<uint8_t, proto::kSessionIdBytes> session{};
-  for (uint8_t i = 0; i < session.size(); ++i) session[i] = i;
-  feed.StartSession(session);
-  const domain::CardDescriptor* card = StorageCard();
-  result.Expect(card != nullptr, "the registry lists a storage card");
-  if (card == nullptr) return result.Finish("simulator storage-cards");
-
-  std::ostringstream transcript;
-  const auto at = [&](uint64_t ms, const char* label) {
-    clock.Set(ms);
-    feed.Tick();
-    const auto view = card->make(feed.state(), ms);
-    transcript << label << "\n  " << view.title << " | " << view.value << " | " << view.note
-               << " | bar=" << view.bar_per_mille << " | has_value=" << (view.has_value ? 1 : 0)
-               << " | dimmed=" << (view.dimmed ? 1 : 0) << "\n";
-    return view;
-  };
+  CardScenario scenario("storage", "storage-cards", CardScenario::Columns::kBar);
+  if (!scenario.ready()) return scenario.Finish();
+  ScenarioResult& result = scenario.result();
+  const auto at = [&](uint64_t ms, const char* label) { return scenario.At(ms, label); };
   const auto push = [&](uint64_t ms, uint32_t sequence, const proto::StorageSnapshot* storage) {
-    clock.Set(ms);
-    feed.Push(Frame(sequence, storage));
+    scenario.Push(ms, sequence, {.storage = *storage});
   };
   // Capacity 500 GB total, 200 GB free; I/O 12.3 MB/s read, 4.5 MB/s write.
   const auto snap = [](uint32_t capacity_age, proto::Availability io, uint64_t read,
@@ -132,15 +82,7 @@ int RunStorageCards() {
                 "stale retains both readings with Last and dims");
   at(179'000, "16 s without any frame: retained and dimmed");
 
-  const std::string path = std::string(CYD_SIMULATOR_SCENARIO_DIR) + "/storage-cards.expected";
-  if (std::getenv("CYD_UPDATE_EXPECTED") != nullptr) std::ofstream(path) << transcript.str();
-  std::ifstream expected_file(path);
-  std::stringstream expected;
-  expected << expected_file.rdbuf();
-  result.Expect(expected.str() == transcript.str(),
-                "the transcript matches simulator/scenarios/storage-cards.expected "
-                "(rerun with CYD_UPDATE_EXPECTED=1 to review an intended change)");
-  return result.Finish("simulator storage-cards");
+  return scenario.Finish();
 }
 
 }  // namespace simulator::scenarios

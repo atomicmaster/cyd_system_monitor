@@ -22,6 +22,7 @@ use metrics::battery::{
     parse_power_profile, BatteryChargeReading, BatteryConditionReading, PowerProfile, ProfileError,
     MAX_PROFILER_BYTES,
 };
+use metrics::cache::{RefreshPolicy, SampleCache};
 use metrics::{Collector, MetricAvailability, MetricSample};
 
 /// Charge is re-read this often (and immediately when the power source changes).
@@ -86,9 +87,11 @@ struct Slot {
 pub struct BatteryCollector {
     charge_source: ChargeSource,
     power_source: PowerSourceProbe,
-    charge: Option<(ChargeProbe, u64)>,
-    charge_power_source: Option<String>,
-    next_charge_ms: u64,
+    charge: SampleCache<BatteryChargeReading>,
+    /// The latest probe found no internal battery.
+    no_battery: bool,
+    /// The providing power source at the latest probe (`None` before one).
+    charge_power_source: Option<Option<String>>,
     runner: ProfileRunner,
     slot: Arc<Mutex<Slot>>,
     condition: ConditionCache,
@@ -113,9 +116,12 @@ impl BatteryCollector {
         Self {
             charge_source,
             power_source,
-            charge: None,
+            charge: SampleCache::new(RefreshPolicy {
+                refresh_ms: CHARGE_REFRESH_MS,
+                retry_until_sampled: false,
+            }),
+            no_battery: false,
             charge_power_source: None,
-            next_charge_ms: 0,
             runner,
             slot: Arc::new(Mutex::new(Slot::default())),
             condition: ConditionCache::None,
@@ -126,26 +132,35 @@ impl BatteryCollector {
 
     fn charge(&mut self, now_ms: u64) -> (MetricSample<BatteryChargeReading>, u32) {
         let power_source = (self.power_source)();
-        let changed = self.charge.is_some() && power_source != self.charge_power_source;
-        if self.charge.is_none() || changed || now_ms >= self.next_charge_ms {
-            self.next_charge_ms = now_ms.saturating_add(CHARGE_REFRESH_MS);
-            self.charge_power_source = power_source;
-            match ((self.charge_source)(), self.charge) {
-                // A failed refresh keeps the last good sample and its age.
-                (ChargeProbe::Failed, Some((ChargeProbe::Battery(old), at))) => {
-                    self.charge = Some((ChargeProbe::Battery(old), at));
+        if self
+            .charge_power_source
+            .as_ref()
+            .is_some_and(|last| *last != power_source)
+        {
+            self.charge.expire(); // plugged or unplugged: read the charge now
+        }
+        if self.charge.begin_refresh(now_ms) {
+            self.charge_power_source = Some(power_source);
+            match (self.charge_source)() {
+                ChargeProbe::Battery(reading) => {
+                    self.charge.succeed(reading, now_ms);
+                    self.no_battery = false;
                 }
-                (probe, _) => self.charge = Some((probe, now_ms)),
+                ChargeProbe::NoBattery => {
+                    self.charge.clear();
+                    self.no_battery = true;
+                }
+                // A failed refresh keeps the last good sample and its age.
+                ChargeProbe::Failed => {
+                    self.charge.fail(now_ms);
+                    self.no_battery = false;
+                }
             }
         }
-        match self.charge {
-            Some((ChargeProbe::Battery(reading), at)) => {
-                (MetricSample::available(reading), age(now_ms, at))
-            }
-            Some((ChargeProbe::NoBattery, _)) => {
-                (MetricSample::unavailable(MetricAvailability::Absent), 0)
-            }
-            _ => (MetricSample::unavailable(MetricAvailability::Error), 0),
+        match self.charge.get(now_ms) {
+            Some(cached) => (MetricSample::available(*cached.value), cached.wire_age_ms()),
+            None if self.no_battery => (MetricSample::unavailable(MetricAvailability::Absent), 0),
+            None => (MetricSample::unavailable(MetricAvailability::Error), 0),
         }
     }
 
@@ -267,7 +282,7 @@ impl Collector for BatteryCollector {
     /// condition is not re-run: its sleep-inclusive age already says how old
     /// it is, and it is re-run when that age makes it due.
     fn on_wake(&mut self) {
-        self.next_charge_ms = 0;
+        self.charge.expire();
     }
 }
 
@@ -327,13 +342,9 @@ pub fn read_charge() -> ChargeProbe {
 #[cfg(target_os = "macos")]
 mod imp {
     use super::ChargeProbe;
+    use crate::cf::{self, Cf, CfRef};
     use metrics::battery::charge_reading;
     use std::ffi::CStr;
-    use std::os::raw::{c_char, c_void};
-
-    type CfRef = *const c_void;
-    const UTF8: u32 = 0x0800_0100;
-    const CF_NUMBER_SINT64: isize = 4;
 
     #[link(name = "IOKit", kind = "framework")]
     extern "C" {
@@ -343,90 +354,16 @@ mod imp {
         fn IOPSGetProvidingPowerSourceType(blob: CfRef) -> CfRef;
     }
 
-    #[link(name = "CoreFoundation", kind = "framework")]
-    extern "C" {
-        fn CFStringCreateWithCString(alloc: CfRef, c_str: *const c_char, encoding: u32) -> CfRef;
-        fn CFRelease(object: CfRef);
-        fn CFGetTypeID(object: CfRef) -> usize;
-        fn CFStringGetTypeID() -> usize;
-        fn CFNumberGetTypeID() -> usize;
-        fn CFBooleanGetTypeID() -> usize;
-        fn CFDictionaryGetTypeID() -> usize;
-        fn CFArrayGetCount(array: CfRef) -> isize;
-        fn CFArrayGetValueAtIndex(array: CfRef, index: isize) -> CfRef;
-        fn CFDictionaryGetValue(dict: CfRef, key: CfRef) -> CfRef;
-        fn CFNumberGetValue(number: CfRef, kind: isize, out: *mut c_void) -> u8;
-        fn CFBooleanGetValue(boolean: CfRef) -> u8;
-        fn CFStringGetCString(s: CfRef, buf: *mut c_char, size: isize, encoding: u32) -> u8;
-    }
-
-    /// A Core Foundation object released on drop (a +1 Create/Copy reference).
-    struct Cf(CfRef);
-    impl Drop for Cf {
-        fn drop(&mut self) {
-            // SAFETY: a non-null owned reference from a Create/Copy call.
-            unsafe { CFRelease(self.0) };
-        }
-    }
-
-    fn cf_string(text: &CStr) -> Option<Cf> {
-        // SAFETY: `text` is NUL-terminated; a null allocator is the default.
-        let s = unsafe { CFStringCreateWithCString(std::ptr::null(), text.as_ptr(), UTF8) };
-        (!s.is_null()).then(|| Cf(s))
-    }
-
-    /// The value for `key` in a CFDictionary, borrowed (Get rule).
-    fn entry(dict: CfRef, key: &CStr) -> Option<CfRef> {
-        let key = cf_string(key)?;
-        // SAFETY: `dict` was type-checked as a CFDictionary by the caller.
-        let value = unsafe { CFDictionaryGetValue(dict, key.0) };
-        (!value.is_null()).then_some(value)
-    }
-
     fn string_value(value: CfRef) -> Option<String> {
-        // SAFETY: type-checked before use; the buffer size is passed.
-        unsafe {
-            if CFGetTypeID(value) != CFStringGetTypeID() {
-                return None;
-            }
-            let mut buf = [0 as c_char; 96];
-            if CFStringGetCString(value, buf.as_mut_ptr(), buf.len() as isize, UTF8) == 0 {
-                return None;
-            }
-            Some(CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned())
-        }
-    }
-
-    fn number_value(value: CfRef) -> Option<i64> {
-        // SAFETY: type-checked before use; the out pointer is an i64.
-        unsafe {
-            if CFGetTypeID(value) != CFNumberGetTypeID() {
-                return None;
-            }
-            let mut out: i64 = 0;
-            (CFNumberGetValue(value, CF_NUMBER_SINT64, (&mut out as *mut i64).cast()) != 0)
-                .then_some(out)
-        }
-    }
-
-    fn bool_value(value: CfRef) -> Option<bool> {
-        // SAFETY: type-checked before use.
-        unsafe {
-            (CFGetTypeID(value) == CFBooleanGetTypeID()).then(|| CFBooleanGetValue(value) != 0)
-        }
+        cf::string_value::<96>(value)
     }
 
     pub fn providing_power_source() -> Option<String> {
-        // SAFETY: the info blob is owned by `Cf`; the returned string is
-        // borrowed from it and copied before the blob is released.
+        // SAFETY: the info blob is a +1 reference owned by `Cf`; the returned
+        // string is borrowed from it and copied before the blob is released.
         unsafe {
-            let info = IOPSCopyPowerSourcesInfo();
-            if info.is_null() {
-                return None;
-            }
-            let info = Cf(info);
-            let kind = IOPSGetProvidingPowerSourceType(info.0);
-            (!kind.is_null()).then(|| string_value(kind)).flatten()
+            let info = Cf::owned(IOPSCopyPowerSourcesInfo())?;
+            string_value(IOPSGetProvidingPowerSourceType(info.get()))
         }
     }
 
@@ -434,25 +371,20 @@ mod imp {
         // SAFETY: every borrowed reference below is used only while `info` and
         // `list` (both owned by `Cf`) are alive, and each is type-checked.
         unsafe {
-            let info = IOPSCopyPowerSourcesInfo();
-            if info.is_null() {
+            let Some(info) = Cf::owned(IOPSCopyPowerSourcesInfo()) else {
                 return ChargeProbe::Failed;
-            }
-            let info = Cf(info);
-            let list = IOPSCopyPowerSourcesList(info.0);
-            if list.is_null() {
+            };
+            let Some(list) = Cf::owned(IOPSCopyPowerSourcesList(info.get())) else {
                 return ChargeProbe::Failed;
-            }
-            let list = Cf(list);
-            for i in 0..CFArrayGetCount(list.0) {
-                let source = CFArrayGetValueAtIndex(list.0, i);
-                let dict = IOPSGetPowerSourceDescription(info.0, source);
-                if dict.is_null() || CFGetTypeID(dict) != CFDictionaryGetTypeID() {
+            };
+            for source in cf::array_values(list.get()) {
+                let dict = IOPSGetPowerSourceDescription(info.get(), source);
+                if !cf::is_dictionary(dict) {
                     continue;
                 }
-                let text = |key: &CStr| entry(dict, key).and_then(string_value);
-                let number = |key: &CStr| entry(dict, key).and_then(number_value);
-                let flag = |key: &CStr| entry(dict, key).and_then(bool_value);
+                let text = |key: &CStr| cf::dictionary_value(dict, key).and_then(string_value);
+                let number = |key: &CStr| cf::dictionary_value(dict, key).and_then(cf::i64_value);
+                let flag = |key: &CStr| cf::dictionary_value(dict, key).and_then(cf::bool_value);
                 if text(c"Type").as_deref() != Some("InternalBattery") {
                     continue;
                 }

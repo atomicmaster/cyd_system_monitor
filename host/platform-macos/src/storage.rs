@@ -11,10 +11,9 @@
 //! of `/`'s device: an APFS volume `disk3s1s1` is on the synthesized container
 //! `disk3`, which is stored on the physical `disk0`. No root, no dependency.
 
-use metrics::{
-    Collector, DiskCounters, DiskIoSampler, DiskRate, MetricAvailability, MetricSample,
-    StorageCapacityReading,
-};
+use metrics::cache::{RefreshPolicy, SampleCache};
+use metrics::storage::{DiskCounters, DiskIoSampler, DiskRate, StorageCapacityReading};
+use metrics::{Collector, MetricAvailability, MetricSample};
 
 /// How long a capacity sample is reused before `/` is asked again.
 pub const CAPACITY_REFRESH_MS: u64 = 30_000;
@@ -38,8 +37,7 @@ pub type CounterSource = Box<dyn FnMut() -> Option<(DiskCounters, String)>>;
 pub struct StorageCollector {
     capacity_source: CapacitySource,
     counter_source: CounterSource,
-    capacity: Option<(StorageCapacityReading, u64)>,
-    next_capacity_ms: u64,
+    capacity: SampleCache<StorageCapacityReading>,
     sampler: DiskIoSampler,
     device: Option<String>,
 }
@@ -57,27 +55,23 @@ impl StorageCollector {
         Self {
             capacity_source,
             counter_source,
-            capacity: None,
-            next_capacity_ms: 0,
+            // Until the first good read, `/` is asked every second.
+            capacity: SampleCache::new(RefreshPolicy {
+                refresh_ms: CAPACITY_REFRESH_MS,
+                retry_until_sampled: true,
+            }),
             sampler: DiskIoSampler::default(),
             device: None,
         }
     }
 
     fn capacity(&mut self, now_ms: u64) -> (MetricSample<StorageCapacityReading>, u32) {
-        if self.capacity.is_none() || now_ms >= self.next_capacity_ms {
-            self.next_capacity_ms = now_ms.saturating_add(CAPACITY_REFRESH_MS);
-            if let Some(reading) = (self.capacity_source)() {
-                self.capacity = Some((reading, now_ms));
-            }
-        }
-        match self.capacity {
+        self.capacity
+            .refresh_with(now_ms, || (self.capacity_source)());
+        match self.capacity.get(now_ms) {
             // A refresh that failed keeps the last sample with its growing age;
             // the device marks it stale rather than showing a zero.
-            Some((reading, sampled_ms)) => (
-                MetricSample::available(reading),
-                now_ms.saturating_sub(sampled_ms).min(u32::MAX.into()) as u32,
-            ),
+            Some(cached) => (MetricSample::available(*cached.value), cached.wire_age_ms()),
             None => (MetricSample::unavailable(MetricAvailability::Error), 0),
         }
     }
@@ -120,7 +114,7 @@ impl Collector for StorageCollector {
     }
 
     fn on_wake(&mut self) {
-        self.next_capacity_ms = 0;
+        self.capacity.expire();
         self.sampler.reset();
         self.device = None;
     }
@@ -147,14 +141,14 @@ pub fn read_capacity() -> Option<StorageCapacityReading> {
 #[cfg(target_os = "macos")]
 mod imp {
     use super::RootDiskInfo;
-    use metrics::{physical_disk_name, whole_disk_name, DiskCounters, StorageCapacityReading};
+    use crate::cf::{self, Cf, CfRef};
+    use metrics::storage::{
+        physical_disk_name, whole_disk_name, DiskCounters, StorageCapacityReading,
+    };
     use std::ffi::{CStr, CString};
     use std::os::raw::{c_char, c_int, c_void};
 
     type IoObject = u32;
-    type CfRef = *const c_void;
-    const UTF8: u32 = 0x0800_0100;
-    const CF_NUMBER_SINT64: isize = 4;
     const MAX_ANCESTOR_DEPTH: usize = 12;
 
     #[repr(C)]
@@ -207,19 +201,6 @@ mod imp {
         ) -> CfRef;
     }
 
-    #[link(name = "CoreFoundation", kind = "framework")]
-    extern "C" {
-        fn CFStringCreateWithCString(alloc: CfRef, c_str: *const c_char, encoding: u32) -> CfRef;
-        fn CFRelease(object: CfRef);
-        fn CFGetTypeID(object: CfRef) -> usize;
-        fn CFStringGetTypeID() -> usize;
-        fn CFNumberGetTypeID() -> usize;
-        fn CFDictionaryGetTypeID() -> usize;
-        fn CFDictionaryGetValue(dict: CfRef, key: CfRef) -> CfRef;
-        fn CFNumberGetValue(number: CfRef, kind: isize, out: *mut c_void) -> u8;
-        fn CFStringGetCString(s: CfRef, buf: *mut c_char, size: isize, encoding: u32) -> u8;
-    }
-
     /// An I/O Registry object released on drop.
     struct Object(IoObject);
     impl Drop for Object {
@@ -229,42 +210,21 @@ mod imp {
         }
     }
 
-    /// A Core Foundation object released on drop.
-    struct Cf(CfRef);
-    impl Drop for Cf {
-        fn drop(&mut self) {
-            // SAFETY: a non-null +1 reference from a Create/Copy call.
-            unsafe { CFRelease(self.0) };
-        }
-    }
-
-    fn cf_string(text: &str) -> Option<Cf> {
-        let c = CString::new(text).ok()?;
-        // SAFETY: `c` is a valid NUL-terminated string; null allocator = default.
-        let s = unsafe { CFStringCreateWithCString(std::ptr::null(), c.as_ptr(), UTF8) };
-        (!s.is_null()).then(|| Cf(s))
-    }
-
-    fn property(entry: IoObject, key: &str) -> Option<Cf> {
-        let key = cf_string(key)?;
+    fn property(entry: IoObject, key: &CStr) -> Option<Cf> {
+        let key = cf::string(key)?;
         // SAFETY: valid entry and key; the result is a +1 reference or null.
-        let value = unsafe { IORegistryEntryCreateCFProperty(entry, key.0, std::ptr::null(), 0) };
-        (!value.is_null()).then(|| Cf(value))
+        unsafe {
+            Cf::owned(IORegistryEntryCreateCFProperty(
+                entry,
+                key.get(),
+                std::ptr::null(),
+                0,
+            ))
+        }
     }
 
-    fn string_property(entry: IoObject, key: &str) -> Option<String> {
-        let value = property(entry, key)?;
-        // SAFETY: type-checked before use; the buffer size is passed.
-        unsafe {
-            if CFGetTypeID(value.0) != CFStringGetTypeID() {
-                return None;
-            }
-            let mut buf = [0 as c_char; 128];
-            if CFStringGetCString(value.0, buf.as_mut_ptr(), buf.len() as isize, UTF8) == 0 {
-                return None;
-            }
-            Some(CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned())
-        }
+    fn string_property(entry: IoObject, key: &CStr) -> Option<String> {
+        cf::string_value::<128>(property(entry, key)?.get())
     }
 
     fn media_for(bsd_name: &str) -> Option<Object> {
@@ -326,11 +286,11 @@ mod imp {
     fn store_of(whole_disk: &str) -> Option<String> {
         let media = media_for(whole_disk)?;
         let found = nearest_ancestor(media.0, &|o| {
-            string_property(o, "BSD Name")
+            string_property(o, c"BSD Name")
                 .and_then(|n| whole_disk_name(&n).map(|w| w != whole_disk))
                 .unwrap_or(false)
         })?;
-        string_property(found.0, "BSD Name")
+        string_property(found.0, c"BSD Name")
     }
 
     fn driver_for(physical_disk: &str) -> Option<Object> {
@@ -341,31 +301,19 @@ mod imp {
         })
     }
 
-    fn statistic(statistics: CfRef, key: &str) -> Option<u64> {
-        let key = cf_string(key)?;
-        // SAFETY: `statistics` is a dictionary (checked by the caller); the
-        // value is borrowed, type-checked, and read into an i64.
-        unsafe {
-            let number = CFDictionaryGetValue(statistics, key.0);
-            if number.is_null() || CFGetTypeID(number) != CFNumberGetTypeID() {
-                return None;
-            }
-            let mut value: i64 = 0;
-            (CFNumberGetValue(number, CF_NUMBER_SINT64, (&mut value as *mut i64).cast()) != 0
-                && value >= 0)
-                .then_some(value as u64)
-        }
+    fn statistic(statistics: CfRef, key: &CStr) -> Option<u64> {
+        let value = cf::i64_value(cf::dictionary_value(statistics, key)?)?;
+        (value >= 0).then_some(value as u64)
     }
 
     fn read_statistics(driver: IoObject) -> Option<DiskCounters> {
-        let statistics = property(driver, "Statistics")?;
-        // SAFETY: only a type query.
-        if unsafe { CFGetTypeID(statistics.0) != CFDictionaryGetTypeID() } {
+        let statistics = property(driver, c"Statistics")?;
+        if !cf::is_dictionary(statistics.get()) {
             return None;
         }
         Some(DiskCounters {
-            read_bytes: statistic(statistics.0, "Bytes (Read)")?,
-            write_bytes: statistic(statistics.0, "Bytes (Write)")?,
+            read_bytes: statistic(statistics.get(), c"Bytes (Read)")?,
+            write_bytes: statistic(statistics.get(), c"Bytes (Write)")?,
         })
     }
 
@@ -447,7 +395,7 @@ mod imp {
 #[cfg(not(target_os = "macos"))]
 mod imp {
     use super::RootDiskInfo;
-    use metrics::{DiskCounters, StorageCapacityReading};
+    use metrics::storage::{DiskCounters, StorageCapacityReading};
 
     pub fn read_capacity() -> Option<StorageCapacityReading> {
         None
@@ -644,7 +592,7 @@ mod tests {
         println!("storage probe: {info:?}");
         println!("storage capacity: {:?}", read_capacity());
         assert!(info.mounted_from.starts_with("/dev/disk"), "{info:?}");
-        assert!(metrics::whole_disk_name(&info.physical_disk).is_some());
+        assert!(metrics::storage::whole_disk_name(&info.physical_disk).is_some());
         // The counters move between reads only if there was I/O; they never go backwards.
         let mut disk = imp::RootDisk::default();
         let (first, device) = disk.read_counters().expect("counters");

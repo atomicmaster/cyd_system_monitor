@@ -7,37 +7,23 @@
 namespace firmware::domain {
 namespace {
 
-const char* NoteText(protocol::Availability availability) {
-  switch (availability) {
-    case protocol::Availability::kAvailable:
-      return "";
-    case protocol::Availability::kUnsupported:
-      return "Unsupported";
-    case protocol::Availability::kAbsent:
-      return "Not present";
-    case protocol::Availability::kTemporarilyUnavailable:
-      return "Unavailable";
-    case protocol::Availability::kError:
-      return "Read error";
-  }
-  return "";
-}
+using AgentStates = std::array<protocol::AgentState, protocol::kAgentSlots>;
 
 // Fixed wire slot order: codex, claude, grok.
-constexpr const char* kNames[kAgentSlotCount] = {"Codex", "Claude", "Grok"};
+constexpr const char* kNames[protocol::kAgentSlots] = {"Codex", "Claude", "Grok"};
 
-// Wire states: 0 not running, 1 running with activity unknown, 2 busy, 3 idle.
-// An MVP Host only ever sends 0 and 1; busy and idle need an activity adapter.
-std::string NoteFor(const uint8_t (&state)[kAgentSlotCount]) {
+// An MVP Host only ever sends not running and running; busy and idle need an
+// activity adapter.
+std::string NoteFor(const AgentStates& state) {
   unsigned running = 0, unknown = 0, busy = 0, idle = 0;
-  int only = -1;
-  for (int i = 0; i < kAgentSlotCount; ++i) {
-    if (state[i] == 0) continue;
+  std::size_t only = 0;
+  for (std::size_t i = 0; i < state.size(); ++i) {
+    if (state[i] == protocol::AgentState::kNotRunning) continue;
     ++running;
     only = i;
-    if (state[i] == 2)
+    if (state[i] == protocol::AgentState::kBusy)
       ++busy;
-    else if (state[i] == 3)
+    else if (state[i] == protocol::AgentState::kIdle)
       ++idle;
     else
       ++unknown;
@@ -78,22 +64,15 @@ MetricCardView MakeAgentsCard(const HostState& state, uint64_t /*now_ms*/) {
   const AgentsMetricState& agents = state.agents;
   if (!agents.has_data) return view;
   if (agents.availability != protocol::Availability::kAvailable) {
-    view.note = NoteText(agents.availability);
+    view.note = AvailabilityNote(agents.availability);
     return view;
   }
-  bool valid = true;
+  // The decoder refuses any state outside the enum.
   unsigned running = 0;
-  for (const uint8_t s : agents.state) {
-    if (s > 3) valid = false;
-    if (s != 0) ++running;
+  for (const protocol::AgentState s : agents.state) {
+    if (s != protocol::AgentState::kNotRunning) ++running;
   }
-  if (!valid) {
-    view.note = "Read error";
-    return view;
-  }
-  const bool link_lost = state.connection == ConnectionState::kStale ||
-                         state.connection == ConnectionState::kIncompatible ||
-                         state.connection == ConnectionState::kDisconnected;
+  const bool link_lost = state.LinkLost();
   const bool retained = link_lost || agents.freshness == protocol::Freshness::kStale;
   char value[32];
   if (running == 0) {

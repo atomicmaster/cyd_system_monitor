@@ -14,7 +14,7 @@
 //!   come only from a [`WifiContextProvider`](crate::wifi_context).
 
 use crate::wifi_context::{ContextAvailability, ContextReading, WifiBand, WifiContextProvider};
-use crate::{Collector, MetricAvailability, MetricSample, CPU_MAX_SAMPLE_GAP_MS};
+use crate::{Collector, CounterRateSampler, MetricAvailability, MetricSample};
 
 /// What an interface is, as far as the Host can tell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,15 +160,14 @@ pub fn select_primary_route(view: &SystemView) -> Option<PrimaryRoute> {
     })
 }
 
-/// Turns cumulative counters into a rate with the discipline of
-/// `DiskIoSampler`: the first sample, a changed `key`, a counter decrease
-/// (reset or interface re-created), a non-monotonic clock, an over-long gap
-/// or zero elapsed time are all unavailable, and every call re-baselines. An
-/// idle link is a measured zero rate, not unavailable.
+/// Turns cumulative interface counters into a rate: the shared
+/// [`CounterRateSampler`] discipline keyed by interface name, so the first
+/// sample, a changed interface, a counter decrease (reset or interface
+/// re-created), a non-monotonic clock, an over-long gap or zero elapsed time
+/// are all unavailable, and every call re-baselines. An idle link is a
+/// measured zero rate, not unavailable.
 #[derive(Debug, Default)]
-pub struct RateSampler {
-    baseline: Option<(String, InterfaceCounters, u64)>,
-}
+pub struct RateSampler(CounterRateSampler<String>);
 
 impl RateSampler {
     pub fn sample(
@@ -177,28 +176,20 @@ impl RateSampler {
         counters: InterfaceCounters,
         now_ms: u64,
     ) -> MetricSample<NetworkRate> {
-        let previous = self.baseline.replace((key.to_string(), counters, now_ms));
-        let unavailable = || MetricSample::unavailable(MetricAvailability::TemporarilyUnavailable);
-        let Some((before_key, before, before_ms)) = previous else {
-            return unavailable();
-        };
-        let gap_ok = now_ms > before_ms && now_ms - before_ms <= CPU_MAX_SAMPLE_GAP_MS;
-        let monotonic =
-            counters.rx_bytes >= before.rx_bytes && counters.tx_bytes >= before.tx_bytes;
-        if before_key != key || !gap_ok || !monotonic {
-            return unavailable();
-        }
-        let elapsed = u128::from(now_ms - before_ms);
-        let per_s =
-            |delta: u64| (u128::from(delta) * 1000 / elapsed).min(u128::from(u64::MAX)) as u64;
-        MetricSample::available(NetworkRate {
-            rx_bytes_per_s: per_s(counters.rx_bytes - before.rx_bytes),
-            tx_bytes_per_s: per_s(counters.tx_bytes - before.tx_bytes),
-        })
+        self.0
+            .sample(
+                key.to_string(),
+                [counters.rx_bytes, counters.tx_bytes],
+                now_ms,
+            )
+            .map(|[rx, tx]| NetworkRate {
+                rx_bytes_per_s: rx,
+                tx_bytes_per_s: tx,
+            })
     }
 
     pub fn reset(&mut self) {
-        self.baseline = None;
+        self.0.reset();
     }
 }
 
@@ -401,6 +392,7 @@ impl Collector for NetworkCollector {
 mod tests {
     use super::*;
     use crate::wifi_context::{AssociationContext, FixtureProvider};
+    use crate::MAX_RATE_SAMPLE_GAP_MS;
 
     fn counters(rx: u64, tx: u64) -> InterfaceCounters {
         InterfaceCounters {
@@ -535,12 +527,12 @@ mod tests {
             s.sample(
                 "utun4",
                 counters(300, 201),
-                5000 + CPU_MAX_SAMPLE_GAP_MS + 1
+                5000 + MAX_RATE_SAMPLE_GAP_MS + 1
             )
             .value,
             None
         );
-        let t = 5000 + CPU_MAX_SAMPLE_GAP_MS + 1;
+        let t = 5000 + MAX_RATE_SAMPLE_GAP_MS + 1;
         assert_eq!(s.sample("utun4", counters(400, 301), t - 5).value, None);
         assert_eq!(s.sample("utun4", counters(500, 401), t - 5).value, None);
         // A full 64-bit delta does not overflow.

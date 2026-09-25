@@ -38,7 +38,9 @@ std::vector<uint8_t> Frame(uint32_t sequence, uint16_t cpu_per_mille,
   const proto::CpuSnapshot cpu{proto::Availability::kAvailable, cpu_per_mille, 0,
                                proto::Freshness::kFresh, 0};
   std::vector<uint8_t> frame;
-  proto::EncodeSnapshot(envelope, cpu, ram, &frame);
+  proto::SnapshotGroups groups;
+  if (ram != nullptr) groups.ram = *ram;
+  proto::EncodeSnapshot(envelope, cpu, groups, &frame);
   return frame;
 }
 

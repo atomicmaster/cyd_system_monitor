@@ -66,7 +66,7 @@ struct BatteryMetricState {
   protocol::Availability charge_availability = protocol::Availability::kTemporarilyUnavailable;
   protocol::Freshness charge_freshness = protocol::Freshness::kFresh;
   uint16_t charge_per_mille = 0;
-  uint8_t state = 0;
+  protocol::BatteryState state = protocol::BatteryState::kUnknown;
   uint16_t time_remaining_min = protocol::kBatteryUnknownU16;
   // Signed: a 3 h old sample received soon after boot happened before the
   // device's clock started, and clamping it to 0 would make it look fresh.
@@ -74,7 +74,7 @@ struct BatteryMetricState {
   protocol::Availability condition_availability = protocol::Availability::kTemporarilyUnavailable;
   protocol::Freshness condition_freshness = protocol::Freshness::kFresh;
   uint16_t max_capacity_per_mille = 0;
-  uint8_t condition = 0;
+  protocol::BatteryCondition condition = protocol::BatteryCondition::kUnknown;
   uint16_t cycle_count = protocol::kBatteryUnknownU16;
   int64_t condition_source_time_ms = 0;
 };
@@ -83,13 +83,12 @@ struct BatteryMetricState {
 // time (received time minus the reported age): stale 15 s after the sample
 // (5 s cadence x 3). A re-sent old sample stays stale.
 constexpr uint64_t kAgentsStaleMs = 15'000;
-constexpr int kAgentSlotCount = 3;
 struct AgentsMetricState {
   bool has_data = false;
   protocol::Availability availability = protocol::Availability::kTemporarilyUnavailable;
   protocol::Freshness freshness = protocol::Freshness::kFresh;
-  // 0 not running, 1 running (activity unknown), 2 busy, 3 idle.
-  uint8_t state[kAgentSlotCount] = {0, 0, 0};
+  // In the wire's slot order: codex, claude, grok.
+  std::array<protocol::AgentState, protocol::kAgentSlots> state{};
   // Signed: a sample older than device uptime predates the device clock.
   int64_t source_time_ms = 0;
 };
@@ -147,6 +146,13 @@ struct HostState {
   int16_t utc_offset_minutes = 0;
   uint32_t boot_identity = 0;
   uint32_t configuration_revision = 0;
+
+  // The link to the Host is lost (stale, disconnected, or incompatible):
+  // every card retains its last reading with "Last" and dims it.
+  bool LinkLost() const {
+    return connection == ConnectionState::kStale || connection == ConnectionState::kIncompatible ||
+           connection == ConnectionState::kDisconnected;
+  }
 };
 
 class HostStateReducer {

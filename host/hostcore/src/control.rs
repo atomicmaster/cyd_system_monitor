@@ -9,18 +9,16 @@
 //! dropped without effect and counted. The server knows nothing about the
 //! daemon: it parses, verifies and hands a typed [`Request`] to a [`Handler`].
 
-use std::fs::{self};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use metrics::wifi_context::{parse_flat_object, MessageError, Value, MAX_LINE_BYTES};
-use platform_macos::wifi_context_server::{clear_stale_socket, peer_uid, prepare_dir};
+use metrics::flat_json::{parse_flat_object, FlatJsonError, Value, MAX_LINE_BYTES};
+use platform_macos::ipc::{peer_uid, LineEvent, LineReader, ServerThread, MAX_CONSECUTIVE_BAD};
 
 pub const SOCKET_NAME: &str = "control.sock";
 pub const IPC_VERSION: i64 = 1;
@@ -29,13 +27,11 @@ pub const MAX_REQUEST_BYTES: usize = MAX_LINE_BYTES;
 /// Longest response line the server will send.
 pub const MAX_RESPONSE_BYTES: usize = 8192;
 const MAX_CONNECTIONS: usize = 8;
-const MAX_CONSECUTIVE_BAD: u32 = 16;
 /// Each request line must be complete this long after the connection opened
 /// or the previous reply was sent; a slower client is closed, so clients
 /// trickling bytes cannot hold every connection slot.
 const LINE_DEADLINE: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(50);
-const MAX_SOCKET_PATH: usize = 104;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
@@ -73,8 +69,8 @@ fn valid_port(path: &str) -> bool {
 
 pub fn parse_request(line: &[u8]) -> Result<Request, RequestError> {
     let fields = parse_flat_object(line).map_err(|e| match e {
-        MessageError::TooLong => RequestError::TooLong,
-        _ => RequestError::Malformed,
+        FlatJsonError::TooLong => RequestError::TooLong,
+        FlatJsonError::NotJson => RequestError::Malformed,
     })?;
     let get = |key: &str| fields.iter().find(|(k, _)| k == key).map(|(_, v)| v);
     match get("v") {
@@ -120,6 +116,76 @@ pub fn json_string(text: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// Writes one JSON object, members in call order: `{"key":value,...}`. Keys
+/// and strings are escaped with [`json_string`]; nested values are objects
+/// built the same way or JSON the caller already wrote.
+pub struct JsonObject {
+    out: String,
+}
+
+impl Default for JsonObject {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl JsonObject {
+    pub fn new() -> Self {
+        Self {
+            out: String::from("{"),
+        }
+    }
+
+    fn key(mut self, key: &str) -> Self {
+        if self.out.len() > 1 {
+            self.out.push(',');
+        }
+        self.out.push_str(&json_string(key));
+        self.out.push(':');
+        self
+    }
+
+    /// A value that is already JSON.
+    pub fn raw(self, key: &str, json: &str) -> Self {
+        let mut this = self.key(key);
+        this.out.push_str(json);
+        this
+    }
+
+    pub fn str(self, key: &str, value: &str) -> Self {
+        self.raw(key, &json_string(value))
+    }
+
+    /// A string, or `null`.
+    pub fn opt_str(self, key: &str, value: Option<&str>) -> Self {
+        match value {
+            Some(value) => self.str(key, value),
+            None => self.raw(key, "null"),
+        }
+    }
+
+    pub fn num(self, key: &str, value: u64) -> Self {
+        self.raw(key, &value.to_string())
+    }
+
+    /// A number, or `null`.
+    pub fn opt_num(self, key: &str, value: Option<u64>) -> Self {
+        match value {
+            Some(value) => self.num(key, value),
+            None => self.raw(key, "null"),
+        }
+    }
+
+    pub fn object(self, key: &str, value: JsonObject) -> Self {
+        self.raw(key, &value.finish())
+    }
+
+    pub fn finish(mut self) -> String {
+        self.out.push('}');
+        self.out
+    }
 }
 
 /// `{"v":1,"ok":true,"cmd":"<cmd>"[,"<key>":<json>]}`
@@ -200,10 +266,8 @@ fn bump(counter: &AtomicU64) {
 }
 
 pub struct ControlServer {
-    path: PathBuf,
     counters: Arc<Counters>,
-    stop: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
+    thread: ServerThread,
 }
 
 impl ControlServer {
@@ -218,56 +282,29 @@ impl ControlServer {
         handler: Arc<dyn Handler>,
         line_deadline: Duration,
     ) -> io::Result<Self> {
-        let path = dir.join(SOCKET_NAME);
-        if path.as_os_str().len() >= MAX_SOCKET_PATH {
-            return Err(io::Error::other("the socket path is too long for sun_path"));
-        }
-        prepare_dir(dir, platform_macos::wifi_context_server::current_uid())?;
-        clear_stale_socket(&path, platform_macos::wifi_context_server::current_uid())?;
-        let listener = UnixListener::bind(&path)?;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-        listener.set_nonblocking(true)?;
         let counters = Arc::new(Counters::default());
-        let stop = Arc::new(AtomicBool::new(false));
         let thread = {
-            let (counters, stop) = (counters.clone(), stop.clone());
-            thread::Builder::new()
-                .name("control-ipc".into())
-                .spawn(move || {
-                    accept_loop(
-                        listener,
-                        expected_uid,
-                        handler,
-                        counters,
-                        stop,
-                        line_deadline,
-                    )
-                })?
+            let counters = counters.clone();
+            ServerThread::spawn(dir, SOCKET_NAME, "control-ipc", move |listener, stop| {
+                accept_loop(
+                    listener,
+                    expected_uid,
+                    handler,
+                    counters,
+                    stop,
+                    line_deadline,
+                )
+            })?
         };
-        Ok(Self {
-            path,
-            counters,
-            stop,
-            thread: Some(thread),
-        })
+        Ok(Self { counters, thread })
     }
 
     pub fn socket_path(&self) -> &Path {
-        &self.path
+        self.thread.socket_path()
     }
 
     pub fn stats(&self) -> ControlStats {
         self.counters.snapshot()
-    }
-}
-
-impl Drop for ControlServer {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-        let _ = fs::remove_file(&self.path);
     }
 }
 
@@ -339,8 +376,7 @@ fn serve_connection(
     {
         return;
     }
-    let mut line: Vec<u8> = Vec::new();
-    let mut discarding = false;
+    let mut lines = LineReader::new(MAX_REQUEST_BYTES);
     let mut consecutive_bad = 0u32;
     // Absolute, not idle: bytes arriving do not extend it, only a whole line.
     let mut line_started = Instant::now();
@@ -362,28 +398,15 @@ fn serve_connection(
             Err(_) => return,
         };
         for &byte in &buf[..n] {
-            if byte != b'\n' {
-                if discarding {
-                    continue;
-                }
-                if line.len() >= MAX_REQUEST_BYTES {
-                    // Too long: drop the rest of the line without buffering it.
-                    discarding = true;
-                    line.clear();
-                    continue;
-                }
-                line.push(byte);
-                continue;
-            }
-            let reply = if discarding {
-                discarding = false;
-                bump(&counters.oversized);
-                consecutive_bad += 1;
-                Some(error_response("oversized", "request line too long"))
-            } else {
-                let parsed = parse_request(&line);
-                line.clear();
-                match parsed {
+            // A line over the bound is dropped without buffering the rest of
+            // it and answered once its newline arrives.
+            let line = match lines.push(byte) {
+                LineEvent::Pending | LineEvent::Overflowed => continue,
+                LineEvent::OversizedEnd => None,
+                LineEvent::Line(line) => Some(line),
+            };
+            let reply = if let Some(line) = line {
+                match parse_request(&line) {
                     Ok(request) => {
                         consecutive_bad = 0;
                         bump(&counters.requests);
@@ -391,7 +414,7 @@ fn serve_connection(
                         if response.len() > MAX_RESPONSE_BYTES {
                             response = error_response("response_too_large", "response too large");
                         }
-                        Some(response)
+                        response
                     }
                     Err(RequestError::BadVersion) => {
                         bump(&counters.bad_version);
@@ -403,7 +426,7 @@ fn serve_connection(
                     }
                     Err(error) => {
                         consecutive_bad += 1;
-                        Some(match error {
+                        match error {
                             RequestError::UnknownCommand => {
                                 bump(&counters.unknown_command);
                                 error_response("unknown_command", "no such command")
@@ -416,14 +439,16 @@ fn serve_connection(
                                 bump(&counters.malformed);
                                 error_response("malformed", "not a valid request")
                             }
-                        })
+                        }
                     }
                 }
+            } else {
+                bump(&counters.oversized);
+                consecutive_bad += 1;
+                error_response("oversized", "request line too long")
             };
-            if let Some(reply) = reply {
-                if write_line(&mut stream, &reply).is_err() {
-                    return;
-                }
+            if write_line(&mut stream, &reply).is_err() {
+                return;
             }
             // The next line's clock starts once this one is answered (a
             // command may take the supervisor many seconds).
@@ -480,8 +505,10 @@ pub fn simple_request(cmd: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use platform_macos::wifi_context_server::current_uid;
+    use platform_macos::ipc::current_uid;
+    use std::fs;
     use std::os::unix::fs::MetadataExt;
+    use std::path::PathBuf;
 
     struct Echo;
     impl Handler for Echo {

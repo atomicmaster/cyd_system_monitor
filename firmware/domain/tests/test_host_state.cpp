@@ -100,9 +100,9 @@ int main() {
       const proto::StorageSnapshot g{proto::Availability::kAvailable, 500, 200, capacity_age,
                                      proto::Availability::kAvailable, 10,  20,  io_age};
       std::vector<uint8_t> frame;
-      proto::EncodeSnapshot(env, c, nullptr, &g, &frame);
+      proto::EncodeSnapshot(env, c, {.storage = g}, &frame);
       proto::Decoded decoded;
-      if (proto::Decode(frame, &decoded) != proto::Error::kNone || !decoded.has_storage)
+      if (proto::Decode(frame, &decoded) != proto::Error::kNone || !decoded.groups.storage)
         std::abort();
       return decoded;
     };
@@ -150,16 +150,16 @@ int main() {
       proto::BatterySnapshot g;
       g.charge_availability = proto::Availability::kAvailable;
       g.charge_per_mille = 870;
-      g.state = 1;
+      g.state = proto::BatteryState::kCharging;
       g.charge_age_ms = charge_age;
       g.condition_availability = proto::Availability::kAvailable;
       g.max_capacity_per_mille = 910;
-      g.condition = 1;
+      g.condition = proto::BatteryCondition::kNormal;
       g.condition_age_ms = condition_age;
       std::vector<uint8_t> frame;
-      proto::EncodeSnapshot(env, c, nullptr, nullptr, &g, &frame);
+      proto::EncodeSnapshot(env, c, {.battery = g}, &frame);
       proto::Decoded decoded;
-      if (proto::Decode(frame, &decoded) != proto::Error::kNone || !decoded.has_battery)
+      if (proto::Decode(frame, &decoded) != proto::Error::kNone || !decoded.groups.battery)
         std::abort();
       return decoded;
     };
@@ -215,18 +215,20 @@ int main() {
       proto::AgentsSnapshot g;
       g.availability = proto::Availability::kAvailable;
       g.source_age_ms = age;
-      g.state[1] = 1;
+      g.state[1] = proto::AgentState::kRunning;
       std::vector<uint8_t> frame;
-      proto::EncodeSnapshot(env, c, nullptr, nullptr, nullptr, &g, &frame);
+      proto::EncodeSnapshot(env, c, {.agents = g}, &frame);
       proto::Decoded decoded;
-      if (proto::Decode(frame, &decoded) != proto::Error::kNone || !decoded.has_agents)
+      if (proto::Decode(frame, &decoded) != proto::Error::kNone || !decoded.groups.agents)
         std::abort();
       return decoded;
     };
     HostStateReducer reducer(1);
     reducer.ApplySnapshot(snapshot(1, 1000), 100'000, 0);
     const auto& a = reducer.state().agents;
-    if (!a.has_data || a.state[1] != 1 || a.state[0] != 0) return 50;
+    if (!a.has_data || a.state[1] != proto::AgentState::kRunning ||
+        a.state[0] != proto::AgentState::kNotRunning)
+      return 50;
     reducer.Advance(113'999);  // sampled at 99,000
     if (a.freshness != proto::Freshness::kFresh) return 51;
     reducer.Advance(114'000);
@@ -262,9 +264,9 @@ int main() {
       g.coverage = proto::WifiCoverage::kObservable;
       g.channel = 6;
       std::vector<uint8_t> frame;
-      proto::EncodeSnapshot(env, c, nullptr, nullptr, nullptr, nullptr, &g, &frame);
+      proto::EncodeSnapshot(env, c, {.network = g}, &frame);
       proto::Decoded decoded;
-      if (proto::Decode(frame, &decoded) != proto::Error::kNone || !decoded.has_network)
+      if (proto::Decode(frame, &decoded) != proto::Error::kNone || !decoded.groups.network)
         std::abort();
       return decoded;
     };

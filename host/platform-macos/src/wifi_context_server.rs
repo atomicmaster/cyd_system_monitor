@@ -12,58 +12,36 @@
 //! in a [`ContextTracker`] that the network collector reads.
 
 use std::collections::VecDeque;
-use std::ffi::c_int;
-use std::fs::{self, DirBuilder};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
-use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::ipc::{peer_uid, LineEvent, LineReader, ServerThread, MAX_CONSECUTIVE_BAD};
 use crate::time::NowMs;
+use metrics::flat_json::MAX_LINE_BYTES;
 use metrics::wifi_context::{
     parse_provider_message, ContextTracker, MessageError, ProviderMessage, TrackerProvider,
-    IPC_VERSION, MAX_LINE_BYTES,
+    IPC_VERSION,
 };
 
 /// The socket's file name inside the run directory.
 pub const SOCKET_NAME: &str = "wifi-context.sock";
-/// `sizeof(sockaddr_un.sun_path)` on Darwin; the path plus NUL must fit.
-const MAX_SOCKET_PATH: usize = 104;
 /// Most messages accepted from one provider in any second. The contract asks
 /// for a change-driven message plus one heartbeat per second.
 const MAX_MESSAGES_PER_SECOND: usize = 20;
-/// Bad lines in a row before the connection is dropped as a broken provider.
-const MAX_CONSECUTIVE_BAD: u32 = 16;
 const POLL: Duration = Duration::from_millis(20);
-
-extern "C" {
-    fn getpeereid(fd: c_int, euid: *mut u32, egid: *mut u32) -> c_int;
-    fn geteuid() -> u32;
-}
-
-/// The calling user's effective uid.
-pub fn current_uid() -> u32 {
-    // SAFETY: no arguments, cannot fail.
-    unsafe { geteuid() }
-}
-
-pub fn peer_uid(stream: &UnixStream) -> Option<u32> {
-    let (mut uid, mut gid) = (0u32, 0u32);
-    // SAFETY: a valid socket fd and valid out pointers.
-    (unsafe { getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) } == 0).then_some(uid)
-}
 
 #[derive(Clone)]
 pub struct ServerConfig {
     /// The per-user run directory; created 0700 if missing.
     pub dir: PathBuf,
     /// The only uid whose connections are accepted: the daemon's own
-    /// ([`current_uid`]); tests pass another to exercise the refusal.
+    /// ([`current_uid`](crate::ipc::current_uid)); tests pass another to
+    /// exercise the refusal.
     pub expected_uid: u32,
     /// The monotonic clock the collector uses (it counts sleep), so context
     /// ages line up and a context from before a sleep is as old as the sleep.
@@ -104,89 +82,32 @@ fn bump(counter: &AtomicU64) {
 }
 
 pub struct WifiContextServer {
-    path: PathBuf,
     tracker: Arc<Mutex<ContextTracker>>,
     counters: Arc<Counters>,
-    stop: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
-}
-
-/// Creates (or tightens) the run directory: real directory, owned by the
-/// caller, no group or other access.
-pub fn prepare_dir(dir: &Path, uid: u32) -> io::Result<()> {
-    DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
-    let meta = fs::symlink_metadata(dir)?;
-    if !meta.file_type().is_dir() {
-        return Err(io::Error::other(
-            "the run directory path is not a directory",
-        ));
-    }
-    if meta.uid() != uid {
-        return Err(io::Error::other(
-            "the run directory belongs to another user",
-        ));
-    }
-    if meta.mode() & 0o077 != 0 {
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
-    }
-    Ok(())
-}
-
-/// Removes a leftover socket from a crashed daemon; refuses when the path is
-/// something else or a live daemon still answers on it.
-pub fn clear_stale_socket(path: &Path, uid: u32) -> io::Result<()> {
-    let meta = match fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e),
-    };
-    if !meta.file_type().is_socket() || meta.uid() != uid {
-        return Err(io::Error::other(
-            "the socket path is occupied by something else",
-        ));
-    }
-    if UnixStream::connect(path).is_ok() {
-        return Err(io::Error::new(
-            io::ErrorKind::AddrInUse,
-            "another daemon already owns the WiFi context socket",
-        ));
-    }
-    fs::remove_file(path)
+    // Last: stopping and joining the thread happens on drop.
+    thread: ServerThread,
 }
 
 impl WifiContextServer {
     pub fn start(config: ServerConfig) -> io::Result<Self> {
-        let path = config.dir.join(SOCKET_NAME);
-        if path.as_os_str().len() >= MAX_SOCKET_PATH {
-            return Err(io::Error::other("the socket path is too long for sun_path"));
-        }
-        prepare_dir(&config.dir, current_uid())?;
-        clear_stale_socket(&path, current_uid())?;
-        let listener = UnixListener::bind(&path)?;
-        // The 0700 directory already keeps everyone else out; this is the
-        // documented file mode as well.
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-        listener.set_nonblocking(true)?;
         let tracker = Arc::new(Mutex::new(ContextTracker::default()));
         let counters = Arc::new(Counters::default());
-        let stop = Arc::new(AtomicBool::new(false));
         let thread = {
-            let (tracker, counters, stop) = (tracker.clone(), counters.clone(), stop.clone());
-            thread::Builder::new()
-                .name("wifi-context".into())
-                .spawn(move || serve(listener, config, tracker, counters, stop))?
+            let (tracker, counters) = (tracker.clone(), counters.clone());
+            let dir = config.dir.clone();
+            ServerThread::spawn(&dir, SOCKET_NAME, "wifi-context", move |listener, stop| {
+                serve(listener, config, tracker, counters, stop)
+            })?
         };
         Ok(Self {
-            path,
             tracker,
             counters,
-            stop,
-            thread: Some(thread),
+            thread,
         })
     }
 
     pub fn socket_path(&self) -> &Path {
-        &self.path
+        self.thread.socket_path()
     }
 
     /// The provider for the network collector.
@@ -212,21 +133,10 @@ impl WifiContextServer {
     }
 }
 
-impl Drop for WifiContextServer {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
 /// One provider connection's parsing state.
 struct Connection {
     stream: UnixStream,
-    line: Vec<u8>,
-    discarding: bool,
+    lines: LineReader,
     hello_seen: bool,
     last_seq: Option<u64>,
     last_t_ms: u64,
@@ -266,8 +176,7 @@ fn serve(
                     }
                     current = Some(Connection {
                         stream,
-                        line: Vec::new(),
-                        discarding: false,
+                        lines: LineReader::new(MAX_LINE_BYTES),
                         hello_seen: false,
                         last_seq: None,
                         last_t_ms: 0,
@@ -336,29 +245,16 @@ fn feed(
     counters: &Counters,
     now_ms: &NowMs,
 ) -> Verdict {
-    if byte != b'\n' {
-        if conn.discarding {
-            return Verdict::Keep;
-        }
-        if conn.line.len() >= MAX_LINE_BYTES {
-            // Over the bound: drop the rest of this line, never buffer it.
-            conn.discarding = true;
-            conn.line.clear();
+    match conn.lines.push(byte) {
+        LineEvent::Pending | LineEvent::OversizedEnd => Verdict::Keep,
+        // Over the bound: the rest of this line is dropped, never buffered.
+        LineEvent::Overflowed => {
             bump(&counters.oversized);
-            return bad_line(conn, counters);
+            bad_line(conn, counters)
         }
-        conn.line.push(byte);
-        return Verdict::Keep;
+        LineEvent::Line(line) if line.is_empty() => Verdict::Keep, // a blank line is harmless
+        LineEvent::Line(line) => handle_line(conn, &line, tracker, counters, now_ms),
     }
-    if conn.discarding {
-        conn.discarding = false;
-        return Verdict::Keep;
-    }
-    let line = std::mem::take(&mut conn.line);
-    if line.is_empty() {
-        return Verdict::Keep; // a blank line is harmless
-    }
-    handle_line(conn, &line, tracker, counters, now_ms)
 }
 
 fn bad_line(conn: &mut Connection, counters: &Counters) -> Verdict {
@@ -464,8 +360,11 @@ fn handle_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ipc::current_uid;
     use metrics::wifi_context::{ContextAvailability, WifiContextProvider};
+    use std::fs;
     use std::io::{BufRead, BufReader};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::sync::atomic::AtomicUsize;
 
     static NEXT: AtomicUsize = AtomicUsize::new(0);

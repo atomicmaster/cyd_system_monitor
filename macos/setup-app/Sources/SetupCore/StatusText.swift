@@ -86,10 +86,10 @@ public enum StatusText {
         }
         let context: String
         switch wifi.availability {
-        case "available": context = "WiFi identity available"
+        case "available": context = "Association Context (SSID/BSSID) available"
         case "authorized_unavailable": context = "permission granted, but macOS returned no SSID/BSSID"
-        case "not_requested": context = "no WiFi identity (optional)"
-        case "denied", "restricted", "unsupported": context = "no WiFi identity (optional)"
+        case "not_requested": context = "no Association Context (optional)"
+        case "denied", "restricted", "unsupported": context = "no Association Context (optional)"
         default: context = "WiFi context unavailable"
         }
         let provider: String

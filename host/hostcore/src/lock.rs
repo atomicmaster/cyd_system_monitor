@@ -12,7 +12,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
-use platform_macos::wifi_context_server::{current_uid, prepare_dir};
+use platform_macos::ipc::{current_uid, prepare_dir};
 
 pub const LOCK_NAME: &str = "daemon.lock";
 const LOCK_EX: c_int = 2;

@@ -3,6 +3,8 @@
 
 #include <cstdio>
 
+#include "firmware/domain/card_registry.hpp"
+
 namespace firmware::domain {
 namespace {
 
@@ -18,22 +20,6 @@ const char* ConnectionText(ConnectionState state) {
       return "Disconnected";
     case ConnectionState::kIncompatible:
       return "Incompatible Host";
-  }
-  return "";
-}
-
-const char* NoteText(protocol::Availability availability) {
-  switch (availability) {
-    case protocol::Availability::kAvailable:
-      return "";
-    case protocol::Availability::kUnsupported:
-      return "Unsupported";
-    case protocol::Availability::kAbsent:
-      return "Not present";
-    case protocol::Availability::kTemporarilyUnavailable:
-      return "Unavailable";
-    case protocol::Availability::kError:
-      return "Read error";
   }
   return "";
 }
@@ -88,15 +74,12 @@ CpuView MakeCpuView(const HostState& state, uint64_t now_ms, const DisplaySettin
       state.has_seen_host && state.cpu.availability == protocol::Availability::kAvailable;
   if (!measured) {
     view.value = "--";
-    view.note = state.has_seen_host ? NoteText(state.cpu.availability) : "";
+    view.note = state.has_seen_host ? AvailabilityNote(state.cpu.availability) : "";
     return view;
   }
   view.has_value = true;
   view.bar_per_mille = state.cpu.value_per_mille;
-  const bool retained = state.connection == ConnectionState::kStale ||
-                        state.connection == ConnectionState::kIncompatible ||
-                        state.connection == ConnectionState::kDisconnected ||
-                        state.cpu.freshness == protocol::Freshness::kStale;
+  const bool retained = state.LinkLost() || state.cpu.freshness == protocol::Freshness::kStale;
   char text[24];
   std::snprintf(text, sizeof text, "%s%u%%", retained ? "Last " : "",
                 static_cast<unsigned>((state.cpu.value_per_mille + 5) / 10));

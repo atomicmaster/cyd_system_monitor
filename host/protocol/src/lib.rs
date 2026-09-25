@@ -184,7 +184,8 @@ impl NetworkSnapshot {
             || self.context_availability == AssociationContext::Available
     }
 }
-/// A complete snapshot: CPU plus each optional metric group.
+/// A complete snapshot: CPU plus each optional metric group. A new group is
+/// one field here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
     pub cpu: CpuSnapshot,
@@ -193,6 +194,19 @@ pub struct Snapshot {
     pub battery: Option<BatterySnapshot>,
     pub agents: Option<AgentsSnapshot>,
     pub network: Option<NetworkSnapshot>,
+}
+impl Snapshot {
+    /// CPU alone, no optional group; add groups with struct update syntax.
+    pub fn new(cpu: CpuSnapshot) -> Self {
+        Self {
+            cpu,
+            ram: None,
+            storage: None,
+            battery: None,
+            agents: None,
+            network: None,
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuSnapshot {
@@ -400,19 +414,23 @@ pub fn encode_snapshot(
     cpu: &CpuSnapshot,
     ram: Option<&RamSnapshot>,
 ) -> Result<Vec<u8>, Error> {
-    encode_groups(envelope, cpu, ram, None, None, None, None)
+    encode_groups(
+        envelope,
+        &Snapshot {
+            ram: ram.cloned(),
+            ..Snapshot::new(cpu.clone())
+        },
+    )
 }
-/// Encodes a complete snapshot with every optional group given (RAM at key 5,
-/// Storage at key 6, Battery at key 7, Agents at key 8, Network at key 9).
-pub fn encode_groups(
-    envelope: &Envelope,
-    cpu: &CpuSnapshot,
-    ram: Option<&RamSnapshot>,
-    storage: Option<&StorageSnapshot>,
-    battery: Option<&BatterySnapshot>,
-    agents: Option<&AgentsSnapshot>,
-    network: Option<&NetworkSnapshot>,
-) -> Result<Vec<u8>, Error> {
+/// Encodes a complete snapshot with each optional group it carries (RAM at
+/// key 5, Storage at key 6, Battery at key 7, Agents at key 8, Network at key 9).
+pub fn encode_groups(envelope: &Envelope, snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
+    let cpu = &snapshot.cpu;
+    let ram = snapshot.ram.as_ref();
+    let storage = snapshot.storage.as_ref();
+    let battery = snapshot.battery.as_ref();
+    let agents = snapshot.agents.as_ref();
+    let network = snapshot.network.as_ref();
     if ram.is_some_and(|r| r.used_bytes > r.total_bytes)
         || storage.is_some_and(|s| s.available_bytes > s.total_bytes)
         || battery.is_some_and(|b| {
@@ -1847,7 +1865,14 @@ mod tests {
         assert_eq!((g.capacity_age_ms, g.io_age_ms), (1500, 250));
         assert_eq!(golden.ram, None);
         assert_eq!(
-            encode_groups(&envelope, &golden.cpu, None, Some(&g), None, None, None).unwrap(),
+            encode_groups(
+                &envelope,
+                &Snapshot {
+                    storage: Some(g.clone()),
+                    ..Snapshot::new(golden.cpu.clone())
+                }
+            )
+            .unwrap(),
             fixture("storage-snapshot-v1.hex")
         );
         let (envelope, both) =
@@ -1856,12 +1881,11 @@ mod tests {
         assert_eq!(
             encode_groups(
                 &envelope,
-                &both.cpu,
-                both.ram.as_ref(),
-                both.storage.as_ref(),
-                None,
-                None,
-                None
+                &Snapshot {
+                    ram: both.ram.clone(),
+                    storage: both.storage.clone(),
+                    ..Snapshot::new(both.cpu.clone())
+                }
             )
             .unwrap(),
             fixture("storage-snapshot-v1-with-ram.hex")
@@ -1870,7 +1894,7 @@ mod tests {
         let max = fixture("storage-snapshot-v1-max-u64.hex");
         assert!(max.len() < 2048);
         let (envelope, snap) = decode_snapshot(&max).unwrap();
-        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None, None).unwrap();
+        let without = encode_groups(&envelope, &Snapshot::new(snap.cpu.clone())).unwrap();
         // key + map header + eight keys + 2 availabilities + 4 x 9 + 2 x 5 = 58 bytes
         assert_eq!(max.len() - without.len(), 58);
         let bad = StorageSnapshot {
@@ -1878,7 +1902,13 @@ mod tests {
             ..g
         };
         assert_eq!(
-            encode_groups(&envelope, &snap.cpu, None, Some(&bad), None, None, None),
+            encode_groups(
+                &envelope,
+                &Snapshot {
+                    storage: Some(bad.clone()),
+                    ..Snapshot::new(snap.cpu.clone())
+                }
+            ),
             Err(Error::Malformed)
         );
     }
@@ -1898,7 +1928,14 @@ mod tests {
         );
         assert_eq!(g.condition_age_ms, 1_800_000);
         assert_eq!(
-            encode_groups(&envelope, &golden.cpu, None, None, Some(&g), None, None).unwrap(),
+            encode_groups(
+                &envelope,
+                &Snapshot {
+                    battery: Some(g.clone()),
+                    ..Snapshot::new(golden.cpu.clone())
+                }
+            )
+            .unwrap(),
             fixture("battery-snapshot-v1.hex")
         );
         let (envelope, all) =
@@ -1907,12 +1944,12 @@ mod tests {
         assert_eq!(
             encode_groups(
                 &envelope,
-                &all.cpu,
-                all.ram.as_ref(),
-                all.storage.as_ref(),
-                all.battery.as_ref(),
-                None,
-                None
+                &Snapshot {
+                    ram: all.ram.clone(),
+                    storage: all.storage.clone(),
+                    battery: all.battery.clone(),
+                    ..Snapshot::new(all.cpu.clone())
+                }
             )
             .unwrap(),
             fixture("battery-snapshot-v1-with-groups.hex")
@@ -1926,7 +1963,7 @@ mod tests {
         let max = fixture("battery-snapshot-v1-max.hex");
         assert!(max.len() < 2048);
         let (envelope, snap) = decode_snapshot(&max).unwrap();
-        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None, None).unwrap();
+        let without = encode_groups(&envelope, &Snapshot::new(snap.cpu.clone())).unwrap();
         // key + map header + ten keys + 4 availability/state/condition bytes
         // + 4 x 3-byte (per-mille, sentinels) + 2 x 5-byte ages = 38 bytes
         assert_eq!(max.len() - without.len(), 38);
@@ -1935,7 +1972,13 @@ mod tests {
             ..snap.battery.clone().unwrap()
         };
         assert_eq!(
-            encode_groups(&envelope, &snap.cpu, None, None, Some(&bad), None, None),
+            encode_groups(
+                &envelope,
+                &Snapshot {
+                    battery: Some(bad.clone()),
+                    ..Snapshot::new(snap.cpu.clone())
+                }
+            ),
             Err(Error::Malformed)
         );
     }
@@ -1949,7 +1992,14 @@ mod tests {
             (Availability::Available, 250, [0, 1, 0])
         );
         assert_eq!(
-            encode_groups(&envelope, &golden.cpu, None, None, None, Some(&g), None).unwrap(),
+            encode_groups(
+                &envelope,
+                &Snapshot {
+                    agents: Some(g.clone()),
+                    ..Snapshot::new(golden.cpu.clone())
+                }
+            )
+            .unwrap(),
             fixture("agents-snapshot-v1.hex")
         );
         let (envelope, all) =
@@ -1963,12 +2013,13 @@ mod tests {
         assert_eq!(
             encode_groups(
                 &envelope,
-                &all.cpu,
-                all.ram.as_ref(),
-                all.storage.as_ref(),
-                all.battery.as_ref(),
-                all.agents.as_ref(),
-                None
+                &Snapshot {
+                    ram: all.ram.clone(),
+                    storage: all.storage.clone(),
+                    battery: all.battery.clone(),
+                    agents: all.agents.clone(),
+                    ..Snapshot::new(all.cpu.clone())
+                }
             )
             .unwrap(),
             fixture("agents-snapshot-v1-with-groups.hex")
@@ -1983,7 +2034,7 @@ mod tests {
         let max = fixture("agents-snapshot-v1-max.hex");
         assert!(max.len() < 2048);
         let (envelope, snap) = decode_snapshot(&max).unwrap();
-        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None, None).unwrap();
+        let without = encode_groups(&envelope, &Snapshot::new(snap.cpu.clone())).unwrap();
         // key + map header + five keys + availability + 5-byte age + three states
         assert_eq!(max.len() - without.len(), 16);
         let bad = AgentsSnapshot {
@@ -1991,7 +2042,13 @@ mod tests {
             ..snap.agents.clone().unwrap()
         };
         assert_eq!(
-            encode_groups(&envelope, &snap.cpu, None, None, None, Some(&bad), None),
+            encode_groups(
+                &envelope,
+                &Snapshot {
+                    agents: Some(bad.clone()),
+                    ..Snapshot::new(snap.cpu.clone())
+                }
+            ),
             Err(Error::Malformed)
         );
     }
@@ -2008,23 +2065,21 @@ mod tests {
         assert_eq!(g.station, Some([0xf2, 0xa1, 0xb3, 0xc4, 0xd5, 0xe6]));
         assert_eq!(g.ssid, b"CYD-Test");
         assert_eq!(
-            encode_groups(&envelope, &golden.cpu, None, None, None, None, Some(&g)).unwrap(),
+            encode_groups(
+                &envelope,
+                &Snapshot {
+                    network: Some(g.clone()),
+                    ..Snapshot::new(golden.cpu.clone())
+                }
+            )
+            .unwrap(),
             fixture("network-snapshot-v1.hex")
         );
         let (envelope, all) =
             decode_snapshot(&fixture("network-snapshot-v1-with-groups.hex")).unwrap();
         assert!(all.ram.is_some() && all.agents.is_some() && all.network.is_some());
         assert_eq!(
-            encode_groups(
-                &envelope,
-                &all.cpu,
-                all.ram.as_ref(),
-                all.storage.as_ref(),
-                all.battery.as_ref(),
-                all.agents.as_ref(),
-                all.network.as_ref()
-            )
-            .unwrap(),
+            encode_groups(&envelope, &all).unwrap(),
             fixture("network-snapshot-v1-with-groups.hex")
         );
         // Every Association Context Availability state round-trips.
@@ -2045,7 +2100,14 @@ mod tests {
             let n = s.network.unwrap();
             assert_eq!(n.context_availability as usize, i, "{name}");
             assert_eq!(
-                encode_groups(&e, &s.cpu, None, None, None, None, Some(&n)).unwrap(),
+                encode_groups(
+                    &e,
+                    &Snapshot {
+                        network: Some(n.clone()),
+                        ..Snapshot::new(s.cpu.clone())
+                    }
+                )
+                .unwrap(),
                 bytes
             );
         }
@@ -2061,7 +2123,7 @@ mod tests {
         let max = fixture("network-snapshot-v1-max.hex");
         assert!(max.len() < 2048);
         let (envelope, snap) = decode_snapshot(&max).unwrap();
-        let without = encode_groups(&envelope, &snap.cpu, None, None, None, None, None).unwrap();
+        let without = encode_groups(&envelope, &Snapshot::new(snap.cpu.clone())).unwrap();
         assert_eq!(max.len() - without.len(), 98);
         let n = snap.network.clone().unwrap();
         for bad in [
@@ -2087,7 +2149,13 @@ mod tests {
             },
         ] {
             assert_eq!(
-                encode_groups(&envelope, &snap.cpu, None, None, None, None, Some(&bad)),
+                encode_groups(
+                    &envelope,
+                    &Snapshot {
+                        network: Some(bad.clone()),
+                        ..Snapshot::new(snap.cpu.clone())
+                    }
+                ),
                 Err(Error::Malformed)
             );
         }

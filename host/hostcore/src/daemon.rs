@@ -15,17 +15,19 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use metrics::wifi_context::{
-    ContextAvailability, ContextTracker, FixtureProvider, PermissionStatus, WifiContextProvider,
+    ContextTracker, FixtureProvider, PermissionStatus, WifiContextProvider,
 };
+use platform_macos::ipc::current_uid;
 use platform_macos::wifi_context_server::{
-    current_uid, ServerConfig, Stats as ProviderStats, WifiContextServer,
+    ServerConfig, Stats as ProviderStats, WifiContextServer,
 };
 use protocol::{Availability, CommandOperation, CommandResult};
 use transport::client::Refusal;
 use transport::serial::SerialPort;
 
 use crate::control::{
-    error_response, json_string, ok_response, ControlServer, ControlStats, Handler, Request,
+    error_response, json_string, ok_response, ControlServer, ControlStats, Handler, JsonObject,
+    Request,
 };
 use crate::identity::{self, short_form};
 use crate::link::{
@@ -241,29 +243,6 @@ fn availability_name(a: Availability) -> &'static str {
     }
 }
 
-fn context_name(a: ContextAvailability) -> &'static str {
-    match a {
-        ContextAvailability::Available => "available",
-        ContextAvailability::PermissionNotRequested => "not_requested",
-        ContextAvailability::Denied => "denied",
-        ContextAvailability::Restricted => "restricted",
-        ContextAvailability::AuthorizedUnavailable => "authorized_unavailable",
-        ContextAvailability::Unsupported => "unsupported",
-        ContextAvailability::Error => "error",
-    }
-}
-
-fn permission_name(p: PermissionStatus) -> &'static str {
-    match p {
-        PermissionStatus::NotRequested => "not_requested",
-        PermissionStatus::Denied => "denied",
-        PermissionStatus::Restricted => "restricted",
-        PermissionStatus::Granted => "granted",
-        PermissionStatus::Unsupported => "unsupported",
-        PermissionStatus::Error => "error",
-    }
-}
-
 struct Command {
     request: Request,
     reply: SyncSender<String>,
@@ -297,11 +276,10 @@ impl DaemonHandler {
         let s = lock(&self.shared);
         let link = &s.link;
         let now = self.clock.now_ms();
-        let metrics: Vec<String> = s
+        let metrics = s
             .groups
             .iter()
-            .map(|(name, a)| format!("\"{name}\":\"{a}\""))
-            .collect();
+            .fold(JsonObject::new(), |o, (name, a)| o.str(name, a));
         let (provider_state, context, permission, provider_counters) =
             match (&self.provider, &self.tracker) {
                 (Some(server), Some(tracker)) => {
@@ -315,70 +293,82 @@ impl DaemonHandler {
                     } else {
                         "never_connected"
                     };
+                    let counters = JsonObject::new()
+                        .num("accepted", stats.accepted)
+                        .num("replaced", stats.replaced)
+                        .num("wrong_uid", stats.wrong_uid)
+                        .num("malformed", stats.malformed)
+                        .num("oversized", stats.oversized)
+                        .num("out_of_order", stats.out_of_order)
+                        .num("rate_limited", stats.rate_limited)
+                        .num("bad_version", stats.bad_version)
+                        .num("closed_for_bad_lines", stats.closed_for_bad_lines)
+                        .num("applied", stats.applied)
+                        .finish();
                     (
                         state,
-                        context_name(reading.context.availability),
-                        t.permission().map(permission_name),
-                        format!(
-                            "{{\"accepted\":{},\"replaced\":{},\"wrong_uid\":{},\"malformed\":{},\
-                         \"oversized\":{},\"out_of_order\":{},\"rate_limited\":{},\
-                         \"bad_version\":{},\"closed_for_bad_lines\":{},\"applied\":{}}}",
-                            stats.accepted,
-                            stats.replaced,
-                            stats.wrong_uid,
-                            stats.malformed,
-                            stats.oversized,
-                            stats.out_of_order,
-                            stats.rate_limited,
-                            stats.bad_version,
-                            stats.closed_for_bad_lines,
-                            stats.applied
-                        ),
+                        reading.context.availability.name(),
+                        t.permission().map(PermissionStatus::name),
+                        counters,
                     )
                 }
                 _ => ("server_unavailable", "not_requested", None, "null".into()),
             };
-        format!(
-            "{{\"daemon\":{{\"version\":{},\"pid\":{},\"uptime_s\":{},\"uid\":{}}},\
-             \"link\":{{\"state\":\"{}\",\"detail\":{},\"port\":{},\"pairing_identity\":{},\
-             \"pairing_code\":{},\"sessions\":{},\"snapshots\":{},\
-             \"last_snapshot_utc_ms\":{},\"last_snapshot_age_ms\":{}}},\
-             \"metrics\":{{{}}},\
-             \"wifi_context\":{{\"provider\":\"{}\",\"availability\":\"{}\",\"permission\":{}}},\
-             \"counters\":{{\"provider\":{},\"control\":{{\"accepted\":{},\"requests\":{},\
-             \"wrong_uid\":{},\"malformed\":{},\"oversized\":{},\"bad_version\":{},\
-             \"unknown_command\":{},\"busy\":{},\"closed_for_bad_lines\":{}}}}}}}",
-            json_string(self.version),
-            std::process::id(),
-            now.saturating_sub(self.started_ms) / 1000,
-            current_uid(),
-            link.state.name(),
-            opt_str(link.detail.as_deref()),
-            opt_str(link.port.as_deref()),
-            opt_str(link.pairing_identity.as_deref()),
-            link.pairing_code
-                .map_or("null".into(), |c| format!("\"{c:06}\"")),
-            link.sessions,
-            s.snapshots,
-            s.last_snapshot_utc_ms
-                .map_or("null".into(), |v| v.to_string()),
-            s.last_snapshot_ms
-                .map_or("null".into(), |t| now.saturating_sub(t).to_string()),
-            metrics.join(","),
-            provider_state,
-            context,
-            opt_str(permission),
-            provider_counters,
-            control.accepted,
-            control.requests,
-            control.wrong_uid,
-            control.malformed,
-            control.oversized,
-            control.bad_version,
-            control.unknown_command,
-            control.busy,
-            control.closed_for_bad_lines,
-        )
+        JsonObject::new()
+            .object(
+                "daemon",
+                JsonObject::new()
+                    .str("version", self.version)
+                    .num("pid", std::process::id().into())
+                    .num("uptime_s", now.saturating_sub(self.started_ms) / 1000)
+                    .num("uid", current_uid().into()),
+            )
+            .object(
+                "link",
+                JsonObject::new()
+                    .str("state", link.state.name())
+                    .opt_str("detail", link.detail.as_deref())
+                    .opt_str("port", link.port.as_deref())
+                    .opt_str("pairing_identity", link.pairing_identity.as_deref())
+                    .opt_str(
+                        "pairing_code",
+                        link.pairing_code.map(|c| format!("{c:06}")).as_deref(),
+                    )
+                    .num("sessions", link.sessions)
+                    .num("snapshots", s.snapshots)
+                    .opt_num("last_snapshot_utc_ms", s.last_snapshot_utc_ms)
+                    .opt_num(
+                        "last_snapshot_age_ms",
+                        s.last_snapshot_ms.map(|t| now.saturating_sub(t)),
+                    ),
+            )
+            .object("metrics", metrics)
+            .object(
+                "wifi_context",
+                JsonObject::new()
+                    .str("provider", provider_state)
+                    .str("availability", context)
+                    .opt_str("permission", permission),
+            )
+            .object(
+                "counters",
+                JsonObject::new()
+                    .raw("provider", &provider_counters)
+                    .object(
+                        "control",
+                        JsonObject::new()
+                            .num("accepted", control.accepted)
+                            .num("requests", control.requests)
+                            .num("wrong_uid", control.wrong_uid)
+                            .num("malformed", control.malformed)
+                            .num("oversized", control.oversized)
+                            .num("bad_version", control.bad_version)
+                            .num("unknown_command", control.unknown_command)
+                            .num("busy", control.busy)
+                            .num("closed_for_bad_lines", control.closed_for_bad_lines),
+                    ),
+            )
+            .finish()
     }
 
     fn monitors(&self) -> String {
@@ -1029,5 +1019,112 @@ impl Daemon {
         self.control.take();
         self.provider.take();
         self.logger.line("cyd-hostd stopped");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NoPorts;
+    impl PortDiscovery for NoPorts {
+        fn candidates(&self) -> Vec<String> {
+            Vec::new()
+        }
+        fn exists(&self, _path: &str) -> bool {
+            false
+        }
+    }
+
+    fn handler(provider: Option<Arc<WifiContextServer>>) -> DaemonHandler {
+        let tracker = provider.as_ref().map(|server| server.provider().0);
+        DaemonHandler {
+            shared: Arc::new(Mutex::new(Shared {
+                link: LinkStatus {
+                    state: LinkState::PairedConnected,
+                    detail: Some("a \"quoted\"\tdetail\u{1}".into()),
+                    port: Some("/dev/cu.usbserial-10".into()),
+                    pairing_code: Some(4_242),
+                    pairing_identity: Some("d0d0d0d0".into()),
+                    sessions: 2,
+                },
+                last_snapshot_utc_ms: Some(1_790_205_982_430),
+                // In the future of any clock: the reported age saturates to 0.
+                last_snapshot_ms: Some(u64::MAX),
+                snapshots: 88,
+                groups: vec![("cpu", "available"), ("battery", "absent")],
+            })),
+            commands: Mutex::new(mpsc::channel().0),
+            stop: Arc::new(AtomicBool::new(false)),
+            provider,
+            tracker,
+            discovery: Arc::new(NoPorts),
+            clock: Clock::new(),
+            started_ms: u64::MAX, // uptime 0
+            version: "1.2.3",
+        }
+    }
+
+    fn control() -> ControlStats {
+        ControlStats {
+            accepted: 1,
+            requests: 2,
+            wrong_uid: 3,
+            malformed: 4,
+            oversized: 5,
+            bad_version: 6,
+            unknown_command: 7,
+            busy: 8,
+            closed_for_bad_lines: 9,
+        }
+    }
+
+    /// The status reply is a documented contract read by the setup app: its
+    /// bytes (key order, escaping, nulls) are pinned here.
+    #[test]
+    fn the_status_reply_is_byte_for_byte_stable() {
+        let (pid, uid) = (std::process::id(), current_uid());
+        let expected = |wifi: &str, provider_counters: &str| {
+            format!(
+                "{{\"daemon\":{{\"version\":\"1.2.3\",\"pid\":{pid},\"uptime_s\":0,\"uid\":{uid}}},\
+                 \"link\":{{\"state\":\"paired_connected\",\"detail\":\"a \\\"quoted\\\"\\tdetail\\u0001\",\
+                 \"port\":\"/dev/cu.usbserial-10\",\"pairing_identity\":\"d0d0d0d0\",\
+                 \"pairing_code\":\"004242\",\"sessions\":2,\"snapshots\":88,\
+                 \"last_snapshot_utc_ms\":1790205982430,\"last_snapshot_age_ms\":0}},\
+                 \"metrics\":{{\"cpu\":\"available\",\"battery\":\"absent\"}},\
+                 \"wifi_context\":{wifi},\
+                 \"counters\":{{\"provider\":{provider_counters},\"control\":{{\"accepted\":1,\
+                 \"requests\":2,\"wrong_uid\":3,\"malformed\":4,\"oversized\":5,\"bad_version\":6,\
+                 \"unknown_command\":7,\"busy\":8,\"closed_for_bad_lines\":9}}}}}}"
+            )
+        };
+        assert_eq!(
+            handler(None).status(&control()),
+            expected(
+                "{\"provider\":\"server_unavailable\",\"availability\":\"not_requested\",\"permission\":null}",
+                "null"
+            )
+        );
+
+        let dir = std::env::temp_dir().join(format!("cyd-status-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let clock = Clock::new();
+        let server = WifiContextServer::start(ServerConfig {
+            dir: dir.clone(),
+            expected_uid: current_uid(),
+            now_ms: clock.now_fn(),
+        })
+        .unwrap();
+        let status = handler(Some(Arc::new(server))).status(&control());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            status,
+            expected(
+                "{\"provider\":\"never_connected\",\"availability\":\"not_requested\",\"permission\":null}",
+                "{\"accepted\":0,\"replaced\":0,\"wrong_uid\":0,\"malformed\":0,\"oversized\":0,\
+                 \"out_of_order\":0,\"rate_limited\":0,\"bad_version\":0,\"closed_for_bad_lines\":0,\
+                 \"applied\":0}"
+            )
+        );
     }
 }

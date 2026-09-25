@@ -20,7 +20,8 @@ use hostcore::link::{Collected, Collectors, Link, LinkError, ServeEnd, ServeObse
 use hostcore::lock::{InstanceLock, LockError};
 use hostcore::paths;
 use metrics::wifi_context::{FixtureProvider, WifiContextProvider};
-use platform_macos::wifi_context_server::{current_uid, ServerConfig, WifiContextServer};
+use platform_macos::ipc::current_uid;
+use platform_macos::wifi_context_server::{ServerConfig, WifiContextServer};
 use protocol::{CommandOperation, CommandResult};
 use service::{Action, DryRunLaunchctl, Launchctl, ServiceConfig, SystemLaunchctl};
 

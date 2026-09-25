@@ -11,6 +11,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::flat_json::{parse_flat_object, FlatJsonError, Value};
+
 /// Association Context Availability (`CONTEXT.md`), in wire order
 /// (`CORE_PROTOCOL.md`, Network key 6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +25,27 @@ pub enum ContextAvailability {
     AuthorizedUnavailable = 4,
     Unsupported = 5,
     Error = 6,
+}
+
+impl ContextAvailability {
+    /// The provider IPC and status names (`docs/wifi-context-provider.md`).
+    const NAMES: [(Self, &'static str); 7] = [
+        (Self::Available, "available"),
+        (Self::PermissionNotRequested, "not_requested"),
+        (Self::Denied, "denied"),
+        (Self::Restricted, "restricted"),
+        (Self::AuthorizedUnavailable, "authorized_unavailable"),
+        (Self::Unsupported, "unsupported"),
+        (Self::Error, "error"),
+    ];
+
+    pub fn name(self) -> &'static str {
+        name_of(&Self::NAMES, self)
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        from_name(&Self::NAMES, name)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +134,39 @@ pub enum PermissionStatus {
     Granted,
     Unsupported,
     Error,
+}
+
+impl PermissionStatus {
+    /// The provider IPC and status names (`docs/wifi-context-provider.md`).
+    const NAMES: [(Self, &'static str); 6] = [
+        (Self::NotRequested, "not_requested"),
+        (Self::Denied, "denied"),
+        (Self::Restricted, "restricted"),
+        (Self::Granted, "granted"),
+        (Self::Unsupported, "unsupported"),
+        (Self::Error, "error"),
+    ];
+
+    pub fn name(self) -> &'static str {
+        name_of(&Self::NAMES, self)
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        from_name(&Self::NAMES, name)
+    }
+}
+
+/// A value's name in a complete table of every value.
+fn name_of<T: PartialEq + Copy>(table: &[(T, &'static str)], value: T) -> &'static str {
+    table
+        .iter()
+        .find(|(v, _)| *v == value)
+        .map(|(_, name)| *name)
+        .expect("the table lists every value")
+}
+
+fn from_name<T: Copy>(table: &[(T, &'static str)], name: &str) -> Option<T> {
+    table.iter().find(|(_, n)| *n == name).map(|(v, _)| *v)
 }
 
 /// Longest a provider may stay silent before its context is no longer
@@ -234,11 +290,6 @@ impl WifiContextProvider for TrackerProvider {
 
 /// The protocol version this daemon speaks.
 pub const IPC_VERSION: i64 = 1;
-/// Longest accepted line, newline excluded.
-pub const MAX_LINE_BYTES: usize = 512;
-const MAX_FIELDS: usize = 16;
-const MAX_KEY_BYTES: usize = 24;
-const MAX_STRING_BYTES: usize = 128;
 const MAX_TEXT_FIELD: usize = 32;
 
 /// A message from the provider.
@@ -272,120 +323,13 @@ pub enum MessageError {
     BadField,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Value {
-    Str(String),
-    Int(i64),
-    Bool(bool),
-    Null,
-}
-
-/// Parses `{"key": value, ...}` where values are strings without escapes,
-/// integers, booleans or null. Nothing nested, no floats, no duplicate keys.
-pub fn parse_flat_object(line: &[u8]) -> Result<Vec<(String, Value)>, MessageError> {
-    if line.len() > MAX_LINE_BYTES {
-        return Err(MessageError::TooLong);
-    }
-    let text = std::str::from_utf8(line).map_err(|_| MessageError::NotJson)?;
-    let b = text.as_bytes();
-    let mut p = 0;
-    let skip_ws = |p: &mut usize| {
-        while *p < b.len() && b[*p] == b' ' {
-            *p += 1;
-        }
-    };
-    let string = |p: &mut usize, max: usize| -> Result<String, MessageError> {
-        if b.get(*p) != Some(&b'"') {
-            return Err(MessageError::NotJson);
-        }
-        *p += 1;
-        let start = *p;
-        while *p < b.len() && b[*p] != b'"' {
-            // No escapes and no control characters: nothing to decode.
-            if b[*p] == b'\\' || b[*p] < 0x20 || *p - start > max {
-                return Err(MessageError::NotJson);
-            }
-            *p += 1;
-        }
-        if *p >= b.len() {
-            return Err(MessageError::NotJson);
-        }
-        let s = text[start..*p].to_string();
-        *p += 1;
-        Ok(s)
-    };
-    skip_ws(&mut p);
-    if b.get(p) != Some(&b'{') {
-        return Err(MessageError::NotJson);
-    }
-    p += 1;
-    let mut fields: Vec<(String, Value)> = Vec::new();
-    skip_ws(&mut p);
-    if b.get(p) == Some(&b'}') {
-        p += 1;
-    } else {
-        loop {
-            skip_ws(&mut p);
-            let key = string(&mut p, MAX_KEY_BYTES)?;
-            skip_ws(&mut p);
-            if b.get(p) != Some(&b':') {
-                return Err(MessageError::NotJson);
-            }
-            p += 1;
-            skip_ws(&mut p);
-            let value = match b.get(p) {
-                Some(b'"') => Value::Str(string(&mut p, MAX_STRING_BYTES)?),
-                Some(b't') if text[p..].starts_with("true") => {
-                    p += 4;
-                    Value::Bool(true)
-                }
-                Some(b'f') if text[p..].starts_with("false") => {
-                    p += 5;
-                    Value::Bool(false)
-                }
-                Some(b'n') if text[p..].starts_with("null") => {
-                    p += 4;
-                    Value::Null
-                }
-                Some(c) if c.is_ascii_digit() || *c == b'-' => {
-                    let start = p;
-                    p += 1;
-                    while p < b.len() && b[p].is_ascii_digit() {
-                        p += 1;
-                    }
-                    let digits = &text[start..p];
-                    // Bounded, canonical integers only: no leading zeros.
-                    let magnitude = digits.trim_start_matches('-');
-                    if magnitude.is_empty()
-                        || magnitude.len() > 15
-                        || (magnitude.len() > 1 && magnitude.starts_with('0'))
-                    {
-                        return Err(MessageError::NotJson);
-                    }
-                    Value::Int(digits.parse().map_err(|_| MessageError::NotJson)?)
-                }
-                _ => return Err(MessageError::NotJson),
-            };
-            if fields.iter().any(|(k, _)| *k == key) || fields.len() >= MAX_FIELDS {
-                return Err(MessageError::NotJson);
-            }
-            fields.push((key, value));
-            skip_ws(&mut p);
-            match b.get(p) {
-                Some(b',') => p += 1,
-                Some(b'}') => {
-                    p += 1;
-                    break;
-                }
-                _ => return Err(MessageError::NotJson),
-            }
+impl From<FlatJsonError> for MessageError {
+    fn from(error: FlatJsonError) -> Self {
+        match error {
+            FlatJsonError::TooLong => MessageError::TooLong,
+            FlatJsonError::NotJson => MessageError::NotJson,
         }
     }
-    skip_ws(&mut p);
-    if p != b.len() {
-        return Err(MessageError::NotJson);
-    }
-    Ok(fields)
 }
 
 struct Fields(Vec<(String, Value)>);
@@ -454,31 +398,6 @@ fn parse_mac(s: &str) -> Result<[u8; 6], MessageError> {
     Ok(out)
 }
 
-fn context_availability(s: &str) -> Result<ContextAvailability, MessageError> {
-    Ok(match s {
-        "available" => ContextAvailability::Available,
-        "not_requested" => ContextAvailability::PermissionNotRequested,
-        "denied" => ContextAvailability::Denied,
-        "restricted" => ContextAvailability::Restricted,
-        "authorized_unavailable" => ContextAvailability::AuthorizedUnavailable,
-        "unsupported" => ContextAvailability::Unsupported,
-        "error" => ContextAvailability::Error,
-        _ => return Err(MessageError::BadField),
-    })
-}
-
-fn permission_status(s: &str) -> Result<PermissionStatus, MessageError> {
-    Ok(match s {
-        "not_requested" => PermissionStatus::NotRequested,
-        "denied" => PermissionStatus::Denied,
-        "restricted" => PermissionStatus::Restricted,
-        "granted" => PermissionStatus::Granted,
-        "unsupported" => PermissionStatus::Unsupported,
-        "error" => PermissionStatus::Error,
-        _ => return Err(MessageError::BadField),
-    })
-}
-
 /// Parses one provider line (without its newline). Unknown extra keys are
 /// ignored; everything the daemon uses is range-checked, and SSID/BSSID are
 /// refused unless the availability says `available`.
@@ -497,10 +416,11 @@ pub fn parse_provider_message(line: &[u8]) -> Result<ProviderMessage, MessageErr
         }),
         "permission_status" => Ok(ProviderMessage::PermissionStatus {
             seq: f.uint("seq", u32::MAX.into())?,
-            status: permission_status(f.str("status")?)?,
+            status: PermissionStatus::from_name(f.str("status")?).ok_or(MessageError::BadField)?,
         }),
         "context" => {
-            let availability = context_availability(f.str("availability")?)?;
+            let availability = ContextAvailability::from_name(f.str("availability")?)
+                .ok_or(MessageError::BadField)?;
             let band = match f.nullable_str("band")? {
                 None => None,
                 Some("2.4") => Some(WifiBand::Ghz2_4),
@@ -543,6 +463,7 @@ pub fn parse_provider_message(line: &[u8]) -> Result<ProviderMessage, MessageErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flat_json::MAX_LINE_BYTES;
 
     fn ctx_line(extra: &str) -> String {
         format!(

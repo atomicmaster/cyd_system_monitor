@@ -6,7 +6,10 @@
 
 pub mod agents;
 pub mod battery;
+#[cfg(target_os = "macos")]
+mod cf;
 pub mod cpu;
+pub mod ipc;
 pub mod network;
 pub mod ram;
 pub mod storage;

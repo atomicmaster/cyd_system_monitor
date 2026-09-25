@@ -56,21 +56,22 @@ std::string Body(const p::Decoded &d) {
         << d.cpu.utilization_per_mille << ',' << d.cpu.source_age_ms << ','
         << static_cast<int>(d.cpu.freshness) << ','
         << d.cpu.configuration_revision;
-    if (d.has_ram) {
-      out << ";ram=" << static_cast<int>(d.ram.availability) << ','
-          << d.ram.used_bytes << ',' << d.ram.total_bytes << ','
-          << d.ram.source_age_ms << ',' << static_cast<int>(d.ram.freshness);
+    if (d.groups.ram) {
+      const auto &g = *d.groups.ram;
+      out << ";ram=" << static_cast<int>(g.availability) << ','
+          << g.used_bytes << ',' << g.total_bytes << ','
+          << g.source_age_ms << ',' << static_cast<int>(g.freshness);
     }
-    if (d.has_storage) {
-      const auto &g = d.storage;
+    if (d.groups.storage) {
+      const auto &g = *d.groups.storage;
       out << ";storage=" << static_cast<int>(g.capacity_availability) << ','
           << g.total_bytes << ',' << g.available_bytes << ','
           << g.capacity_age_ms << ',' << static_cast<int>(g.io_availability)
           << ',' << g.read_bytes_per_s << ',' << g.write_bytes_per_s << ','
           << g.io_age_ms;
     }
-    if (d.has_battery) {
-      const auto &g = d.battery;
+    if (d.groups.battery) {
+      const auto &g = *d.groups.battery;
       out << ";battery=" << static_cast<int>(g.charge_availability) << ','
           << g.charge_per_mille << ',' << static_cast<int>(g.state) << ','
           << g.time_remaining_min << ',' << g.charge_age_ms << ','
@@ -78,14 +79,14 @@ std::string Body(const p::Decoded &d) {
           << g.max_capacity_per_mille << ',' << static_cast<int>(g.condition)
           << ',' << g.cycle_count << ',' << g.condition_age_ms;
     }
-    if (d.has_agents) {
-      const auto &g = d.agents;
+    if (d.groups.agents) {
+      const auto &g = *d.groups.agents;
       out << ";agents=" << static_cast<int>(g.availability) << ','
           << g.source_age_ms << ',' << static_cast<int>(g.state[0]) << ','
           << static_cast<int>(g.state[1]) << ',' << static_cast<int>(g.state[2]);
     }
-    if (d.has_network) {
-      const auto &g = d.network;
+    if (d.groups.network) {
+      const auto &g = *d.groups.network;
       const auto mac = [](const auto &m) {
         return m ? Hex(m->data(), m->size()) : std::string("-");
       };
@@ -133,11 +134,7 @@ std::string Summary(p::Error error, const p::Decoded &d) {
 std::string Reencode(const p::Decoded &d) {
   std::vector<uint8_t> frame;
   const auto error = d.envelope.type == p::MessageType::kSnapshot
-                         ? p::EncodeSnapshot(d.envelope, d.cpu, d.has_ram ? &d.ram : nullptr,
-                                           d.has_storage ? &d.storage : nullptr,
-                                           d.has_battery ? &d.battery : nullptr,
-                                           d.has_agents ? &d.agents : nullptr,
-                                           d.has_network ? &d.network : nullptr, &frame)
+                         ? p::EncodeSnapshot(d.envelope, d.cpu, d.groups, &frame)
                          : p::Encode(d.envelope, &frame);
   return error == p::Error::kNone ? Hex(frame.data(), frame.size())
                                   : std::string("err ") + p::ErrorName(error);

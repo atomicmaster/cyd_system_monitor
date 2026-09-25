@@ -6,6 +6,7 @@
 
 pub mod control;
 pub mod daemon;
+mod groups;
 pub mod identity;
 pub mod link;
 pub mod lock;

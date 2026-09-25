@@ -11,7 +11,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use protocol::{
     encode_control, AgentsSnapshot, AssociationContext, Availability, BatterySnapshot,
     CommandOperation, CommandResult, ControlBody, CpuSnapshot, Envelope, Freshness, HelloBody,
-    MessageType, NetworkSnapshot, RamSnapshot, RouteKind, StorageSnapshot, WifiCoverage,
+    MessageType, NetworkSnapshot, RamSnapshot, RouteKind, Snapshot, StorageSnapshot, WifiCoverage,
 };
 use transport::client::{Event, HostClient, Phase, Refusal};
 
@@ -220,9 +220,7 @@ fn first_pairing_needs_touch_then_live_data_flows() {
     ));
     assert_eq!(client.phase(), Phase::PairSent);
     assert!(
-        client
-            .snapshot(&snapshot(1), None, None, None, None, None, None)
-            .is_none(),
+        client.snapshot(&Snapshot::new(snapshot(1)), None).is_none(),
         "no data before pairing"
     );
 
@@ -238,7 +236,7 @@ fn first_pairing_needs_touch_then_live_data_flows() {
     assert_eq!(state.phase, OPEN);
 
     let frame = client
-        .snapshot(&snapshot(437), None, None, None, None, None, None)
+        .snapshot(&Snapshot::new(snapshot(437)), None)
         .unwrap();
     let (_, state) = device.push(&frame);
     assert!(state.seen);
@@ -252,11 +250,7 @@ fn paired_host_reconnects_without_touch_on_a_new_session() {
     handshake(&mut device, &mut first);
     let (frames, _) = device.command("CONFIRM 1");
     deliver(&mut first, &frames);
-    let (_, state) = device.push(
-        &first
-            .snapshot(&snapshot(300), None, None, None, None, None, None)
-            .unwrap(),
-    );
+    let (_, state) = device.push(&first.snapshot(&Snapshot::new(snapshot(300)), None).unwrap());
     assert_eq!(state.cpu, 300);
 
     let mut second = HostClient::new(HOST, Some(DEVICE), CODE, SESSION_B);
@@ -267,15 +261,11 @@ fn paired_host_reconnects_without_touch_on_a_new_session() {
     }));
 
     // The previous session's snapshots are rejected; the new one's are not.
-    let (_, state) = device.push(
-        &first
-            .snapshot(&snapshot(999), None, None, None, None, None, None)
-            .unwrap(),
-    );
+    let (_, state) = device.push(&first.snapshot(&Snapshot::new(snapshot(999)), None).unwrap());
     assert_eq!(state.cpu, 300);
     let (_, state) = device.push(
         &second
-            .snapshot(&snapshot(650), None, None, None, None, None, None)
+            .snapshot(&Snapshot::new(snapshot(650)), None)
             .unwrap(),
     );
     assert_eq!(state.cpu, 650);
@@ -316,7 +306,7 @@ fn a_second_host_is_refused_by_a_paired_device() {
     assert!(events.contains(&Event::Refused(Refusal::NotPairedWithYou)));
     assert!(state.paired);
     assert!(stranger
-        .snapshot(&snapshot(1), None, None, None, None, None, None)
+        .snapshot(&Snapshot::new(snapshot(1)), None)
         .is_none());
 }
 
@@ -408,7 +398,13 @@ fn a_ram_group_reaches_the_firmware_state_and_may_stop_being_sent() {
         freshness: Freshness::Fresh,
     };
     let frame = client
-        .snapshot(&snapshot(400), Some(&ram), None, None, None, None, None)
+        .snapshot(
+            &Snapshot {
+                ram: Some(ram.clone()),
+                ..Snapshot::new(snapshot(400))
+            },
+            None,
+        )
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!((state.cpu, state.ram), (400, Some((8 << 30, 16 << 30))));
@@ -416,7 +412,7 @@ fn a_ram_group_reaches_the_firmware_state_and_may_stop_being_sent() {
     // A later snapshot without the group keeps the last RAM reading (it
     // goes stale on its own clock) while CPU updates.
     let frame = client
-        .snapshot(&snapshot(500), None, None, None, None, None, None)
+        .snapshot(&Snapshot::new(snapshot(500)), None)
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!((state.cpu, state.ram), (500, Some((8 << 30, 16 << 30))));
@@ -449,12 +445,11 @@ fn a_storage_group_reaches_the_firmware_state_beside_ram() {
     };
     let frame = client
         .snapshot(
-            &snapshot(400),
-            Some(&ram),
-            Some(&storage),
-            None,
-            None,
-            None,
+            &Snapshot {
+                ram: Some(ram.clone()),
+                storage: Some(storage.clone()),
+                ..Snapshot::new(snapshot(400))
+            },
             None,
         )
         .unwrap();
@@ -487,7 +482,13 @@ fn a_battery_group_reaches_the_firmware_state_and_absence_is_not_zero() {
         condition_age_ms: 1_800_000,
     };
     let frame = client
-        .snapshot(&snapshot(400), None, None, Some(&battery), None, None, None)
+        .snapshot(
+            &Snapshot {
+                battery: Some(battery.clone()),
+                ..Snapshot::new(snapshot(400))
+            },
+            None,
+        )
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!(state.battery, Some([0, 870, 1, 910]));
@@ -506,7 +507,13 @@ fn a_battery_group_reaches_the_firmware_state_and_absence_is_not_zero() {
         condition_age_ms: 0,
     };
     let frame = client
-        .snapshot(&snapshot(500), None, None, Some(&absent), None, None, None)
+        .snapshot(
+            &Snapshot {
+                battery: Some(absent.clone()),
+                ..Snapshot::new(snapshot(500))
+            },
+            None,
+        )
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!(state.battery, Some([2, 0, 0, 0]));
@@ -526,7 +533,13 @@ fn an_agents_group_reaches_the_firmware_state_and_unavailable_is_not_none_runnin
         state: [0, 1, 0],
     };
     let frame = client
-        .snapshot(&snapshot(400), None, None, None, Some(&agents), None, None)
+        .snapshot(
+            &Snapshot {
+                agents: Some(agents.clone()),
+                ..Snapshot::new(snapshot(400))
+            },
+            None,
+        )
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!(state.agents, Some([0, 0, 1, 0]));
@@ -537,7 +550,13 @@ fn an_agents_group_reaches_the_firmware_state_and_unavailable_is_not_none_runnin
         state: [0, 0, 0],
     };
     let frame = client
-        .snapshot(&snapshot(500), None, None, None, Some(&down), None, None)
+        .snapshot(
+            &Snapshot {
+                agents: Some(down.clone()),
+                ..Snapshot::new(snapshot(500))
+            },
+            None,
+        )
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!(state.agents, Some([3, 0, 0, 0]));
@@ -567,7 +586,13 @@ fn a_network_group_reaches_the_firmware_state_and_context_is_independent_of_rate
         bssid: None,
     };
     let frame = client
-        .snapshot(&snapshot(400), None, None, None, None, Some(&network), None)
+        .snapshot(
+            &Snapshot {
+                network: Some(network.clone()),
+                ..Snapshot::new(snapshot(400))
+            },
+            None,
+        )
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!(
@@ -583,7 +608,13 @@ fn a_network_group_reaches_the_firmware_state_and_context_is_independent_of_rate
         ..network
     };
     let frame = client
-        .snapshot(&snapshot(500), None, None, None, None, Some(&pending), None)
+        .snapshot(
+            &Snapshot {
+                network: Some(pending.clone()),
+                ..Snapshot::new(snapshot(500))
+            },
+            None,
+        )
         .unwrap();
     let (_, state) = device.push(&frame);
     assert_eq!(state.network, Some([3, 1, 1, 0, 0, 2, 2, 149]));

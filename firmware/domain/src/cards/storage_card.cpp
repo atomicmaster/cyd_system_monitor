@@ -7,22 +7,6 @@
 namespace firmware::domain {
 namespace {
 
-const char* NoteText(protocol::Availability availability) {
-  switch (availability) {
-    case protocol::Availability::kAvailable:
-      return "";
-    case protocol::Availability::kUnsupported:
-      return "Unsupported";
-    case protocol::Availability::kAbsent:
-      return "Not present";
-    case protocol::Availability::kTemporarilyUnavailable:
-      return "Unavailable";
-    case protocol::Availability::kError:
-      return "Read error";
-  }
-  return "";
-}
-
 // Storage is marketed and shown by Finder in decimal units, so capacity uses
 // 10^9 / 10^12 (RAM uses binary gigabytes, the way memory is sold).
 constexpr double kGB = 1e9;
@@ -70,9 +54,7 @@ MetricCardView MakeStorageCard(const HostState& state, uint64_t /*now_ms*/) {
   MetricCardView view{.title = "Storage", .value = "--"};
   const StorageMetricState& storage = state.storage;
   if (!storage.has_data) return view;
-  const bool link_lost = state.connection == ConnectionState::kStale ||
-                         state.connection == ConnectionState::kIncompatible ||
-                         state.connection == ConnectionState::kDisconnected;
+  const bool link_lost = state.LinkLost();
   const bool capacity_ok = storage.capacity_availability == protocol::Availability::kAvailable &&
                            storage.total_bytes != 0;
   const bool io_ok = storage.io_availability == protocol::Availability::kAvailable;
@@ -95,11 +77,11 @@ MetricCardView MakeStorageCard(const HostState& state, uint64_t /*now_ms*/) {
                 " W" + RateText(storage.write_bytes_per_s);
     view.dimmed = view.dimmed || io_retained;
   } else if (capacity_ok) {
-    view.note = std::string("I/O ") + NoteText(storage.io_availability);
+    view.note = std::string("I/O ") + AvailabilityNote(storage.io_availability);
   } else if (storage.capacity_availability == protocol::Availability::kAvailable) {
     view.note = "Read error";  // "available" with a zero total is a broken read
   } else {
-    view.note = NoteText(storage.capacity_availability);
+    view.note = AvailabilityNote(storage.capacity_availability);
   }
   return view;
 }

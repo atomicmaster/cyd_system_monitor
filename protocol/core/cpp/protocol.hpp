@@ -81,28 +81,47 @@ struct StorageSnapshot {
 // availability and source ages; no freshness field. A half that is not
 // kAvailable carries 0 (or the unknown sentinel kBatteryUnknownU16).
 constexpr uint16_t kBatteryUnknownU16 = 0xFFFF;
+enum class BatteryState : uint8_t {
+  kUnknown,
+  kCharging,
+  kDischarging,
+  kCharged,
+  kAcIdle  // on AC power, not charging
+};
+enum class BatteryCondition : uint8_t {
+  kUnknown,
+  kNormal,
+  kServiceRecommended,
+  kPoor  // poor or replace
+};
 struct BatterySnapshot {
   Availability charge_availability = Availability::kTemporarilyUnavailable;
   uint16_t charge_per_mille = 0;
-  uint8_t state = 0;  // 0 unknown, 1 charging, 2 discharging, 3 charged, 4 AC idle
+  BatteryState state = BatteryState::kUnknown;
   uint16_t time_remaining_min = kBatteryUnknownU16;
   uint32_t charge_age_ms = 0;
   Availability condition_availability = Availability::kTemporarilyUnavailable;
   uint16_t max_capacity_per_mille = 0;
-  uint8_t condition = 0;  // 0 unknown, 1 normal, 2 service, 3 poor/replace
+  BatteryCondition condition = BatteryCondition::kUnknown;
   uint16_t cycle_count = kBatteryUnknownU16;
   uint32_t condition_age_ms = 0;
 };
 // Agents (TB07): exact same-user process presence for the three supported
-// agents, in fixed slot order [codex, claude, grok]. Each state is 0 not
-// running, 1 running with activity unknown, 2 busy, 3 idle (2 and 3 need an
-// adapter that MVP Hosts do not have). Not kAvailable means all states are 0
-// and the device shows `--`, never "not running". No freshness field.
-constexpr uint8_t kAgentSlots = 3;
+// agents, in fixed slot order [codex, claude, grok]. Busy and idle need an
+// adapter that MVP Hosts do not have. Not kAvailable means every state is
+// kNotRunning and the device shows `--`, never "not running". No freshness
+// field.
+constexpr std::size_t kAgentSlots = 3;
+enum class AgentState : uint8_t {
+  kNotRunning,
+  kRunning,  // running, activity unknown
+  kBusy,
+  kIdle
+};
 struct AgentsSnapshot {
   Availability availability = Availability::kTemporarilyUnavailable;
   uint32_t source_age_ms = 0;
-  uint8_t state[kAgentSlots] = {0, 0, 0};
+  std::array<AgentState, kAgentSlots> state{};
 };
 // Network (TB05): primary-route traffic and Host WiFi context, two halves with
 // independent availability and source ages; no freshness field. See
@@ -185,49 +204,31 @@ struct Envelope {
   std::optional<PairBody> pair;
   std::optional<CommandBody> command;
 };
+// The optional metric groups of a complete snapshot (CORE_PROTOCOL.md
+// "Metric groups"), each present or absent on its own. A new group is one
+// member here.
+struct SnapshotGroups {
+  std::optional<RamSnapshot> ram;
+  std::optional<StorageSnapshot> storage;
+  std::optional<BatterySnapshot> battery;
+  std::optional<AgentsSnapshot> agents;
+  std::optional<NetworkSnapshot> network;
+};
 struct Decoded {
   Envelope envelope;
   CpuSnapshot cpu{};
   bool has_cpu = false;
-  // Optional metric groups (CORE_PROTOCOL.md "Metric groups"); absent when
-  // the sender did not include them.
-  RamSnapshot ram{};
-  bool has_ram = false;
-  StorageSnapshot storage{};
-  bool has_storage = false;
-  BatterySnapshot battery{};
-  bool has_battery = false;
-  AgentsSnapshot agents{};
-  bool has_agents = false;
-  NetworkSnapshot network{};
-  bool has_network = false;
+  // Absent when the sender did not include them.
+  SnapshotGroups groups;
 };
 
 uint32_t Crc32(std::span<const uint8_t> bytes);
 Error Encode(const Envelope &envelope, std::vector<uint8_t> *frame);
 Error EncodeCpuSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
                         std::vector<uint8_t> *frame);
-// A complete snapshot: CPU plus each optional metric group that is non-null.
+// A complete snapshot: CPU plus each optional metric group that is present.
 Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
-                     const RamSnapshot *ram, std::vector<uint8_t> *frame);
-Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
-                     const RamSnapshot *ram, const StorageSnapshot *storage,
-                     std::vector<uint8_t> *frame);
-Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
-                     const RamSnapshot *ram, const StorageSnapshot *storage,
-                     const BatterySnapshot *battery,
-                     std::vector<uint8_t> *frame);
-Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
-                     const RamSnapshot *ram, const StorageSnapshot *storage,
-                     const BatterySnapshot *battery,
-                     const AgentsSnapshot *agents,
-                     std::vector<uint8_t> *frame);
-Error EncodeSnapshot(const Envelope &envelope, const CpuSnapshot &cpu,
-                     const RamSnapshot *ram, const StorageSnapshot *storage,
-                     const BatterySnapshot *battery,
-                     const AgentsSnapshot *agents,
-                     const NetworkSnapshot *network,
-                     std::vector<uint8_t> *frame);
+                     const SnapshotGroups &groups, std::vector<uint8_t> *frame);
 Error Decode(std::span<const uint8_t> frame, Decoded *result);
 const char *ErrorName(Error error);
 

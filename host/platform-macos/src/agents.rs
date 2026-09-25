@@ -24,6 +24,7 @@
 //! failed scan is retried at the normal [`REFRESH_MS`] cadence.
 
 use metrics::agents::{classify, AgentState, ProcessRecord, AGENT_COUNT};
+use metrics::cache::{RefreshPolicy, SampleCache};
 use metrics::{Collector, MetricAvailability, MetricSample};
 
 /// How long a scan is reused before processes are listed again.
@@ -53,10 +54,7 @@ pub struct AgentsCollector {
     source: ProcessSource,
     uid: u32,
     home: String,
-    sample: Option<([AgentState; AGENT_COUNT], u64)>,
-    next_scan_ms: u64,
-    /// When the current run of failed scans began; `None` after a success.
-    failing_since_ms: Option<u64>,
+    presence: SampleCache<[AgentState; AGENT_COUNT]>,
 }
 
 impl AgentsCollector {
@@ -74,9 +72,12 @@ impl AgentsCollector {
             source,
             uid,
             home,
-            sample: None,
-            next_scan_ms: 0,
-            failing_since_ms: None,
+            // Success or failure, the next scan is one refresh away: a failing
+            // listing is not retried on every one-second tick.
+            presence: SampleCache::new(RefreshPolicy {
+                refresh_ms: REFRESH_MS,
+                retry_until_sampled: false,
+            }),
         }
     }
 }
@@ -91,37 +92,26 @@ impl Collector for AgentsCollector {
     type Reading = AgentsReading;
 
     fn collect(&mut self, now_ms: u64) -> MetricSample<AgentsReading> {
-        if now_ms >= self.next_scan_ms {
-            // Success or failure, the next scan is one refresh away: a failing
-            // listing is not retried on every one-second tick.
-            self.next_scan_ms = now_ms.saturating_add(REFRESH_MS);
-            match (self.source)() {
-                Some(records) => {
-                    self.sample = Some((classify(&records, self.uid, &self.home), now_ms));
-                    self.failing_since_ms = None;
-                }
-                None => {
-                    self.failing_since_ms.get_or_insert(now_ms);
-                }
-            }
-        }
-        let failing = self.failing_since_ms.is_some();
-        match self.sample {
-            Some((states, sampled_ms)) => {
-                let age = now_ms.saturating_sub(sampled_ms);
-                if age >= RETAIN_MS && failing {
+        let (source, uid, home) = (&mut self.source, self.uid, &self.home);
+        self.presence.refresh_with(now_ms, || {
+            source().map(|records| classify(&records, uid, home))
+        });
+        let failing_since = self.presence.failing_since_ms();
+        match self.presence.get(now_ms) {
+            Some(cached) => {
+                if cached.age_ms >= RETAIN_MS && failing_since.is_some() {
                     // Scans have kept failing: stop showing an old presence.
                     MetricSample::unavailable(MetricAvailability::Error)
                 } else {
                     MetricSample::available(AgentsReading {
-                        states,
-                        age_ms: age.min(u32::MAX.into()) as u32,
+                        states: *cached.value,
+                        age_ms: cached.wire_age_ms(),
                     })
                 }
             }
             // Never listed: a transient failure first, an error once scans
             // have failed as long as a retained sample would have lasted.
-            None => MetricSample::unavailable(match self.failing_since_ms {
+            None => MetricSample::unavailable(match failing_since {
                 Some(since) if now_ms.saturating_sub(since) >= RETAIN_MS => {
                     MetricAvailability::Error
                 }
@@ -133,7 +123,7 @@ impl Collector for AgentsCollector {
     /// Scan again before the next snapshot; a failing rescan leaves the old
     /// presence to age out by its sleep-inclusive age.
     fn on_wake(&mut self) {
-        self.next_scan_ms = 0;
+        self.presence.expire();
     }
 }
 

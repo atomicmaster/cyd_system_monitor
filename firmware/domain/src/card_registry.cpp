@@ -19,4 +19,20 @@ constexpr CardDescriptor kCards[] = {
 
 std::span<const CardDescriptor> Cards() { return kCards; }
 
+const char* AvailabilityNote(protocol::Availability availability) {
+  switch (availability) {
+    case protocol::Availability::kAvailable:
+      return "";
+    case protocol::Availability::kUnsupported:
+      return "Unsupported";
+    case protocol::Availability::kAbsent:
+      return "Not present";
+    case protocol::Availability::kTemporarilyUnavailable:
+      return "Unavailable";
+    case protocol::Availability::kError:
+      return "Read error";
+  }
+  return "";
+}
+
 }  // namespace firmware::domain

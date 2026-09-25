@@ -60,7 +60,7 @@ struct ContentView: View {
 
     private var permissionSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Optional: WiFi network identity").font(.subheadline).bold()
+            Text("Optional: WiFi Association Context (SSID/BSSID)").font(.subheadline).bold()
             Text(Disclosure.text)
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)

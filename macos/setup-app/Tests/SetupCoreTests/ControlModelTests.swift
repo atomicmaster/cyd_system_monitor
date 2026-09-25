@@ -67,6 +67,9 @@ private func fixture(_ name: String) throws -> Data {
     #expect(StatusText.link(pairing) == "Display: pairing. Confirm code 123456 on the display.")
     #expect(StatusText.permission(paired.wifiContext).contains("permission granted, but macOS returned no SSID/BSSID"))
     #expect(StatusText.permission(no.wifiContext).contains("no provider yet"))
+    // The glossary term (CONTEXT.md), never the ambiguous "WiFi identity".
+    #expect(StatusText.permission(no.wifiContext).contains("no Association Context (optional)"))
+    #expect(!StatusText.permission(paired.wifiContext).contains("WiFi identity"))
     #expect(StatusText.permission(no.wifiContext).hasSuffix("Monitoring does not depend on this."))
     #expect(StatusText.metrics(paired.metrics).first == "cpu: available")
     #expect(StatusText.drops(no.counters) == nil)

@@ -177,15 +177,7 @@ fn summary(result: &Result<Decoded, String>) -> String {
 
 fn reencode(decoded: &Decoded) -> String {
     let result = match decoded {
-        Message::Snapshot(e, s) => encode_groups(
-            e,
-            &s.cpu,
-            s.ram.as_ref(),
-            s.storage.as_ref(),
-            s.battery.as_ref(),
-            s.agents.as_ref(),
-            s.network.as_ref(),
-        ),
+        Message::Snapshot(e, s) => encode_groups(e, s),
         Message::Control(e, b) => encode_control(e, b),
     };
     match result {

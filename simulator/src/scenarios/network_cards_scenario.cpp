@@ -1,43 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-only
-#include <cstdlib>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <vector>
 
-#include "../expect.hpp"
-#include "firmware/domain/card_registry.hpp"
-#include "firmware/domain/host_feed.hpp"
+#include "../card_scenario.hpp"
 #include "protocol.hpp"
 #include "scenarios.hpp"
 
 namespace simulator::scenarios {
 namespace {
 
-namespace domain = firmware::domain;
 namespace proto = cyd::protocol;
 
-class ScriptedClock : public domain::MonotonicClock {
- public:
-  uint64_t NowMs() const override { return now_ms_; }
-  void Set(uint64_t now_ms) { now_ms_ = now_ms; }
-
- private:
-  uint64_t now_ms_ = 1000;
-};
-
 constexpr auto kOk = proto::Availability::kAvailable;
-
-std::vector<uint8_t> Frame(uint32_t sequence, const proto::NetworkSnapshot* network) {
-  proto::Envelope envelope;
-  envelope.type = proto::MessageType::kSnapshot;
-  envelope.sequence = sequence;
-  for (uint8_t i = 0; i < envelope.session.size(); ++i) envelope.session[i] = i;
-  const proto::CpuSnapshot cpu{kOk, 100, 0, proto::Freshness::kFresh, 0};
-  std::vector<uint8_t> frame;
-  proto::EncodeSnapshot(envelope, cpu, nullptr, nullptr, nullptr, nullptr, network, &frame);
-  return frame;
-}
 
 constexpr std::array<uint8_t, 6> kStation = {0xf2, 0xa1, 0xb3, 0xc4, 0xd5, 0xe6};
 
@@ -67,40 +41,15 @@ proto::NetworkSnapshot Wifi(uint8_t channel, proto::WifiCoverage coverage, uint3
   return g;
 }
 
-const domain::CardDescriptor* NetworkCard() {
-  for (const auto& card : domain::Cards()) {
-    if (std::string(card.id) == "network") return &card;
-  }
-  return nullptr;
-}
-
 }  // namespace
 
 int RunNetworkCards() {
-  ScenarioResult result;
-  ScriptedClock clock;
-  domain::HostFeed feed(clock, 1);
-  std::array<uint8_t, proto::kSessionIdBytes> session{};
-  for (uint8_t i = 0; i < session.size(); ++i) session[i] = i;
-  feed.StartSession(session);
-  const domain::CardDescriptor* card = NetworkCard();
-  result.Expect(card != nullptr, "the registry lists a network card");
-  if (card == nullptr) return result.Finish("simulator network-cards");
-
-  std::ostringstream transcript;
-  const auto at = [&](uint64_t ms, const char* label) {
-    clock.Set(ms);
-    feed.Tick();
-    const auto view = card->make(feed.state(), ms);
-    transcript << label << "\n  " << view.title << " | " << view.value << " | " << view.note
-               << " | show_bar=" << (view.show_bar ? 1 : 0)
-               << " | has_value=" << (view.has_value ? 1 : 0)
-               << " | dimmed=" << (view.dimmed ? 1 : 0) << "\n";
-    return view;
-  };
+  CardScenario scenario("network", "network-cards", CardScenario::Columns::kShowBar);
+  if (!scenario.ready()) return scenario.Finish();
+  ScenarioResult& result = scenario.result();
+  const auto at = [&](uint64_t ms, const char* label) { return scenario.At(ms, label); };
   const auto push = [&](uint64_t ms, uint32_t sequence, const proto::NetworkSnapshot& network) {
-    clock.Set(ms);
-    feed.Push(Frame(sequence, &network));
+    scenario.Push(ms, sequence, {.network = network});
   };
 
   uint32_t seq = 0;
@@ -238,15 +187,7 @@ int RunNetworkCards() {
   result.Expect(view.note == "Last Offline" && view.dimmed,
                 "link loss retains offline as Last Offline, dimmed");
 
-  const std::string path = std::string(CYD_SIMULATOR_SCENARIO_DIR) + "/network-cards.expected";
-  if (std::getenv("CYD_UPDATE_EXPECTED") != nullptr) std::ofstream(path) << transcript.str();
-  std::ifstream expected_file(path);
-  std::stringstream expected;
-  expected << expected_file.rdbuf();
-  result.Expect(expected.str() == transcript.str(),
-                "the transcript matches simulator/scenarios/network-cards.expected "
-                "(rerun with CYD_UPDATE_EXPECTED=1 to review an intended change)");
-  return result.Finish("simulator network-cards");
+  return scenario.Finish();
 }
 
 }  // namespace simulator::scenarios

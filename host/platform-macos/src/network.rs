@@ -293,6 +293,7 @@ struct LinkInterface {
 #[cfg(target_os = "macos")]
 mod imp {
     use super::{parse_link_address, LinkInterface, ScType, AF_LINK};
+    use crate::cf::{self, Cf};
     use std::collections::HashMap;
     use std::ffi::{c_char, c_int, c_void, CStr};
 
@@ -301,7 +302,6 @@ mod imp {
     const IFF_UP: u32 = 0x1;
     const IFF_LOOPBACK: u32 = 0x8;
     const IFF_RUNNING: u32 = 0x40;
-    const UTF8: u32 = 0x0800_0100;
 
     #[repr(C)]
     struct IfAddrs {
@@ -332,14 +332,6 @@ mod imp {
         fn SCNetworkInterfaceCopyAll() -> *const c_void;
         fn SCNetworkInterfaceGetBSDName(interface: *const c_void) -> *const c_void;
         fn SCNetworkInterfaceGetInterfaceType(interface: *const c_void) -> *const c_void;
-    }
-
-    #[link(name = "CoreFoundation", kind = "framework")]
-    extern "C" {
-        fn CFRelease(object: *const c_void);
-        fn CFArrayGetCount(array: *const c_void) -> isize;
-        fn CFArrayGetValueAtIndex(array: *const c_void, index: isize) -> *const c_void;
-        fn CFStringGetCString(s: *const c_void, buf: *mut c_char, size: isize, enc: u32) -> u8;
     }
 
     /// Frees the list from `getifaddrs`.
@@ -432,45 +424,30 @@ mod imp {
         None
     }
 
-    fn cf_string(s: *const c_void) -> Option<String> {
-        if s.is_null() {
-            return None;
-        }
-        let mut buf = [0 as c_char; 128];
-        // SAFETY: a CFString borrowed from its owner; the buffer size is passed.
-        let ok = unsafe { CFStringGetCString(s, buf.as_mut_ptr(), buf.len() as isize, UTF8) };
-        // SAFETY: NUL-terminated on success.
-        (ok != 0).then(|| {
-            unsafe { CStr::from_ptr(buf.as_ptr()) }
-                .to_string_lossy()
-                .into_owned()
-        })
-    }
-
     /// BSD name to interface type for every interface SystemConfiguration lists.
     pub fn system_configuration_types() -> HashMap<String, ScType> {
         let mut out = HashMap::new();
-        // SAFETY: a +1 CFArray or null.
-        let all = unsafe { SCNetworkInterfaceCopyAll() };
-        if all.is_null() {
+        // SAFETY: a +1 CFArray or null, released by `Cf`.
+        let Some(all) = (unsafe { Cf::owned(SCNetworkInterfaceCopyAll()) }) else {
             return out;
-        }
-        // SAFETY: elements are borrowed from `all`, which lives until released.
-        unsafe {
-            for i in 0..CFArrayGetCount(all) {
-                let interface = CFArrayGetValueAtIndex(all, i);
-                let name = cf_string(SCNetworkInterfaceGetBSDName(interface));
-                let kind = cf_string(SCNetworkInterfaceGetInterfaceType(interface));
-                if let (Some(name), Some(kind)) = (name, kind) {
-                    let kind = match kind.as_str() {
-                        "IEEE80211" => ScType::Wifi,
-                        "Ethernet" => ScType::Ethernet,
-                        _ => ScType::Other,
-                    };
-                    out.insert(name, kind);
-                }
+        };
+        for interface in cf::array_values(all.get()) {
+            // SAFETY: elements are borrowed from `all`, alive until it drops;
+            // the names are borrowed from each element (Get rule).
+            let (name, kind) = unsafe {
+                (
+                    cf::string_value::<128>(SCNetworkInterfaceGetBSDName(interface)),
+                    cf::string_value::<128>(SCNetworkInterfaceGetInterfaceType(interface)),
+                )
+            };
+            if let (Some(name), Some(kind)) = (name, kind) {
+                let kind = match kind.as_str() {
+                    "IEEE80211" => ScType::Wifi,
+                    "Ethernet" => ScType::Ethernet,
+                    _ => ScType::Other,
+                };
+                out.insert(name, kind);
             }
-            CFRelease(all);
         }
         out
     }

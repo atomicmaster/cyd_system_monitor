@@ -7,55 +7,39 @@
 namespace firmware::domain {
 namespace {
 
-const char* NoteText(protocol::Availability availability) {
-  switch (availability) {
-    case protocol::Availability::kAvailable:
-      return "";
-    case protocol::Availability::kUnsupported:
-      return "Unsupported";
-    case protocol::Availability::kAbsent:
-      return "Not present";
-    case protocol::Availability::kTemporarilyUnavailable:
-      return "Unavailable";
-    case protocol::Availability::kError:
-      return "Read error";
+// Short words: "Last 100% Discharging" would not fit the 148 px value line.
+const char* StateText(protocol::BatteryState state) {
+  switch (state) {
+    case protocol::BatteryState::kCharging:
+      return "Charging";
+    case protocol::BatteryState::kDischarging:
+      return "Draining";
+    case protocol::BatteryState::kCharged:
+      return "Charged";
+    case protocol::BatteryState::kAcIdle:
+      return "On AC";
+    case protocol::BatteryState::kUnknown:
+      break;
   }
   return "";
 }
 
-// Wire state 0 unknown, 1 charging, 2 discharging, 3 charged, 4 on AC idle.
-// Short words: "Last 100% Discharging" would not fit the 148 px value line.
-const char* StateText(uint8_t state) {
-  switch (state) {
-    case 1:
-      return "Charging";
-    case 2:
-      return "Draining";
-    case 3:
-      return "Charged";
-    case 4:
-      return "On AC";
-    default:
-      return "";
-  }
-}
-
-// Wire condition 0 unknown, 1 normal, 2 service recommended, 3 poor/replace.
-const char* ConditionText(uint8_t condition) {
+const char* ConditionText(protocol::BatteryCondition condition) {
   switch (condition) {
-    case 1:
+    case protocol::BatteryCondition::kNormal:
       return "Normal";
-    case 2:
+    case protocol::BatteryCondition::kServiceRecommended:
       return "Service";
-    case 3:
+    case protocol::BatteryCondition::kPoor:
       return "Replace";
-    default:
-      return "";
+    case protocol::BatteryCondition::kUnknown:
+      break;
   }
+  return "";
 }
 
 // "87% Charging", "Last 100% Charging": at most 18 characters.
-std::string ChargeText(uint16_t per_mille, uint8_t state, bool retained) {
+std::string ChargeText(uint16_t per_mille, protocol::BatteryState state, bool retained) {
   char text[40];
   std::snprintf(text, sizeof text, "%s%u%%%s%s", retained ? "Last " : "",
                 static_cast<unsigned>(per_mille / 10), *StateText(state) ? " " : "",
@@ -65,9 +49,9 @@ std::string ChargeText(uint16_t per_mille, uint8_t state, bool retained) {
 
 // "Health 91% Normal"; a stale sample reads "Last 91% Normal" (the longer
 // prefix does not fit 148 px at 12 pt). Either part may be missing on its own
-// (the wire sends 0 for an unknown maximum capacity and condition 0 for an
+// (the wire sends 0 for an unknown maximum capacity and kUnknown for an
 // unknown condition); with neither there is only "Health --".
-std::string HealthText(uint16_t per_mille, uint8_t condition, bool retained) {
+std::string HealthText(uint16_t per_mille, protocol::BatteryCondition condition, bool retained) {
   std::string text = retained ? "Last" : "Health";
   if (per_mille != 0) {
     char percent[12];
@@ -95,13 +79,11 @@ MetricCardView MakeBatteryCard(const HostState& state, uint64_t /*now_ms*/) {
     view.note = "No battery";
     return view;
   }
-  const bool link_lost = state.connection == ConnectionState::kStale ||
-                         state.connection == ConnectionState::kIncompatible ||
-                         state.connection == ConnectionState::kDisconnected;
-  const bool charge_ok = battery.charge_availability == protocol::Availability::kAvailable &&
-                         battery.charge_per_mille <= 1000;
-  const bool condition_ok = battery.condition_availability == protocol::Availability::kAvailable &&
-                            battery.max_capacity_per_mille <= 1000;
+  const bool link_lost = state.LinkLost();
+  // The decoder refuses a per-mille value over 1000, so an available half
+  // always has a displayable value.
+  const bool charge_ok = battery.charge_availability == protocol::Availability::kAvailable;
+  const bool condition_ok = battery.condition_availability == protocol::Availability::kAvailable;
   const bool charge_retained = link_lost || battery.charge_freshness == protocol::Freshness::kStale;
   const bool condition_retained =
       link_lost || battery.condition_freshness == protocol::Freshness::kStale;
@@ -114,14 +96,12 @@ MetricCardView MakeBatteryCard(const HostState& state, uint64_t /*now_ms*/) {
   }
   if (!charge_ok) {
     // `--` always carries its cause; the health half is not shown without a charge.
-    view.note = battery.charge_availability == protocol::Availability::kAvailable
-                    ? "Read error"  // "available" with an impossible value is a broken read
-                    : NoteText(battery.charge_availability);
+    view.note = AvailabilityNote(battery.charge_availability);
   } else if (condition_ok) {
     view.note = HealthText(battery.max_capacity_per_mille, battery.condition, condition_retained);
     view.dimmed = view.dimmed || condition_retained;
   } else {
-    view.note = std::string("Health ") + NoteText(battery.condition_availability);
+    view.note = std::string("Health ") + AvailabilityNote(battery.condition_availability);
   }
   return view;
 }

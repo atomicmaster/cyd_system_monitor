@@ -197,10 +197,9 @@ bool ValidNetwork(const NetworkSnapshot &n) {
     return false;
   return true;
 }
+// `cpu` and `groups` are both set for a snapshot and both null otherwise.
 Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
-                 const RamSnapshot *ram, const StorageSnapshot *storage,
-                 const BatterySnapshot *battery, const AgentsSnapshot *agents,
-                 const NetworkSnapshot *network, std::vector<uint8_t> *cbor) {
+                 const SnapshotGroups *groups, std::vector<uint8_t> *cbor) {
   cbor->clear();
   const uint8_t envelope_fields =
       6 + e.utc_ms.has_value() + e.utc_uncertainty_ms.has_value() +
@@ -218,6 +217,11 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
   UInt(cbor, 0, e.sequence);
   UInt(cbor, 0, 5);
   if (cpu) {
+    const auto *ram = groups->ram ? &*groups->ram : nullptr;
+    const auto *storage = groups->storage ? &*groups->storage : nullptr;
+    const auto *battery = groups->battery ? &*groups->battery : nullptr;
+    const auto *agents = groups->agents ? &*groups->agents : nullptr;
+    const auto *network = groups->network ? &*groups->network : nullptr;
     Map(cbor, 5 + (ram ? 1 : 0) + (storage ? 1 : 0) + (battery ? 1 : 0) +
             (agents ? 1 : 0) + (network ? 1 : 0));
     UInt(cbor, 0, 0);
@@ -267,20 +271,21 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
     }
     if (battery) {
       if (battery->charge_per_mille > 1000 ||
-          battery->max_capacity_per_mille > 1000 || battery->state > 4 ||
-          battery->condition > 3)
+          battery->max_capacity_per_mille > 1000 ||
+          battery->state > BatteryState::kAcIdle ||
+          battery->condition > BatteryCondition::kPoor)
         return Error::kMalformed;
       UInt(cbor, 0, 7);
       Map(cbor, 10);
       const uint64_t values[10] = {
           static_cast<uint8_t>(battery->charge_availability),
           battery->charge_per_mille,
-          battery->state,
+          static_cast<uint8_t>(battery->state),
           battery->time_remaining_min,
           battery->charge_age_ms,
           static_cast<uint8_t>(battery->condition_availability),
           battery->max_capacity_per_mille,
-          battery->condition,
+          static_cast<uint8_t>(battery->condition),
           battery->cycle_count,
           battery->condition_age_ms};
       for (uint64_t key = 0; key < 10; ++key) {
@@ -289,13 +294,17 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
       }
     }
     if (agents) {
-      if (agents->state[0] > 3 || agents->state[1] > 3 || agents->state[2] > 3)
-        return Error::kMalformed;
+      for (const AgentState state : agents->state) {
+        if (state > AgentState::kIdle)
+          return Error::kMalformed;
+      }
       UInt(cbor, 0, 8);
       Map(cbor, 5);
       const uint64_t values[5] = {static_cast<uint8_t>(agents->availability),
-                                  agents->source_age_ms, agents->state[0],
-                                  agents->state[1], agents->state[2]};
+                                  agents->source_age_ms,
+                                  static_cast<uint8_t>(agents->state[0]),
+                                  static_cast<uint8_t>(agents->state[1]),
+                                  static_cast<uint8_t>(agents->state[2])};
       for (uint64_t key = 0; key < 5; ++key) {
         UInt(cbor, 0, key);
         UInt(cbor, 0, values[key]);
@@ -451,7 +460,7 @@ uint32_t Crc32(std::span<const uint8_t> b) {
 }
 Error Encode(const Envelope &e, std::vector<uint8_t> *out) {
   std::vector<uint8_t> c;
-  Error x = EncodeBody(e, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &c);
+  Error x = EncodeBody(e, nullptr, nullptr, &c);
   if (x != Error::kNone)
     return x;
   out->clear();
@@ -465,35 +474,9 @@ Error Encode(const Envelope &e, std::vector<uint8_t> *out) {
   return Error::kNone;
 }
 Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
-                     const RamSnapshot *ram, std::vector<uint8_t> *out) {
-  return EncodeSnapshot(e, cpu, ram, nullptr, nullptr, out);
-}
-Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
-                     const RamSnapshot *ram, const StorageSnapshot *storage,
-                     std::vector<uint8_t> *out) {
-  return EncodeSnapshot(e, cpu, ram, storage, nullptr, out);
-}
-Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
-                     const RamSnapshot *ram, const StorageSnapshot *storage,
-                     const BatterySnapshot *battery,
-                     std::vector<uint8_t> *out) {
-  return EncodeSnapshot(e, cpu, ram, storage, battery, nullptr, out);
-}
-Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
-                     const RamSnapshot *ram, const StorageSnapshot *storage,
-                     const BatterySnapshot *battery,
-                     const AgentsSnapshot *agents,
-                     std::vector<uint8_t> *out) {
-  return EncodeSnapshot(e, cpu, ram, storage, battery, agents, nullptr, out);
-}
-Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
-                     const RamSnapshot *ram, const StorageSnapshot *storage,
-                     const BatterySnapshot *battery,
-                     const AgentsSnapshot *agents,
-                     const NetworkSnapshot *network,
-                     std::vector<uint8_t> *out) {
+                     const SnapshotGroups &groups, std::vector<uint8_t> *out) {
   std::vector<uint8_t> c;
-  Error x = EncodeBody(e, &cpu, ram, storage, battery, agents, network, &c);
+  Error x = EncodeBody(e, &cpu, &groups, &c);
   if (x != Error::kNone)
     return x;
   out->clear();
@@ -508,7 +491,7 @@ Error EncodeSnapshot(const Envelope &e, const CpuSnapshot &cpu,
 }
 Error EncodeCpuSnapshot(const Envelope &e, const CpuSnapshot &cpu,
                         std::vector<uint8_t> *out) {
-  return EncodeSnapshot(e, cpu, nullptr, out);
+  return EncodeSnapshot(e, cpu, SnapshotGroups{}, out);
 }
 // A metric group: five required fields, unknown extra keys skipped, values
 // range-checked. Returns false for anything malformed.
@@ -611,18 +594,20 @@ bool ReadBatteryGroup(std::span<const uint8_t> c, std::size_t *p,
   }
   const uint64_t max_availability = static_cast<uint8_t>(Availability::kError);
   if (value[0] > max_availability || value[5] > max_availability ||
-      value[1] > 1000 || value[2] > 4 || value[3] > UINT16_MAX ||
-      value[4] > UINT32_MAX || value[6] > 1000 || value[7] > 3 ||
+      value[1] > 1000 ||
+      value[2] > static_cast<uint8_t>(BatteryState::kAcIdle) ||
+      value[3] > UINT16_MAX || value[4] > UINT32_MAX || value[6] > 1000 ||
+      value[7] > static_cast<uint8_t>(BatteryCondition::kPoor) ||
       value[8] > UINT16_MAX || value[9] > UINT32_MAX)
     return false;
   battery->charge_availability = static_cast<Availability>(value[0]);
   battery->charge_per_mille = static_cast<uint16_t>(value[1]);
-  battery->state = static_cast<uint8_t>(value[2]);
+  battery->state = static_cast<BatteryState>(value[2]);
   battery->time_remaining_min = static_cast<uint16_t>(value[3]);
   battery->charge_age_ms = static_cast<uint32_t>(value[4]);
   battery->condition_availability = static_cast<Availability>(value[5]);
   battery->max_capacity_per_mille = static_cast<uint16_t>(value[6]);
-  battery->condition = static_cast<uint8_t>(value[7]);
+  battery->condition = static_cast<BatteryCondition>(value[7]);
   battery->cycle_count = static_cast<uint16_t>(value[8]);
   battery->condition_age_ms = static_cast<uint32_t>(value[9]);
   return true;
@@ -653,12 +638,16 @@ bool ReadAgentsGroup(std::span<const uint8_t> c, std::size_t *p,
       return false;
   }
   if (value[0] > static_cast<uint8_t>(Availability::kError) ||
-      value[1] > UINT32_MAX || value[2] > 3 || value[3] > 3 || value[4] > 3)
+      value[1] > UINT32_MAX)
     return false;
+  for (std::size_t i = 0; i < kAgentSlots; ++i) {
+    if (value[2 + i] > static_cast<uint8_t>(AgentState::kIdle))
+      return false;
+  }
   agents->availability = static_cast<Availability>(value[0]);
   agents->source_age_ms = static_cast<uint32_t>(value[1]);
-  for (int i = 0; i < kAgentSlots; ++i)
-    agents->state[i] = static_cast<uint8_t>(value[2 + i]);
+  for (std::size_t i = 0; i < kAgentSlots; ++i)
+    agents->state[i] = static_cast<AgentState>(value[2 + i]);
   return true;
 }
 // The Network group: thirteen required fields (three of them byte strings),
@@ -732,6 +721,18 @@ bool ReadNetworkGroup(std::span<const uint8_t> c, std::size_t *p,
   *network = std::move(n);
   return true;
 }
+// Reads one optional group into `slot`; a group that appears twice is malformed.
+template <typename Group>
+bool ReadGroup(std::span<const uint8_t> c, std::size_t *p, std::optional<Group> *slot,
+               bool (*read)(std::span<const uint8_t>, std::size_t *, Group *)) {
+  if (slot->has_value())
+    return false;
+  Group group;
+  if (!read(c, p, &group))
+    return false;
+  *slot = std::move(group);
+  return true;
+}
 Error Decode(std::span<const uint8_t> f, Decoded *r) {
   if (f.size() < 7)
     return Error::kTruncated;
@@ -799,33 +800,28 @@ Error Decode(std::span<const uint8_t> f, Decoded *r) {
           if (!ReadUInt(c, &p, 0, &q))
             return Error::kMalformed;
           if (q == 5) {
-            if (d.has_ram || !ReadRamGroup(c, &p, &d.ram))
+            if (!ReadGroup(c, &p, &d.groups.ram, ReadRamGroup))
               return Error::kMalformed;
-            d.has_ram = true;
             continue;
           }
           if (q == 6) {
-            if (d.has_storage || !ReadStorageGroup(c, &p, &d.storage))
+            if (!ReadGroup(c, &p, &d.groups.storage, ReadStorageGroup))
               return Error::kMalformed;
-            d.has_storage = true;
             continue;
           }
           if (q == 7) {
-            if (d.has_battery || !ReadBatteryGroup(c, &p, &d.battery))
+            if (!ReadGroup(c, &p, &d.groups.battery, ReadBatteryGroup))
               return Error::kMalformed;
-            d.has_battery = true;
             continue;
           }
           if (q == 8) {
-            if (d.has_agents || !ReadAgentsGroup(c, &p, &d.agents))
+            if (!ReadGroup(c, &p, &d.groups.agents, ReadAgentsGroup))
               return Error::kMalformed;
-            d.has_agents = true;
             continue;
           }
           if (q == 9) {
-            if (d.has_network || !ReadNetworkGroup(c, &p, &d.network))
+            if (!ReadGroup(c, &p, &d.groups.network, ReadNetworkGroup))
               return Error::kMalformed;
-            d.has_network = true;
             continue;
           }
           if (q > 4) {

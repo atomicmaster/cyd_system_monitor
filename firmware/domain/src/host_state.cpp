@@ -3,41 +3,37 @@
 
 namespace firmware::domain {
 namespace {
+// The time a sample was taken, from when it was received and the age the Host
+// reported. Signed: a sample older than the device's uptime predates the
+// device clock, and clamping it to 0 would make it look fresh.
+int64_t SourceTime(uint64_t now_ms, uint32_t age_ms) {
+  return static_cast<int64_t>(now_ms) - static_cast<int64_t>(age_ms);
+}
+// Stale once `stale_after_ms` have passed since the (signed) source time.
+protocol::Freshness FreshnessAt(uint64_t now_ms, int64_t source_time_ms, uint64_t stale_after_ms) {
+  return static_cast<int64_t>(now_ms) - source_time_ms >= static_cast<int64_t>(stale_after_ms)
+             ? protocol::Freshness::kStale
+             : protocol::Freshness::kFresh;
+}
 void DeriveStorageFreshness(StorageMetricState* storage, uint64_t now_ms) {
-  const auto now = static_cast<int64_t>(now_ms);
-  storage->io_freshness =
-      now - storage->io_received_at_ms >= static_cast<int64_t>(kStorageIoStaleMs)
-          ? protocol::Freshness::kStale
-          : protocol::Freshness::kFresh;
+  storage->io_freshness = FreshnessAt(now_ms, storage->io_received_at_ms, kStorageIoStaleMs);
   storage->capacity_freshness =
-      now - storage->capacity_source_time_ms >= static_cast<int64_t>(kStorageCapacityStaleMs)
-          ? protocol::Freshness::kStale
-          : protocol::Freshness::kFresh;
+      FreshnessAt(now_ms, storage->capacity_source_time_ms, kStorageCapacityStaleMs);
 }
 void DeriveBatteryFreshness(BatteryMetricState* battery, uint64_t now_ms) {
-  battery->charge_freshness = static_cast<int64_t>(now_ms) - battery->charge_source_time_ms >=
-                                      static_cast<int64_t>(kBatteryChargeStaleMs)
-                                  ? protocol::Freshness::kStale
-                                  : protocol::Freshness::kFresh;
-  battery->condition_freshness = static_cast<int64_t>(now_ms) - battery->condition_source_time_ms >=
-                                         static_cast<int64_t>(kBatteryConditionStaleMs)
-                                     ? protocol::Freshness::kStale
-                                     : protocol::Freshness::kFresh;
+  battery->charge_freshness =
+      FreshnessAt(now_ms, battery->charge_source_time_ms, kBatteryChargeStaleMs);
+  battery->condition_freshness =
+      FreshnessAt(now_ms, battery->condition_source_time_ms, kBatteryConditionStaleMs);
 }
 void DeriveAgentsFreshness(AgentsMetricState* agents, uint64_t now_ms) {
-  agents->freshness =
-      static_cast<int64_t>(now_ms) - agents->source_time_ms >= static_cast<int64_t>(kAgentsStaleMs)
-          ? protocol::Freshness::kStale
-          : protocol::Freshness::kFresh;
+  agents->freshness = FreshnessAt(now_ms, agents->source_time_ms, kAgentsStaleMs);
 }
 void DeriveNetworkFreshness(NetworkMetricState* network, uint64_t now_ms) {
-  const auto stale = [now_ms](int64_t source_time_ms, uint64_t limit_ms) {
-    return static_cast<int64_t>(now_ms) - source_time_ms >= static_cast<int64_t>(limit_ms)
-               ? protocol::Freshness::kStale
-               : protocol::Freshness::kFresh;
-  };
-  network->traffic_freshness = stale(network->traffic_source_time_ms, kNetworkTrafficStaleMs);
-  network->context_freshness = stale(network->context_source_time_ms, kNetworkContextStaleMs);
+  network->traffic_freshness =
+      FreshnessAt(now_ms, network->traffic_source_time_ms, kNetworkTrafficStaleMs);
+  network->context_freshness =
+      FreshnessAt(now_ms, network->context_source_time_ms, kNetworkContextStaleMs);
 }
 }  // namespace
 void HostStateReducer::ApplySnapshot(const protocol::Decoded& decoded, uint64_t now_ms,
@@ -52,76 +48,70 @@ void HostStateReducer::ApplySnapshot(const protocol::Decoded& decoded, uint64_t 
   state_.host_last_seen_ms = now_ms;
   state_.has_seen_host = true;
   state_.configuration_revision = decoded.cpu.configuration_revision;
-  if (decoded.has_ram) {
+  const protocol::SnapshotGroups& groups = decoded.groups;
+  if (groups.ram) {
+    const auto& g = *groups.ram;
     state_.ram = {.has_data = true,
-                  .availability = decoded.ram.availability,
-                  .freshness = decoded.ram.freshness,
-                  .used_bytes = decoded.ram.used_bytes,
-                  .total_bytes = decoded.ram.total_bytes,
-                  .source_time_ms =
-                      now_ms >= decoded.ram.source_age_ms ? now_ms - decoded.ram.source_age_ms : 0,
+                  .availability = g.availability,
+                  .freshness = g.freshness,
+                  .used_bytes = g.used_bytes,
+                  .total_bytes = g.total_bytes,
+                  .source_time_ms = now_ms >= g.source_age_ms ? now_ms - g.source_age_ms : 0,
                   .received_at_ms = now_ms};
   }
-  if (decoded.has_storage) {
-    const auto& g = decoded.storage;
-    state_.storage = {
-        .has_data = true,
-        .capacity_availability = g.capacity_availability,
-        .total_bytes = g.total_bytes,
-        .available_bytes = g.available_bytes,
-        .capacity_source_time_ms =
-            static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.capacity_age_ms),
-        .io_availability = g.io_availability,
-        .read_bytes_per_s = g.read_bytes_per_s,
-        .write_bytes_per_s = g.write_bytes_per_s,
-        // The I/O sample is at most io_age_ms old when received.
-        .io_received_at_ms = static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.io_age_ms)};
+  if (groups.storage) {
+    const auto& g = *groups.storage;
+    state_.storage = {.has_data = true,
+                      .capacity_availability = g.capacity_availability,
+                      .total_bytes = g.total_bytes,
+                      .available_bytes = g.available_bytes,
+                      .capacity_source_time_ms = SourceTime(now_ms, g.capacity_age_ms),
+                      .io_availability = g.io_availability,
+                      .read_bytes_per_s = g.read_bytes_per_s,
+                      .write_bytes_per_s = g.write_bytes_per_s,
+                      // The I/O sample is at most io_age_ms old when received.
+                      .io_received_at_ms = SourceTime(now_ms, g.io_age_ms)};
     DeriveStorageFreshness(&state_.storage, now_ms);
   }
-  if (decoded.has_battery) {
-    const auto& g = decoded.battery;
+  if (groups.battery) {
+    const auto& g = *groups.battery;
     state_.battery = {.has_data = true,
                       .charge_availability = g.charge_availability,
                       .charge_per_mille = g.charge_per_mille,
                       .state = g.state,
                       .time_remaining_min = g.time_remaining_min,
-                      .charge_source_time_ms =
-                          static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.charge_age_ms),
+                      .charge_source_time_ms = SourceTime(now_ms, g.charge_age_ms),
                       .condition_availability = g.condition_availability,
                       .max_capacity_per_mille = g.max_capacity_per_mille,
                       .condition = g.condition,
                       .cycle_count = g.cycle_count,
-                      .condition_source_time_ms =
-                          static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.condition_age_ms)};
+                      .condition_source_time_ms = SourceTime(now_ms, g.condition_age_ms)};
     DeriveBatteryFreshness(&state_.battery, now_ms);
   }
-  if (decoded.has_agents) {
-    const auto& g = decoded.agents;
-    state_.agents = {
-        .has_data = true,
-        .availability = g.availability,
-        .source_time_ms = static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.source_age_ms)};
-    for (int i = 0; i < kAgentSlotCount; ++i) state_.agents.state[i] = g.state[i];
+  if (groups.agents) {
+    const auto& g = *groups.agents;
+    state_.agents = {.has_data = true,
+                     .availability = g.availability,
+                     .state = g.state,
+                     .source_time_ms = SourceTime(now_ms, g.source_age_ms)};
     DeriveAgentsFreshness(&state_.agents, now_ms);
   }
-  if (decoded.has_network) {
-    const auto& g = decoded.network;
+  if (groups.network) {
+    const auto& g = *groups.network;
     state_.network = {.has_data = true,
                       .traffic_availability = g.traffic_availability,
                       .route_kind = g.route_kind,
                       .via_tunnel = g.via_tunnel,
                       .rx_bytes_per_s = g.rx_bytes_per_s,
                       .tx_bytes_per_s = g.tx_bytes_per_s,
-                      .traffic_source_time_ms =
-                          static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.traffic_age_ms),
+                      .traffic_source_time_ms = SourceTime(now_ms, g.traffic_age_ms),
                       .context_availability = g.context_availability,
                       .coverage = g.coverage,
                       .channel = g.channel,
                       .station = g.station,
                       .ssid = g.ssid,
                       .bssid = g.bssid,
-                      .context_source_time_ms =
-                          static_cast<int64_t>(now_ms) - static_cast<int64_t>(g.context_age_ms)};
+                      .context_source_time_ms = SourceTime(now_ms, g.context_age_ms)};
     DeriveNetworkFreshness(&state_.network, now_ms);
   }
 }

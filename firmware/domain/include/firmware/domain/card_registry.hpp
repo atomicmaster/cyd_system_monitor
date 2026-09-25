@@ -22,6 +22,10 @@ struct MetricCardView {
   uint16_t bar_per_mille = 0;  // 0 when there is no value; check has_value
 };
 
+// The wording under a `--` value for a metric that is not available ("" when
+// it is). Shared by every card, so a cause reads the same everywhere.
+const char* AvailabilityNote(protocol::Availability availability);
+
 using MakeCardFn = MetricCardView (*)(const HostState& state, uint64_t now_ms);
 
 struct CardDescriptor {

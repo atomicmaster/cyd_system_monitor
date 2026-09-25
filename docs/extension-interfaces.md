@@ -7,19 +7,20 @@ on. Proven by the CPU path plus RAM as a stub metric (C02), Storage (TB04), Batt
 episode, configuration, and persistence interfaces below are written
 contracts only and are refined by TB09, TB13, and TB16.
 
-## Adding a metric (proven: CPU, RAM, Storage, Battery, Agents)
+## Adding a metric (proven: CPU, RAM, Storage, Battery, Agents, Network)
 
 A metric is a *group* in the complete snapshot, one collector on the Host, and
-one card on the display. Each step has exclusive files; the only shared edit is
-one line in one list.
+one card on the display. Each step has its own files. The wire and device-state
+steps edit shared protocol and state code and are done one metric at a time;
+every other shared edit is one line in a list.
 
-| Step | Owner edits | Shared edit |
+| Step | Owner edits | Shared edits |
 | --- | --- | --- |
-| Wire group | `protocol/CORE_PROTOCOL.md` group table row; `protocol/core/cpp/protocol.{hpp,cpp}` and `host/protocol/src/lib.rs` group types and codec; fixtures in `protocol/tools/gen_vectors.py` + `parity-matrix.txt` rows; group key = the next free body key | protocol files are serial: one metric at a time, gated by `parity_diff.py` |
-| Device state | a field on `HostState` and its apply/advance in `firmware/domain/src/host_state.cpp` | serial with the wire step |
-| Card | `firmware/domain/src/cards/<id>_card.cpp` (`Make<Id>Card`) | one `CYD_CARD(id, MakeIdCard)` line in `firmware/domain/include/firmware/domain/card_registry.def` |
-| Host collector | a `metrics::Collector` impl under `host/platform-macos/src/<id>.rs`; wire it into the snapshot in `host/hostcore/src/link.rs` | `link.rs` collector list (one line) |
-| Scenario | fixtures/expectations under `simulator/scenarios/<id>-*.expected` and a scenario file | one scenario registration in `simulator/src/main.cpp` |
+| Wire group | `protocol/CORE_PROTOCOL.md` group table row; C++ `protocol/core/cpp/protocol.{hpp,cpp}`: the group type, one `SnapshotGroups` member, its encode block in `EncodeBody`, its `Read<Id>Group` and one key case in `Decode`; Rust `host/protocol/src/lib.rs`: the group type, one `Snapshot` field (and `Snapshot::new`), its encode and decode; both parity CLIs print it (`protocol/tests/cpp/parity_cli.cpp`, `host/protocol/src/bin/parity_cli.rs`); fixtures in `protocol/tools/gen_vectors.py` + `parity-matrix.txt` rows; group key = the next free body key | serial: one metric at a time, gated by `parity_diff.py`. `EncodeSnapshot(envelope, cpu, groups, frame)`, `encode_groups(envelope, &snapshot)` and `HostClient::snapshot(&snapshot, utc)` do not change |
+| Device state | a `<Id>MetricState` in `firmware/domain/include/firmware/domain/host_state.hpp` and its apply block in `HostStateReducer::ApplySnapshot` (`firmware/domain/src/host_state.cpp`); a group with its own source age derives freshness with the shared `SourceTime`/`FreshnessAt` | one `HostState` member and one `Advance` line; serial with the wire step |
+| Card | `firmware/domain/src/cards/<id>_card.cpp` (`Make<Id>Card`), using `AvailabilityNote` and `HostState::LinkLost()` | one `CYD_CARD(id, MakeIdCard)` line in `firmware/domain/include/firmware/domain/card_registry.def` |
+| Host collector | pure logic in `host/metrics/src/<id>.rs` (slow sources use `metrics::cache::SampleCache`, counter rates `metrics::CounterRateSampler`); a `metrics::Collector` impl in `host/platform-macos/src/<id>.rs`; its glue in `host/hostcore/src/groups/<id>.rs` (`impl Group`: the wire group, its status availability, its CLI log line, its wake) | one `pub mod` line in each crate's `lib.rs`, one `mod <id>;` and one line in `groups::all()` in `host/hostcore/src/groups/mod.rs`; the setup app lists the group's status name in `StatusText.metrics` (`macos/setup-app/Sources/SetupCore/StatusText.swift`) |
+| Scenario | `simulator/scenarios/<id>-cards.expected` and `simulator/src/scenarios/<id>_cards_scenario.cpp` on the shared `CardScenario` harness (`simulator/src/card_scenario.hpp`) | one registration in `simulator/src/main.cpp` (and its usage line), one declaration in `simulator/src/scenarios/scenarios.hpp`, one source line in `simulator/CMakeLists.txt` |
 
 New card files are found by a CMake glob; re-run `./dev build` (or touch
 `firmware/domain/CMakeLists.txt`) after adding one. ESP-IDF's early scan runs

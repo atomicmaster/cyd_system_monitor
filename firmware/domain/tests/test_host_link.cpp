@@ -344,7 +344,7 @@ int main() {
     snap.local_offset_minutes = 60;
     proto::CpuSnapshot cpu{proto::Availability::kAvailable, 100, 0, proto::Freshness::kFresh, 0};
     std::vector<uint8_t> wire;
-    CHECK(proto::EncodeSnapshot(snap, cpu, nullptr, &wire) == proto::Error::kNone);
+    CHECK(proto::EncodeSnapshot(snap, cpu, {}, &wire) == proto::Error::kNone);
     link.Push(wire);
     CHECK(MakeCpuView(link.state(), clock.now).clock == "00:13");
     CHECK(MakeCpuView(link.state(), clock.now, {.show_zone = true}).clock == "00:13 UTC+1");

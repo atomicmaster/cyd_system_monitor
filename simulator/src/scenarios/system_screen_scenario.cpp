@@ -39,7 +39,9 @@ std::vector<uint8_t> Frame(uint32_t sequence, const proto::RamSnapshot* ram) {
   const proto::CpuSnapshot cpu{proto::Availability::kAvailable, 480, 0, proto::Freshness::kFresh,
                                0};
   std::vector<uint8_t> frame;
-  proto::EncodeSnapshot(envelope, cpu, ram, &frame);
+  proto::SnapshotGroups groups;
+  if (ram != nullptr) groups.ram = *ram;
+  proto::EncodeSnapshot(envelope, cpu, groups, &frame);
   return frame;
 }
 
@@ -269,11 +271,11 @@ int RunSystemScreen() {
             proto::BatterySnapshot g;
             g.charge_availability = proto::Availability::kAvailable;
             g.charge_per_mille = per_mille;
-            g.state = state;
+            g.state = static_cast<proto::BatteryState>(state);  // every wire value
             g.charge_age_ms = age;
             g.condition_availability = proto::Availability::kAvailable;
             g.max_capacity_per_mille = per_mille;
-            g.condition = condition;
+            g.condition = static_cast<proto::BatteryCondition>(condition);
             g.condition_age_ms = age * 100;
             proto::Envelope envelope;
             envelope.type = proto::MessageType::kSnapshot;
@@ -282,7 +284,7 @@ int RunSystemScreen() {
             const proto::CpuSnapshot cpu{proto::Availability::kAvailable, 480, 0,
                                          proto::Freshness::kFresh, 0};
             std::vector<uint8_t> frame;
-            proto::EncodeSnapshot(envelope, cpu, nullptr, nullptr, &g, &frame);
+            proto::EncodeSnapshot(envelope, cpu, {.battery = g}, &frame);
             clock.Set(1'000'000);
             feed.Push(frame);
             render(1'000'000);
@@ -339,9 +341,9 @@ int RunSystemScreen() {
             proto::AgentsSnapshot g;
             g.availability = proto::Availability::kAvailable;
             g.source_age_ms = age;
-            g.state[0] = a;
-            g.state[1] = b;
-            g.state[2] = c;
+            // Every combination of wire values.
+            g.state = {static_cast<proto::AgentState>(a), static_cast<proto::AgentState>(b),
+                       static_cast<proto::AgentState>(c)};
             proto::Envelope envelope;
             envelope.type = proto::MessageType::kSnapshot;
             envelope.sequence = static_cast<uint32_t>(1000 + variants);
@@ -349,7 +351,7 @@ int RunSystemScreen() {
             const proto::CpuSnapshot cpu{proto::Availability::kAvailable, 480, 0,
                                          proto::Freshness::kFresh, 0};
             std::vector<uint8_t> frame;
-            proto::EncodeSnapshot(envelope, cpu, nullptr, nullptr, nullptr, &g, &frame);
+            proto::EncodeSnapshot(envelope, cpu, {.agents = g}, &frame);
             clock.Set(2'000'000);
             feed.Push(frame);
             render(2'000'000);
@@ -369,7 +371,7 @@ int RunSystemScreen() {
       const proto::CpuSnapshot cpu{proto::Availability::kAvailable, 480, 0,
                                    proto::Freshness::kFresh, 0};
       std::vector<uint8_t> frame;
-      proto::EncodeSnapshot(envelope, cpu, nullptr, nullptr, nullptr, &g, &frame);
+      proto::EncodeSnapshot(envelope, cpu, {.agents = g}, &frame);
       clock.Set(2'000'000);
       feed.Push(frame);
       render(2'000'000);
@@ -415,7 +417,7 @@ int RunSystemScreen() {
       const proto::CpuSnapshot cpu{proto::Availability::kAvailable, 480, 0,
                                    proto::Freshness::kFresh, 0};
       std::vector<uint8_t> frame;
-      proto::EncodeSnapshot(envelope, cpu, nullptr, nullptr, nullptr, nullptr, &g, &frame);
+      proto::EncodeSnapshot(envelope, cpu, {.network = g}, &frame);
       clock.Set(3'000'000);
       feed.Push(frame);
       render(3'000'000);
