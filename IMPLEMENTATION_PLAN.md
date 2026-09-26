@@ -64,7 +64,7 @@ Add the SwiftUI status/permission app and optional Location workflow for Associa
 
 ## M4 — MVP display interface
 
-Implement the persistent status bar, six-card Overview, expanded current-detail screens, Alert list/detail/acknowledgment, Settings, About, pairing, first-start flow, disabled-radio states, Host Last Seen, and `Time unavailable`. Show outside-supported-coverage and unknown Host WiFi context, interrupted Alert episodes, and temporarily unassessable active episodes during Coverage Gaps. Apply an accessible dark palette with redundant icon/text/shape meaning and reserve Severity colors for Alerts.
+Implement the persistent status bar, the Overview (Host Metric dials and panels, the Agents bar, and WiFi/BLE views), expanded current-detail screens, Alert list/detail/acknowledgment, Settings, About, pairing, first-start flow, disabled-radio states, Host Last Seen, and `Time unavailable`. Show outside-supported-coverage and unknown Host WiFi context, interrupted Alert episodes, and temporarily unassessable active episodes during Coverage Gaps. Apply an accessible dark palette with redundant icon/text/shape meaning and reserve Severity colors for Alerts.
 
 Use the LVGL desktop target for scenario coverage and visual fixtures, then verify touch target size, readability, response, animation, and navigation on the 320×240 display.
 

@@ -7,31 +7,6 @@
 namespace firmware::domain {
 namespace {
 
-// One rate in at most five ASCII characters ("812B", "1.2K", "340K", "1.2M",
-// "12M", "999G"), so "Last D999M U999M" stays inside 148 px at 14 pt. No arrow
-// glyphs: the built-in font's arrows are not guaranteed, and D/U read clearly.
-std::string RateText(uint64_t bytes_per_s) {
-  constexpr double kClamp = 999.4e9;
-  const double value =
-      bytes_per_s > static_cast<uint64_t>(kClamp) ? kClamp : static_cast<double>(bytes_per_s);
-  char text[16];
-  if (value < 1e3) {
-    std::snprintf(text, sizeof text, "%uB", static_cast<unsigned>(value));
-    return text;
-  }
-  const auto scaled = [&](double x, char unit) {
-    std::snprintf(text, sizeof text, x < 9.95 ? "%.1f%c" : "%.0f%c", x, unit);
-  };
-  if (value < 999.5e3) {
-    scaled(value / 1e3, 'K');
-  } else if (value < 999.5e6) {
-    scaled(value / 1e6, 'M');
-  } else {
-    scaled(value / 1e9, 'G');
-  }
-  return text;
-}
-
 // The WiFi half of the note. Only what the Host reported and only while it is
 // fresh: a stale, absent or denied context is "unknown" (never a guess), and
 // a 5/6 GHz association says the board cannot capture it. Observable is not a
@@ -110,7 +85,7 @@ MetricCardView MakeNetworkCard(const HostState& state, uint64_t /*now_ms*/) {
     return view;
   }
   view.value = std::string(traffic_retained ? "Last " : "") + "D" +
-               RateText(network.rx_bytes_per_s) + " U" + RateText(network.tx_bytes_per_s);
+               CompactRate(network.rx_bytes_per_s) + " U" + CompactRate(network.tx_bytes_per_s);
   view.note = RouteNote(network, context_retained);
   view.has_value = true;
   view.dimmed = traffic_retained;

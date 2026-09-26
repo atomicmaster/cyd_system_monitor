@@ -18,8 +18,8 @@
  * anti-aliased pixel values (font edges) land on scrambled byte pairs,
  * which showed up on real hardware as green-tinted fringing around text.
  * lv_refr.c calls lv_draw_sw_rgb565_swap() automatically before flush_cb
- * when this is set (v8-compat path, still supported in v9). Harmless for
- * the simulator, which never inspects pixel color values. */
+ * when this is set (v8-compat path, still supported in v9). The simulator's
+ * screenshot export swaps back when it writes an image. */
 #define LV_COLOR_16_SWAP 1
 
 #define LV_USE_LOG 0
@@ -48,12 +48,23 @@
 #define LV_USE_BUTTON 1
 #define LV_USE_BUTTONMATRIX 1
 #define LV_USE_OBJ 1
+/* Overview dials and the busy-agent spinner (firmware/ui/.../metric_card.cpp,
+ * agents_bar.cpp). */
+#define LV_USE_ARC 1
+#define LV_USE_SPINNER 1
+/* The dark palette (firmware/ui/include/firmware/ui/theme.hpp) sits on LVGL's
+ * default theme in dark mode, so stock widgets (switches, buttons) match. */
+#define LV_USE_THEME_DEFAULT 1
+#define LV_THEME_DEFAULT_DARK 1
 
 #define LV_USE_PERF_MONITOR 0
 #define LV_USE_MEM_MONITOR 0
 
 #define LV_FONT_MONTSERRAT_12 1
 #define LV_FONT_MONTSERRAT_14 1
+/* Dial centres (firmware/ui/src/system/card/metric_card.cpp): "100%" at 18 pt
+ * is the widest text that fits inside the ring. */
+#define LV_FONT_MONTSERRAT_18 1
 #define LV_FONT_DEFAULT &lv_font_montserrat_14
 
 #define LV_USE_DEMO_WIDGETS 0

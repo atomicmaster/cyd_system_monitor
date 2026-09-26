@@ -47,9 +47,8 @@ int RunSettings() {
   panel.Show({});
   RenderOnce();
   result.Expect(panel.visible(), "Show makes the panel visible");
-  result.Expect(Checked(panel.use_24h_switch()) && !Checked(panel.show_zone_switch()) &&
-                    !Checked(panel.manual_zone_switch()),
-                "defaults: 24-hour on, zone hidden, following the Mac");
+  result.Expect(Checked(panel.use_24h_switch()) && !Checked(panel.manual_zone_switch()),
+                "defaults: 24-hour on, following the Mac");
   result.Expect(std::strstr(lv_label_get_text(panel.offset_label()), "Follows the Mac") != nullptr,
                 "with no manual zone the offset row says it follows the Mac");
   result.Expect(Disabled(panel.offset_up_button()) && Disabled(panel.offset_down_button()),
@@ -60,11 +59,8 @@ int RunSettings() {
 
   Toggle(panel.use_24h_switch());
   result.Expect(changes == 1 && !last.use_24h, "turning 24-hour off reports 12-hour");
-  Toggle(panel.show_zone_switch());
-  result.Expect(changes == 2 && last.show_zone, "turning Show timezone on reports it");
-
   Toggle(panel.manual_zone_switch());
-  result.Expect(changes == 3 && last.manual_zone && last.manual_offset_minutes == 0,
+  result.Expect(changes == 2 && last.manual_zone && last.manual_offset_minutes == 0,
                 "turning the manual zone on starts at UTC");
   result.Expect(std::strcmp(lv_label_get_text(panel.offset_label()), "UTC") == 0,
                 "the offset row reads UTC");
@@ -90,7 +86,7 @@ int RunSettings() {
   std::optional<domain::DisplaySettings> saved;
   ui::LinkScreen link(
       screen, [](bool) {}, [&](const domain::DisplaySettings& s) { saved = s; },
-      domain::DisplaySettings{.show_zone = true});
+      domain::DisplaySettings{.use_24h = false});
   link.Update(domain::CpuView{.connection = "Connected", .clock = "17:13"}, {}, domain::LinkView{});
   RenderOnce();
   result.Expect(!link.settings_panel().visible(), "settings are closed until the bar is tapped");
@@ -101,12 +97,25 @@ int RunSettings() {
                   "the status bar, its container, and the settings panel are not scrollable");
   }
   Click(link.system().status_bar());
-  result.Expect(link.settings_panel().visible() && link.settings_panel().settings().show_zone,
+  result.Expect(link.settings_panel().visible() && !link.settings_panel().settings().use_24h,
                 "tapping the status bar opens settings with the current values");
-  Toggle(link.settings_panel().show_zone_switch());
-  result.Expect(saved.has_value() && !saved->show_zone && !link.settings().show_zone,
+  Toggle(link.settings_panel().use_24h_switch());
+  result.Expect(saved.has_value() && saved->use_24h && link.settings().use_24h,
                 "a change reaches the persistence callback and the screen's own settings");
   Click(link.settings_panel().done_button());
+
+  // Tapping the connection text opens the Host link panel instead: versions,
+  // pairing and any fault, which no longer sit over the Overview's cards.
+  domain::LinkView details;
+  details.about = "Supported: 1.0\nHost: 1.0\nNegotiated: 1.0\nPaired";
+  link.Update(domain::CpuView{.connection = "Connected", .clock = "17:13"}, {}, details);
+  result.Expect(!link.about_visible(), "the Host link panel is closed until tapped");
+  Click(link.system().connection_label());
+  result.Expect(link.about_visible() && !link.settings_panel().visible() &&
+                    std::strstr(lv_label_get_text(link.about_label()), "Negotiated") != nullptr,
+                "tapping the connection text opens the Host link panel, not settings");
+  Click(link.about_done_button());
+  result.Expect(!link.about_visible(), "Done closes the Host link panel");
 
   // A pending pairing prompt has priority over settings.
   domain::LinkView prompt;
@@ -122,6 +131,8 @@ int RunSettings() {
   link.Update(domain::CpuView{}, {}, prompt);
   result.Expect(!link.settings_panel().visible(),
                 "a prompt arriving closes an open settings panel");
+  Click(link.system().connection_label());
+  result.Expect(!link.about_visible(), "the Host link panel does not open over a pairing prompt");
   return result.Finish("simulator settings");
 }
 

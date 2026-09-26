@@ -182,7 +182,7 @@ std::string CoverageStatusText(const CoverageView& view) {
       case RadioState::kOperatorDisabled:
         return name + "off";
       case RadioState::kFault:
-        return name + "fault";
+        return name + "err";  // "fault" does not fit the bar's worst case
       case RadioState::kNoData:
         return name + "?";
       case RadioState::kGap:

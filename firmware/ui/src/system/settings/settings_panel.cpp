@@ -31,12 +31,6 @@ struct SettingsPanelEvents {
     next.use_24h = lv_obj_has_state(p->use_24h_switch_, LV_STATE_CHECKED);
     p->Changed(next);
   }
-  static void ShowZone(lv_event_t* e) {
-    auto* p = Panel(e);
-    auto next = p->settings_;
-    next.show_zone = lv_obj_has_state(p->show_zone_switch_, LV_STATE_CHECKED);
-    p->Changed(next);
-  }
   static void ManualZone(lv_event_t* e) {
     auto* p = Panel(e);
     auto next = p->settings_;
@@ -94,7 +88,6 @@ SettingsPanel::SettingsPanel(lv_obj_t* parent, ChangeCallback on_change, Actions
   lv_label_set_text(title, "Clock settings");
 
   AddRow("24-hour clock", &use_24h_switch_, true);
-  AddRow("Show timezone", &show_zone_switch_, true);
   AddRow("Set zone manually", &manual_zone_switch_, true);
 
   lv_obj_t* offset_row = AddRow("", nullptr, false);
@@ -129,8 +122,6 @@ SettingsPanel::SettingsPanel(lv_obj_t* parent, ChangeCallback on_change, Actions
   done_ = make_button("Done");
 
   lv_obj_add_event_cb(use_24h_switch_, SettingsPanelEvents::Use24h, LV_EVENT_VALUE_CHANGED, this);
-  lv_obj_add_event_cb(show_zone_switch_, SettingsPanelEvents::ShowZone, LV_EVENT_VALUE_CHANGED,
-                      this);
   lv_obj_add_event_cb(manual_zone_switch_, SettingsPanelEvents::ManualZone, LV_EVENT_VALUE_CHANGED,
                       this);
   lv_obj_add_event_cb(offset_down_, SettingsPanelEvents::OffsetDown, LV_EVENT_CLICKED, this);
@@ -171,7 +162,6 @@ void SettingsPanel::Refresh() {
     }
   };
   set(use_24h_switch_, settings_.use_24h);
-  set(show_zone_switch_, settings_.show_zone);
   set(manual_zone_switch_, settings_.manual_zone);
   // The offset only applies to a manual zone; otherwise it reads "follows the Mac".
   lv_label_set_text(offset_label_, settings_.manual_zone

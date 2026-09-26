@@ -12,6 +12,7 @@ MetricCardView MakeCpuCard(const HostState& state, uint64_t now_ms) {
           .value = view.value,
           .note = view.note,
           .has_value = view.has_value,
+          .dial = true,
           .dimmed = view.dimmed,
           .bar_per_mille = view.bar_per_mille};
 }

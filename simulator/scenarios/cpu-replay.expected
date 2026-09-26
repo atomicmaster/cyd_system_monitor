@@ -1,4 +1,4 @@
-cold-boot | Waiting for Host | Time unavailable | -- |  | dimmed=0
+cold-boot | Waiting | Time unavailable | -- |  | dimmed=0
 first-unavailable-rate | Connected | Time unavailable | -- | Unavailable | dimmed=0
 state-unsupported | Connected | Time unavailable | -- | Unsupported | dimmed=0
 state-absent | Connected | Time unavailable | -- | Not present | dimmed=0
@@ -14,5 +14,5 @@ reject-stale-sequence | Connected | 02:30 UTC | 40% |  | dimmed=0
 reject-wrong-session | Connected | 02:30 UTC | 40% |  | dimmed=0
 reject-bad-crc | Stale | 02:30 UTC | Last 40% |  | dimmed=1
 recovered-after-reject | Connected | 02:30 UTC | 70% |  | dimmed=0
-incompatible-major | Incompatible Host | 02:30 UTC | Last 70% |  | dimmed=1
+incompatible-major | Incompatible | 02:30 UTC | Last 70% |  | dimmed=1
 reconnect-new-session | Connected | 02:30 UTC | 25% |  | dimmed=0

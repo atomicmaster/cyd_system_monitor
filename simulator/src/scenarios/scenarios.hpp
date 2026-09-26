@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 
+#include <string>
+
 namespace simulator::scenarios {
 
 // Builds and renders the diagnostic screen with a fixture DiagnosticState,
@@ -61,10 +63,10 @@ int RunStorageCards();
 int RunBatteryCards();
 
 // Feeds snapshots with the Agents group through HostFeed and prints the
-// Agents card at each step (no data, none running, Claude running with
+// Agents bar at each step (no data, none running, Claude running with
 // activity unknown, two running, source unavailable, future busy/idle states,
-// stale, link lost), compared with simulator/scenarios/agents-cards.expected.
-int RunAgentsCards();
+// stale, link lost), compared with simulator/scenarios/agents-bar.expected.
+int RunAgentsBar();
 
 // Feeds snapshots with the Network group through HostFeed and prints the
 // Network card at each step (no data, WiFi with rates, Ethernet, a tunnel
@@ -89,5 +91,7 @@ int RunSettings();
 // simulator/scenarios/coverage.expected. Matches TB09's
 // `./dev run simulator -- coverage`.
 int RunCoverage();
+// Writes Overview screenshots to `dir` (simulator preview [dir]).
+int RunPreview(const std::string& dir);
 
 }  // namespace simulator::scenarios

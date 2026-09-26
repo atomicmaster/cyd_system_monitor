@@ -6,7 +6,9 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <string>
 
+#include "firmware/domain/agents_bar.hpp"
 #include "firmware/domain/cpu_view.hpp"
 #include "firmware/domain/link_view.hpp"
 #include "firmware/ui/system/settings/settings_panel.hpp"
@@ -14,9 +16,10 @@
 
 namespace firmware::ui::system {
 
-// The System shell (status bar and registered cards) plus TB02's minimal pairing prompt and
-// About/diagnostics text. Renders CpuView/LinkView only; the Confirm/Decline buttons report the
-// touch decision to the caller, which owns the link.
+// The Overview (SystemScreen) plus TB02's minimal pairing prompt and the Host link panel
+// (versions, pairing, and any fault), opened by tapping the connection text. A fault also
+// replaces the Agents bar, so its cause stays visible without a tap. Renders CpuView/LinkView
+// only; the Confirm/Decline buttons report the touch decision to the caller, which owns the link.
 class LinkScreen {
  public:
   using DecisionCallback = std::function<void(bool accepted)>;
@@ -32,13 +35,17 @@ class LinkScreen {
 
   void Update(const firmware::domain::CpuView& status,
               std::span<const firmware::domain::MetricCardView> cards,
-              const firmware::domain::LinkView& link);
+              const firmware::domain::LinkView& link,
+              const firmware::domain::AgentsBarView& agents = {}, const std::string& coverage = {});
   const SystemScreen& system() const { return system_; }
   SystemScreen& system() { return system_; }
   SettingsPanel& settings_panel() { return *settings_panel_; }
   const firmware::domain::DisplaySettings& settings() const { return settings_; }
 
   lv_obj_t* prompt_panel() const { return prompt_panel_; }
+  lv_obj_t* about_panel() const { return about_panel_; }
+  bool about_visible() const { return !lv_obj_has_flag(about_panel_, LV_OBJ_FLAG_HIDDEN); }
+  lv_obj_t* about_done_button() const { return about_done_; }
   lv_obj_t* about_label() const { return about_label_; }
   lv_obj_t* fault_label() const { return fault_label_; }
 
@@ -54,6 +61,8 @@ class LinkScreen {
   DecisionCallback on_decision_;
   Target confirm_target_;
   Target decline_target_;
+  lv_obj_t* about_panel_ = nullptr;
+  lv_obj_t* about_done_ = nullptr;
   lv_obj_t* about_label_ = nullptr;
   lv_obj_t* fault_label_ = nullptr;
   lv_obj_t* prompt_panel_ = nullptr;

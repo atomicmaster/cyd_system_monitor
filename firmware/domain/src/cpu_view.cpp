@@ -11,7 +11,7 @@ namespace {
 const char* ConnectionText(ConnectionState state) {
   switch (state) {
     case ConnectionState::kNegotiating:
-      return "Waiting for Host";
+      return "Waiting";  // for a Host; the full words do not fit the bar
     case ConnectionState::kLive:
       return "Connected";
     case ConnectionState::kStale:
@@ -19,14 +19,15 @@ const char* ConnectionText(ConnectionState state) {
     case ConnectionState::kDisconnected:
       return "Disconnected";
     case ConnectionState::kIncompatible:
-      return "Incompatible Host";
+      return "Incompatible";  // the cause is in the Host link panel and the Agents bar
   }
   return "";
 }
 
 // The clock text. The offset is the manual one if chosen, else the Host's own;
-// with neither, the time is UTC and says so, so it can never pass as local.
-// Otherwise the zone suffix follows the setting: "5:13 PM", "17:13 UTC-5".
+// with neither, the time is UTC and says so, so it can never pass as local:
+// "17:13", "5:13 PM", "22:13 UTC". A known zone is not written out: the
+// status bar has no room for it.
 std::string ClockText(const HostState& state, uint64_t now_ms, const DisplaySettings& settings) {
   if (!state.time_available) return "Time unavailable";
   const uint64_t elapsed =
@@ -48,20 +49,7 @@ std::string ClockText(const HostState& state, uint64_t now_ms, const DisplaySett
     std::snprintf(time, sizeof time, "%u:%02u %s", hour % 12 == 0 ? 12 : hour % 12, minute,
                   hour < 12 ? "AM" : "PM");
   }
-  if (known_zone && !settings.show_zone) return time;
-
-  char zone[16] = "UTC";
-  if (offset_minutes != 0) {
-    const int64_t magnitude = offset_minutes < 0 ? -offset_minutes : offset_minutes;
-    if (magnitude % 60 == 0) {
-      std::snprintf(zone, sizeof zone, "UTC%c%d", offset_minutes < 0 ? '-' : '+',
-                    static_cast<int>(magnitude / 60));
-    } else {
-      std::snprintf(zone, sizeof zone, "UTC%c%d:%02d", offset_minutes < 0 ? '-' : '+',
-                    static_cast<int>(magnitude / 60), static_cast<int>(magnitude % 60));
-    }
-  }
-  return std::string(time) + " " + zone;
+  return known_zone ? std::string(time) : std::string(time) + " UTC";
 }
 
 }  // namespace

@@ -36,29 +36,22 @@ int main() {
       DisplaySettings settings;
       const char* expected;
     };
-    const DisplaySettings zone{.show_zone = true};
     const DisplaySettings twelve{.use_24h = false};
-    const DisplaySettings twelve_zone{.use_24h = false, .show_zone = true};
     const Case cases[] = {
         {std::nullopt, {}, "22:13 UTC"},  // no offset: never passes as local
         {std::nullopt, twelve, "10:13 PM UTC"},
-        {0, {}, "22:13"},  // Host says UTC: known, zone hidden
-        {0, zone, "22:13 UTC"},
+        {0, {}, "22:13"},  // Host says UTC: known, so no suffix
         {-300, {}, "17:13"},
-        {-300, zone, "17:13 UTC-5"},
         {-300, twelve, "5:13 PM"},
-        {-300, twelve_zone, "5:13 PM UTC-5"},
-        {330, zone, "03:43 UTC+5:30"},
+        {330, {}, "03:43"},
         {330, twelve, "3:43 AM"},
-        {-570, zone, "12:43 UTC-9:30"},
-        {840, zone, "12:13 UTC+14"},
+        {-570, {}, "12:43"},
+        {840, {}, "12:13"},
         {-600, twelve, "12:13 PM"},  // noon reads 12, not 0
         {120, twelve, "12:13 AM"},   // just after midnight reads 12, not 0
         // A manual offset overrides the Host's, and is known even without one.
         {-300, {.manual_zone = true, .manual_offset_minutes = 60}, "23:13"},
-        {std::nullopt,
-         {.show_zone = true, .manual_zone = true, .manual_offset_minutes = -480},
-         "14:13 UTC-8"},
+        {std::nullopt, {.manual_zone = true, .manual_offset_minutes = -480}, "14:13"},
         {std::nullopt, {.manual_zone = true, .manual_offset_minutes = 0}, "22:13"},
     };
     for (const Case& c : cases) {
@@ -72,12 +65,11 @@ int main() {
     }
     firmware::domain::HostStateReducer ticking(1);
     ticking.SetUtcAnchor(1'700'000'000'000ULL, 5000, -300);
-    if (firmware::domain::MakeCpuView(ticking.state(), 5000 + 120'000, zone).clock != "17:15 UTC-5")
-      return 7;
+    if (firmware::domain::MakeCpuView(ticking.state(), 5000 + 120'000).clock != "17:15") return 7;
     // Crossing local midnight: 22:13 UTC + 3 h is 01:13 the next day.
     firmware::domain::HostStateReducer east(1);
     east.SetUtcAnchor(1'700'000'000'000ULL, 0, 180);
-    if (firmware::domain::MakeCpuView(east.state(), 0, zone).clock != "01:13 UTC+3") return 8;
+    if (firmware::domain::MakeCpuView(east.state(), 0).clock != "01:13") return 8;
     // A later anchor without an offset reverts to UTC (the Host stopped sending it).
     east.SetUtcAnchor(1'700'000'000'000ULL, 0);
     if (firmware::domain::MakeCpuView(east.state(), 0).clock != "22:13 UTC") return 9;

@@ -198,7 +198,7 @@ int RunCpuLifecycle() {
 
   feed.Push(Frame({.sequence = sequence + 1, .major = 2}));
   view = show("incompatible-major");
-  result.Expect(view.connection == "Incompatible Host" && view.value == "Last 70%",
+  result.Expect(view.connection == "Incompatible" && view.value == "Last 70%",
                 "an incompatible major is visible and applies no metrics");
 
   // Reconnect: a new negotiated session restarts at sequence one.

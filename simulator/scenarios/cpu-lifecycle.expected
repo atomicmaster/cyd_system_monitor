@@ -1,4 +1,4 @@
-cold-boot | Waiting for Host | Time unavailable | -- |  | dimmed=0 | bar=hidden | applied=0 rejected=0
+cold-boot | Waiting | Time unavailable | -- |  | dimmed=0 | bar=hidden | applied=0 rejected=0
 first-unavailable-rate | Connected | Time unavailable | -- | Unavailable | dimmed=0 | bar=hidden | applied=1 rejected=0
 state-unsupported | Connected | Time unavailable | -- | Unsupported | dimmed=0 | bar=hidden | applied=2 rejected=0
 state-absent | Connected | Time unavailable | -- | Not present | dimmed=0 | bar=hidden | applied=3 rejected=0
@@ -16,5 +16,5 @@ reject-bad-crc | Connected | 02:30 UTC | 40% |  | dimmed=0 | bar=400 | applied=7
 idle-gap-clears-stall | Connected | 02:30 UTC | 40% |  | dimmed=0 | bar=400 | applied=7 rejected=2
 fragmented-partial | Connected | 02:30 UTC | 40% |  | dimmed=0 | bar=400 | applied=7 rejected=2
 fragmented-complete | Connected | 02:30 UTC | 70% |  | dimmed=0 | bar=700 | applied=8 rejected=2
-incompatible-major | Incompatible Host | 02:30 UTC | Last 70% |  | dimmed=1 | bar=700 | applied=8 rejected=3
+incompatible-major | Incompatible | 02:30 UTC | Last 70% |  | dimmed=1 | bar=700 | applied=8 rejected=3
 reconnect-new-session | Connected | 02:30 UTC | 25% |  | dimmed=0 | bar=250 | applied=9 rejected=3

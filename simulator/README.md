@@ -14,6 +14,12 @@ show.
 
 ```sh
 ./dev build simulator
-./dev check simulator
+./dev check simulator          # format, build, and run every checking scenario
 ./dev run simulator -- smoke
+./dev run simulator -- preview /tmp/cyd-preview   # Overview screenshots (BMP, 3x)
 ```
+
+`preview` renders the Overview through the same `LinkScreen` the board uses,
+in a few representative states (first start, live, stale, agents busy /
+unknown / idle, the status bar's worst case), and prints the LVGL pool use.
+Convert with `sips -s format png <file>.bmp --out <file>.png` on macOS.

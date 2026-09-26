@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "firmware/ui/system/link/link_screen.hpp"
 
+#include "firmware/ui/theme.hpp"
+
 namespace firmware::ui::system {
 
 void LinkScreen::MakeButton(const char* text, lv_align_t align, Target* target) {
@@ -26,18 +28,37 @@ LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision,
                        const firmware::domain::DisplaySettings& initial,
                        SettingsPanel::Actions settings_actions)
     : system_(parent), settings_(initial), on_decision_(std::move(on_decision)) {
-  about_label_ = lv_label_create(parent);
-  lv_obj_set_pos(about_label_, 8, 136);
-  lv_obj_set_width(about_label_, 304);
-
-  fault_label_ = lv_label_create(parent);
-  lv_obj_set_pos(fault_label_, 8, 218);
-  lv_obj_set_width(fault_label_, 304);
-  lv_obj_set_style_text_color(fault_label_, lv_palette_main(LV_PALETTE_RED), 0);
+  // Host link details: an overlay, so versions never cover the Overview cards.
+  about_panel_ = lv_obj_create(parent);
+  lv_obj_set_size(about_panel_, 308, 232);
+  theme::StylePanel(about_panel_);
+  lv_obj_center(about_panel_);
+  lv_obj_set_flex_flow(about_panel_, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_all(about_panel_, 8, 0);
+  lv_obj_set_style_pad_row(about_panel_, 6, 0);
+  lv_obj_t* about_title = lv_label_create(about_panel_);
+  theme::StyleCaption(about_title);
+  lv_label_set_text(about_title, "Host link");
+  about_label_ = lv_label_create(about_panel_);
+  lv_obj_set_width(about_label_, LV_PCT(100));
+  fault_label_ = lv_label_create(about_panel_);
+  lv_obj_set_width(fault_label_, LV_PCT(100));
+  about_done_ = lv_button_create(about_panel_);
+  lv_obj_set_size(about_done_, 96, 40);
+  lv_obj_t* done_label = lv_label_create(about_done_);
+  lv_label_set_text(done_label, "Done");
+  lv_obj_center(done_label);
+  lv_obj_add_event_cb(
+      about_done_,
+      [](lv_event_t* event) {
+        lv_obj_add_flag(static_cast<lv_obj_t*>(lv_event_get_user_data(event)), LV_OBJ_FLAG_HIDDEN);
+      },
+      LV_EVENT_CLICKED, about_panel_);
+  lv_obj_add_flag(about_panel_, LV_OBJ_FLAG_HIDDEN);
 
   prompt_panel_ = lv_obj_create(parent);
   lv_obj_set_size(prompt_panel_, 296, 150);
-  lv_obj_remove_flag(prompt_panel_, LV_OBJ_FLAG_SCROLLABLE);
+  theme::StylePanel(prompt_panel_);
   lv_obj_center(prompt_panel_);
   lv_obj_add_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN);
   prompt_label_ = lv_label_create(prompt_panel_);
@@ -54,28 +75,38 @@ LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision,
         if (on_settings) on_settings(s);
       },
       std::move(settings_actions));
+  // The pairing prompt has priority: it must never be hidden behind either panel.
   system_.SetStatusBarTapCallback([this]() {
-    // The pairing prompt has priority: it must never be hidden behind settings.
-    if (lv_obj_has_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN)) settings_panel_->Show(settings_);
+    if (!lv_obj_has_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN)) return;
+    lv_obj_add_flag(about_panel_, LV_OBJ_FLAG_HIDDEN);
+    settings_panel_->Show(settings_);
+  });
+  system_.SetConnectionTapCallback([this]() {
+    if (!lv_obj_has_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN)) return;
+    settings_panel_->Hide();
+    lv_obj_remove_flag(about_panel_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(about_panel_);
   });
 }
 
 LinkScreen::~LinkScreen() {
   // Delete our own objects; the SystemScreen member removes its own tree.
-  if (about_label_ != nullptr) lv_obj_delete(about_label_);
-  if (fault_label_ != nullptr) lv_obj_delete(fault_label_);
+  if (about_panel_ != nullptr) lv_obj_delete(about_panel_);
   if (prompt_panel_ != nullptr) lv_obj_delete(prompt_panel_);
   settings_panel_.reset();
 }
 
 void LinkScreen::Update(const firmware::domain::CpuView& status,
                         std::span<const firmware::domain::MetricCardView> cards,
-                        const firmware::domain::LinkView& link) {
-  system_.Update(status, cards);
+                        const firmware::domain::LinkView& link,
+                        const firmware::domain::AgentsBarView& agents,
+                        const std::string& coverage) {
+  system_.Update(status, cards, agents, coverage, link.fault);
   lv_label_set_text(about_label_, link.about.c_str());
   lv_label_set_text(fault_label_, link.fault.c_str());
   if (link.prompt_visible) {
     settings_panel_->Hide();
+    lv_obj_add_flag(about_panel_, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(prompt_label_, link.prompt.c_str());
     lv_obj_remove_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN);
   } else {

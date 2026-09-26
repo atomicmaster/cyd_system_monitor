@@ -3,6 +3,8 @@
 
 #include <lvgl.h>
 
+#include <string>
+
 namespace simulator {
 
 // Initializes LVGL headless: software renderer, one in-memory draw buffer,
@@ -14,5 +16,10 @@ lv_obj_t* InitLvglHeadless();
 
 // Forces one render pass (so the flush callback runs) and returns.
 void RenderOnce();
+
+// Redraws the whole screen and writes it to `path` as a 24-bit BMP, each
+// pixel enlarged to scale x scale. For looking at layouts; scenarios never
+// compare images.
+bool SaveScreenshot(const std::string& path, int scale = 1);
 
 }  // namespace simulator

@@ -2,10 +2,13 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
+#include "../card_scenario.hpp"
 #include "../expect.hpp"
 #include "../lvgl_env.hpp"
+#include "firmware/domain/agents_bar.hpp"
 #include "firmware/domain/card_registry.hpp"
 #include "firmware/domain/coverage.hpp"
 #include "firmware/domain/cpu_view.hpp"
@@ -19,49 +22,174 @@ namespace {
 
 namespace domain = firmware::domain;
 namespace proto = cyd::protocol;
-
-class ScriptedClock : public domain::MonotonicClock {
- public:
-  uint64_t NowMs() const override { return now_ms_; }
-  void Set(uint64_t now_ms) { now_ms_ = now_ms; }
-
- private:
-  uint64_t now_ms_ = 1000;
-};
+using firmware::ui::system::MetricCard;
+using firmware::ui::system::SystemScreen;
 
 constexpr uint64_t kGiB = 1ULL << 30;
-
-std::vector<uint8_t> Frame(uint32_t sequence, const proto::RamSnapshot* ram) {
-  proto::Envelope envelope;
-  envelope.type = proto::MessageType::kSnapshot;
-  envelope.sequence = sequence;
-  for (uint8_t i = 0; i < envelope.session.size(); ++i) envelope.session[i] = i;
-  const proto::CpuSnapshot cpu{proto::Availability::kAvailable, 480, 0, proto::Freshness::kFresh,
-                               0};
-  std::vector<uint8_t> frame;
-  proto::SnapshotGroups groups;
-  if (ram != nullptr) groups.ram = *ram;
-  proto::EncodeSnapshot(envelope, cpu, groups, &frame);
-  return frame;
-}
+constexpr uint64_t kGB = 1000ULL * 1000 * 1000;
 
 bool Has(lv_obj_t* label, const char* text) {
   return std::strstr(lv_label_get_text(label), text) != nullptr;
 }
 
+int TextWidth(lv_obj_t* label, const std::string& text) {
+  lv_point_t size;
+  lv_text_get_size(&size, text.c_str(), lv_obj_get_style_text_font(label, 0), 0, 0, LV_COORD_MAX,
+                   LV_TEXT_FLAG_NONE);
+  return static_cast<int>(size.x);
+}
+
+// Whether a card's text fits its widget without clipping. A panel's value and
+// note are single clipped lines. A dial's value may wrap at spaces ("Last" /
+// "62%") but no word may be wider than the ring's opening, and the wrapped
+// text must fit the ring's inner height.
+bool CardFits(const MetricCard& card, std::string* why) {
+  lv_obj_t* value = card.value_label();
+  lv_obj_t* note = card.note_label();
+  lv_obj_update_layout(value);
+  const std::string value_text = lv_label_get_text(value);
+  const std::string note_text = lv_label_get_text(note);
+  if (TextWidth(note, note_text) > lv_obj_get_content_width(note)) {
+    *why = "note \"" + note_text + "\"";
+    return false;
+  }
+  if (!card.dial()) {
+    if (TextWidth(value, value_text) > lv_obj_get_content_width(value)) {
+      *why = "value \"" + value_text + "\"";
+      return false;
+    }
+    return true;
+  }
+  size_t start = 0;
+  while (start <= value_text.size()) {
+    const size_t end = std::min(value_text.find(' ', start), value_text.size());
+    if (TextWidth(value, value_text.substr(start, end - start)) > lv_obj_get_width(value)) {
+      *why = "dial word in \"" + value_text + "\"";
+      return false;
+    }
+    start = end + 1;
+  }
+  lv_point_t wrapped;
+  lv_text_get_size(&wrapped, value_text.c_str(), lv_obj_get_style_text_font(value, 0), 0, 0,
+                   lv_obj_get_width(value), LV_TEXT_FLAG_NONE);
+  if (wrapped.y > lv_obj_get_width(value)) {
+    *why = "dial value too tall \"" + value_text + "\"";
+    return false;
+  }
+  return true;
+}
+
+// Every visible child of `parent` lies inside its content area.
+bool ChildrenInside(lv_obj_t* parent, std::string* why) {
+  lv_obj_update_layout(parent);
+  lv_area_t box;
+  lv_obj_get_content_coords(parent, &box);
+  for (uint32_t i = 0; i < lv_obj_get_child_count(parent); ++i) {
+    lv_obj_t* child = lv_obj_get_child(parent, static_cast<int32_t>(i));
+    if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
+    const bool label = lv_obj_check_type(child, &lv_label_class);
+    lv_area_t area;
+    lv_obj_get_coords(child, &area);
+    if (area.x1 < box.x1 || area.x2 > box.x2 || area.y1 < box.y1 || area.y2 > box.y2) {
+      *why = (label ? std::string(lv_label_get_text(child)) : std::string("a badge")) + " x " +
+             std::to_string(area.x1) + ".." + std::to_string(area.x2) + " y " +
+             std::to_string(area.y1) + ".." + std::to_string(area.y2) + " in " +
+             std::to_string(box.x1) + ".." + std::to_string(box.x2) + " y " +
+             std::to_string(box.y1) + ".." + std::to_string(box.y2);
+      return false;
+    }
+    if (label && TextWidth(child, lv_label_get_text(child)) > lv_obj_get_content_width(child)) {
+      *why = lv_label_get_text(child);
+      return false;
+    }
+  }
+  return true;
+}
+
+// A HostFeed with an open session, a scripted clock, and the Overview drawn
+// from it through the registry, exactly as the board draws it.
+class Overview {
+ public:
+  explicit Overview(lv_obj_t* screen) : feed_(clock_, 1), ui_(screen) {
+    std::array<uint8_t, proto::kSessionIdBytes> session{};
+    for (uint8_t i = 0; i < session.size(); ++i) session[i] = i;
+    feed_.StartSession(session);
+  }
+
+  void Push(uint64_t ms, const proto::SnapshotGroups& groups, uint16_t cpu_per_mille = 480) {
+    clock_.Set(ms);
+    proto::Envelope envelope;
+    envelope.type = proto::MessageType::kSnapshot;
+    envelope.sequence = ++sequence_;
+    for (uint8_t i = 0; i < envelope.session.size(); ++i) envelope.session[i] = i;
+    const proto::CpuSnapshot cpu{proto::Availability::kAvailable, cpu_per_mille, 0,
+                                 proto::Freshness::kFresh, 0};
+    std::vector<uint8_t> frame;
+    proto::EncodeSnapshot(envelope, cpu, groups, &frame);
+    feed_.Push(frame);
+  }
+
+  void Render(uint64_t ms, const std::string& coverage = {}, const std::string& notice = {}) {
+    clock_.Set(ms);
+    feed_.Tick();
+    std::vector<domain::MetricCardView> cards;
+    for (const auto& card : domain::Cards()) cards.push_back(card.make(feed_.state(), ms));
+    ui_.Update(domain::MakeCpuView(feed_.state(), ms), cards,
+               domain::MakeAgentsBar(feed_.state(), ms), coverage, notice);
+    RenderOnce();
+  }
+
+  SystemScreen& ui() { return ui_; }
+  const MetricCard& Card(const char* id) const {
+    for (size_t i = 0; i < domain::Cards().size(); ++i) {
+      if (std::string(domain::Cards()[i].id) == id) return ui_.card(i);
+    }
+    return ui_.card(0);
+  }
+
+ private:
+  ScriptedClock clock_;
+  domain::HostFeed feed_;
+  SystemScreen ui_;
+  uint32_t sequence_ = 0;
+};
+
+// Sweeps one card over many snapshots, checking each rendering fits.
+class FitSweep {
+ public:
+  FitSweep(Overview& overview, const char* id) : overview_(overview), id_(id) {}
+  void Check(uint64_t ms, const proto::SnapshotGroups& groups, uint64_t render_ms = 0) {
+    overview_.Push(ms, groups);
+    overview_.Render(render_ms != 0 ? render_ms : ms);
+    Measure();
+  }
+  void Measure() {
+    ++variants_;
+    std::string why;
+    if (!CardFits(overview_.Card(id_), &why)) {
+      std::printf("%s card text does not fit: %s\n", id_, why.c_str());
+      fits_ = false;
+    }
+  }
+  int variants() const { return variants_; }
+  bool fits() const { return fits_; }
+
+ private:
+  Overview& overview_;
+  const char* id_;
+  int variants_ = 0;
+  bool fits_ = true;
+};
+
 }  // namespace
 
-// Draws the System shell through the card registry: CPU and RAM side by side
-// under the status bar, then RAM's missing-data and stale behaviour.
+// Draws the Overview through the card registry and checks its content, its
+// fixed layout, and that every text variant the domain can produce fits.
 int RunSystemScreen() {
   ScenarioResult result;
   lv_obj_t* screen = InitLvglHeadless();
-  firmware::ui::system::SystemScreen ui(screen);
-  ScriptedClock clock;
-  domain::HostFeed feed(clock, 1);
-  std::array<uint8_t, proto::kSessionIdBytes> session{};
-  for (uint8_t i = 0; i < session.size(); ++i) session[i] = i;
-  feed.StartSession(session);
+  Overview overview(screen);
+  SystemScreen& ui = overview.ui();
 
   domain::ObservationScheduler scheduler;
   domain::CoverageLedger ledger;
@@ -73,52 +201,54 @@ int RunSystemScreen() {
       now_ms += window->planned_ms;
     }
   };
-
   const auto render = [&](uint64_t now_ms) {
-    clock.Set(now_ms);
-    feed.Tick();
-    std::vector<domain::MetricCardView> cards;
-    for (const auto& card : domain::Cards()) cards.push_back(card.make(feed.state(), now_ms));
-    ui.Update(domain::MakeCpuView(feed.state(), now_ms), cards,
-              domain::CoverageStatusText(domain::MakeCoverageView(scheduler, ledger, now_ms)));
-    RenderOnce();
+    overview.Render(
+        now_ms, domain::CoverageStatusText(domain::MakeCoverageView(scheduler, ledger, now_ms)));
   };
 
   render(1000);
   result.Expect(ui.card_count() == domain::Cards().size(), "one card widget per registered card");
   result.Expect(Has(ui.card(0).title_label(), "CPU") && Has(ui.card(1).title_label(), "RAM"),
                 "cards appear in registry order: CPU, RAM");
-  result.Expect(Has(ui.card(1).value_label(), "--") && !ui.card(1).dimmed(),
-                "RAM shows no value before any Host data");
+  result.Expect(ui.card(0).dial() && ui.card(1).dial() && overview.Card("storage").dial() &&
+                    !overview.Card("battery").dial() && !overview.Card("network").dial(),
+                "CPU, RAM and Storage are dials; Battery and Network are panels");
+  result.Expect(Has(ui.card(1).value_label(), "--") && !ui.card(1).dimmed() &&
+                    lv_obj_has_flag(ui.card(1).arc(), LV_OBJ_FLAG_HIDDEN),
+                "RAM shows -- and no arc before any Host data");
 
   const proto::RamSnapshot ram{proto::Availability::kAvailable, 8 * kGiB, 16 * kGiB, 0,
                                proto::Freshness::kFresh};
-  clock.Set(2000);
-  feed.Push(Frame(1, &ram));
+  overview.Push(2000, {.ram = ram});
   render(2000);
-  result.Expect(Has(ui.card(0).value_label(), "48%"), "CPU card shows the live CPU value");
-  result.Expect(Has(ui.card(1).value_label(), "8.0 / 16.0 GB") && !ui.card(1).dimmed(),
-                "RAM card shows used / total and is not dimmed");
+  result.Expect(Has(ui.card(0).value_label(), "48%"), "CPU dial shows the live CPU value");
+  result.Expect(Has(ui.card(1).value_label(), "50%") &&
+                    Has(ui.card(1).note_label(), "8.0 / 16.0 GB") && !ui.card(1).dimmed() &&
+                    lv_arc_get_value(ui.card(1).arc()) == 500,
+                "RAM dial shows the occupied share, used / total under it, and a live arc");
   result.Expect(Has(ui.connection_label(), "Connected"), "status bar shows Connected");
 
-  const proto::RamSnapshot unavailable{proto::Availability::kError, 0, 0, 0,
-                                       proto::Freshness::kFresh};
-  clock.Set(3000);
-  feed.Push(Frame(2, &unavailable));
+  overview.Push(3000, {.ram = proto::RamSnapshot{proto::Availability::kError, 0, 0, 0,
+                                                 proto::Freshness::kFresh}});
   render(3000);
-  result.Expect(Has(ui.card(1).value_label(), "--") && Has(ui.card(1).note_label(), "Read error"),
-                "a RAM read error shows -- and its cause, never zero");
+  result.Expect(Has(ui.card(1).value_label(), "--") && Has(ui.card(1).note_label(), "Read error") &&
+                    lv_obj_has_flag(ui.card(1).arc(), LV_OBJ_FLAG_HIDDEN),
+                "a RAM read error shows -- and its cause, and no arc: never zero");
   result.Expect(Has(ui.card(0).value_label(), "48%"), "CPU is unaffected by the RAM error");
 
-  clock.Set(4000);
-  feed.Push(Frame(3, &ram));
-  clock.Set(4000);
+  overview.Push(4000, {.ram = ram});
   render(4000);
-  result.Expect(Has(ui.card(1).value_label(), "8.0 / 16.0 GB"), "RAM recovers when readable again");
+  result.Expect(Has(ui.card(1).value_label(), "50%"), "RAM recovers when readable again");
 
-  render(7100);  // 3.1 s since the last frame
-  result.Expect(Has(ui.card(1).value_label(), "Last 8.0 / 16.0 GB") && ui.card(1).dimmed(),
-                "stale RAM keeps its last value, labelled Last and dimmed");
+  render(7100);                   // 3.1 s since the last frame
+  for (int i = 0; i < 10; ++i) {  // let the decay animation finish
+    lv_tick_inc(100);
+    lv_timer_handler();
+  }
+  result.Expect(Has(ui.card(1).value_label(), "Last 50%") && ui.card(1).dimmed() &&
+                    lv_arc_get_value(ui.card(1).arc()) == 0 &&
+                    !lv_obj_has_flag(ui.card(1).arc(), LV_OBJ_FLAG_HIDDEN),
+                "stale RAM keeps its last value labelled Last while the dial decays to neutral");
 
   // Coverage stays in the persistent bar and never reads as quiet.
   result.Expect(Has(ui.coverage_label(), "WiFi ? BLE ?"),
@@ -143,32 +273,34 @@ int RunSystemScreen() {
   result.Expect(Has(ui.coverage_label(), "Host only") && !Has(ui.connection_label(), "Connected"),
                 "coverage stays in the bar while the Host link goes stale");
 
-  // The persistent bar: connection, coverage and clock side by side. Every
-  // coverage text is measured against the longest connection and clock texts.
+  // The persistent bar: connection, coverage and clock side by side. The
+  // longest of each must fit together, since any combination can occur.
   {
     lv_obj_update_layout(screen);
-    const auto width = [&](lv_obj_t* label, const std::string& text) {
-      lv_point_t size;
-      lv_text_get_size(&size, text.c_str(), lv_obj_get_style_text_font(label, 0), 0, 0,
-                       LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-      return static_cast<int>(size.x);
-    };
     const auto widest = [&](lv_obj_t* label, const std::vector<std::string>& texts,
                             std::string* which) {
       int best = 0;
       for (const auto& text : texts) {
-        if (width(label, text) > best) {
-          best = width(label, text);
+        if (TextWidth(label, text) > best) {
+          best = TextWidth(label, text);
           *which = text;
         }
       }
       return best;
     };
-    const std::vector<std::string> connections = {"Waiting for Host", "Connected", "Stale",
-                                                  "Disconnected", "Incompatible Host"};
-    const std::vector<std::string> clocks = {"Time unavailable",  "12:58 PM UTC+12:45",
-                                             "10:58 PM UTC-9:30", "12:58 PM",
-                                             "23:58 UTC+12:45",   "23:58"};
+    // Every connection text MakeCpuView writes, and the longest clocks: 12 h
+    // with an unknown zone (so it reads UTC), and no time at all.
+    std::vector<std::string> connections;
+    for (const auto connection :
+         {domain::ConnectionState::kNegotiating, domain::ConnectionState::kLive,
+          domain::ConnectionState::kStale, domain::ConnectionState::kDisconnected,
+          domain::ConnectionState::kIncompatible}) {
+      domain::HostState state;
+      state.connection = connection;
+      connections.push_back(domain::MakeCpuView(state, 0).connection);
+    }
+    const std::vector<std::string> clocks = {"Time unavailable", "12:58 PM UTC", "12:58 PM",
+                                             "23:58 UTC", "23:58"};
     std::vector<std::string> coverages = {"Host only"};
     const domain::RadioState states[] = {domain::RadioState::kOperatorDisabled,
                                          domain::RadioState::kFault, domain::RadioState::kNoData,
@@ -188,241 +320,152 @@ int RunSystemScreen() {
         }
       }
     }
-    std::string long_connection, long_clock, long_coverage, short_clock = "23:58";
+    std::string long_connection, long_clock, long_coverage;
     const int connection_w = widest(ui.connection_label(), connections, &long_connection);
     const int clock_w = widest(ui.clock_label(), clocks, &long_clock);
     const int coverage_w = widest(ui.coverage_label(), coverages, &long_coverage);
     const int bar_w = lv_obj_get_content_width(ui.status_bar());
     const int gaps = 2 * lv_obj_get_style_pad_column(ui.status_bar(), 0);
     const int need_worst = connection_w + coverage_w + clock_w + gaps;
-    const int connected_w = width(ui.connection_label(), "Connected");
-    const int need_24h = connected_w + coverage_w + width(ui.clock_label(), "23:58") + gaps;
-    const int need_12h = connected_w + coverage_w + width(ui.clock_label(), "12:58 PM") + gaps;
-    const int need_typical = connected_w + width(ui.coverage_label(), "WiFi ch11") +
-                             width(ui.clock_label(), "12:58 PM") + gaps;
-    // Known overflow (docs/tickets/TB09.md, Slice 2): the longest connection
-    // and clock texts do not fit together even with no coverage text at all.
     std::printf(
         "status bar %d px: worst connection \"%s\" %d + coverage \"%s\" %d + clock \"%s\" %d "
-        "+ gaps %d = %d; with Connected: 24 h %d, 12 h %d; typical \"WiFi ch11\" 12 h %d\n",
+        "+ gaps %d = %d\n",
         bar_w, long_connection.c_str(), connection_w, long_coverage.c_str(), coverage_w,
-        long_clock.c_str(), clock_w, gaps, need_worst, need_24h, need_12h, need_typical);
+        long_clock.c_str(), clock_w, gaps, need_worst);
     bool no_percentage = true;
     for (const auto& text : coverages)
       no_percentage = no_percentage && text.find('%') == std::string::npos;
     result.Expect(no_percentage, "no coverage text is a percentage");
-    result.Expect(need_24h <= bar_w, "every coverage text fits beside Connected and a 24 h clock");
-    result.Expect(need_typical <= bar_w,
-                  "a current-window text fits beside Connected and a 12 h clock");
+    result.Expect(need_worst <= bar_w,
+                  "the longest connection, coverage and clock texts fit the bar together");
   }
 
-  // Six cards (the Overview's 2x3 grid) fit the 320x240 display with no
-  // scrolling, and realistic worst-case text fits its card without clipping.
+  // The fixed layout: every card and the Agents bar sit inside the 320x240
+  // display without overlapping, and nothing scrolls.
   {
-    const char* titles[] = {"System", "Storage", "Network", "Agents", "WiFi", "BLE"};
-    std::vector<domain::MetricCardView> six;
-    for (const char* title : titles) {
-      six.push_back({.title = title,
-                     .value = "Last 745.2 / 994.6 GB",
-                     .note = "Last R99.9M/s W99.9M/s",
-                     .has_value = true});
-    }
-    ui.Update(domain::MakeCpuView(feed.state(), 7100), six);
-    RenderOnce();
     lv_obj_update_layout(screen);
-    bool inside = ui.card_count() == 6;
-    bool clipped = false;
-    int32_t bottom_most = 0;
+    std::vector<lv_area_t> boxes;
     for (size_t i = 0; i < ui.card_count(); ++i) {
       lv_area_t box;
-      lv_obj_get_coords(lv_obj_get_parent(ui.card(i).title_label()), &box);
-      inside = inside && box.x1 >= 0 && box.x2 < 320 && box.y1 >= 0 && box.y2 < 240;
-      bottom_most = std::max(bottom_most, box.y2);
-      for (lv_obj_t* label : {ui.card(i).value_label(), ui.card(i).note_label()}) {
-        lv_point_t text;
-        lv_text_get_size(&text, lv_label_get_text(label), lv_obj_get_style_text_font(label, 0), 0,
-                         0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-        clipped = clipped || text.x > lv_obj_get_content_width(label);
+      lv_obj_get_coords(ui.card(i).root(), &box);
+      boxes.push_back(box);
+    }
+    lv_area_t bar_box, agents_box;
+    lv_obj_get_coords(ui.status_bar(), &bar_box);
+    lv_obj_get_coords(ui.agents_bar().root(), &agents_box);
+    boxes.push_back(bar_box);
+    boxes.push_back(agents_box);
+    bool inside = true, apart = true;
+    for (size_t i = 0; i < boxes.size(); ++i) {
+      const lv_area_t& a = boxes[i];
+      inside = inside && a.x1 >= 0 && a.x2 < 320 && a.y1 >= 0 && a.y2 < 240;
+      for (size_t j = i + 1; j < boxes.size(); ++j) {
+        const lv_area_t& b = boxes[j];
+        apart = apart && (a.x2 < b.x1 || b.x2 < a.x1 || a.y2 < b.y1 || b.y2 < a.y1);
       }
     }
-    result.Expect(inside, "six cards sit inside the 320x240 display");
-    result.Expect(bottom_most == 239 || bottom_most < 240, "the grid ends above the display edge");
-    result.Expect(
-        !lv_obj_has_flag(screen, LV_OBJ_FLAG_SCROLLABLE) || lv_obj_get_scroll_bottom(screen) == 0,
-        "the Overview does not scroll");
-    result.Expect(!clipped, "realistic worst-case card text fits without clipping");
+    result.Expect(inside, "the status bar, every card and the Agents bar sit inside 320x240");
+    result.Expect(apart, "no two Overview parts overlap");
+    result.Expect(agents_box.y1 > bar_box.y2 && agents_box.y2 >= 230,
+                  "the Agents bar runs along the bottom");
+    result.Expect(!lv_obj_has_flag(ui.root(), LV_OBJ_FLAG_SCROLLABLE) &&
+                      lv_obj_get_scroll_bottom(ui.root()) <= 0,
+                  "the Overview does not scroll");
   }
 
-  // Every Battery card text variant, laid out on a real card widget, fits the
-  // 148 px content width of both lines (value at 14 pt, note at 12 pt).
+  // CPU: every whole percentage, live and Last.
   {
-    size_t battery_index = 0;
-    for (size_t i = 0; i < domain::Cards().size(); ++i) {
-      if (std::string(domain::Cards()[i].id) == "battery") battery_index = i;
+    FitSweep sweep(overview, "cpu");
+    for (uint16_t per_mille = 0; per_mille <= 1000; per_mille += 5) {
+      overview.Push(100'000, {}, per_mille);
+      overview.Render(100'000);
+      sweep.Measure();
     }
-    const uint8_t states[] = {0, 1, 2, 3, 4};
-    const uint8_t conditions[] = {0, 1, 2, 3};
-    bool fits = true;
-    int variants = 0;
-    for (const uint32_t age : {0u, 200'000u}) {  // fresh, and both halves stale ("Last ...")
-      for (const uint8_t state : states) {
-        for (const uint8_t condition : conditions) {
-          for (const uint16_t per_mille : {uint16_t{1000}, uint16_t{870}, uint16_t{5}}) {
-            proto::BatterySnapshot g;
-            g.charge_availability = proto::Availability::kAvailable;
-            g.charge_per_mille = per_mille;
-            g.state = static_cast<proto::BatteryState>(state);  // every wire value
-            g.charge_age_ms = age;
-            g.condition_availability = proto::Availability::kAvailable;
-            g.max_capacity_per_mille = per_mille;
-            g.condition = static_cast<proto::BatteryCondition>(condition);
-            g.condition_age_ms = age * 100;
-            proto::Envelope envelope;
-            envelope.type = proto::MessageType::kSnapshot;
-            envelope.sequence = static_cast<uint32_t>(100 + variants);
-            envelope.session = session;
-            const proto::CpuSnapshot cpu{proto::Availability::kAvailable, 480, 0,
-                                         proto::Freshness::kFresh, 0};
-            std::vector<uint8_t> frame;
-            proto::EncodeSnapshot(envelope, cpu, {.battery = g}, &frame);
-            clock.Set(1'000'000);
-            feed.Push(frame);
-            render(1'000'000);
-            ++variants;
-            for (lv_obj_t* label :
-                 {ui.card(battery_index).value_label(), ui.card(battery_index).note_label()}) {
-              lv_point_t text;
-              lv_text_get_size(&text, lv_label_get_text(label),
-                               lv_obj_get_style_text_font(label, 0), 0, 0, LV_COORD_MAX,
-                               LV_TEXT_FLAG_NONE);
-              if (text.x > 148) {
-                std::printf("battery text too wide (%d px): %s\n", static_cast<int>(text.x),
-                            lv_label_get_text(label));
-                fits = false;
-              }
+    overview.Render(104'000);
+    sweep.Measure();
+    result.Expect(sweep.fits(), "every CPU dial text fits (fresh and Last)");
+  }
+
+  // RAM: shares and sizes up to 512 GB, live, Last, and each unavailable wording.
+  {
+    FitSweep sweep(overview, "ram");
+    for (const uint64_t total : {8 * kGiB, 16 * kGiB, 128 * kGiB, 192 * kGiB, 512 * kGiB}) {
+      for (const uint64_t used : {uint64_t{0}, total / 3, total - kGiB / 10, total}) {
+        const proto::RamSnapshot g{proto::Availability::kAvailable, used, total, 0,
+                                   proto::Freshness::kFresh};
+        sweep.Check(200'000, {.ram = g});
+        sweep.Check(200'000, {.ram = g}, 204'000);
+      }
+    }
+    for (uint8_t availability = 1; availability <= 4; ++availability) {
+      sweep.Check(210'000,
+                  {.ram = proto::RamSnapshot{static_cast<proto::Availability>(availability), 0, 0,
+                                             0, proto::Freshness::kFresh}});
+    }
+    result.Expect(sweep.variants() == 44 && sweep.fits(),
+                  "every RAM dial text fits (fresh, Last and unavailable)");
+  }
+
+  // Storage: capacity and I/O fresh, stale or unavailable in every
+  // combination, with the widest rates.
+  {
+    FitSweep sweep(overview, "storage");
+    const proto::Availability availabilities[] = {
+        proto::Availability::kAvailable, proto::Availability::kUnsupported,
+        proto::Availability::kAbsent, proto::Availability::kTemporarilyUnavailable,
+        proto::Availability::kError};
+    for (const auto capacity : availabilities) {
+      for (const auto io : availabilities) {
+        for (const uint64_t rate : {uint64_t{0}, uint64_t{999}, uint64_t{9'990'000}, UINT64_MAX}) {
+          for (const uint32_t capacity_age : {0u, 100'000u}) {
+            for (const uint32_t io_age : {0u, 4'000u}) {
+              const bool cap_ok = capacity == proto::Availability::kAvailable;
+              const bool io_ok = io == proto::Availability::kAvailable;
+              const proto::StorageSnapshot g{
+                  capacity, cap_ok ? 994 * kGB : 0, cap_ok ? 5 * kGB : 0, capacity_age,
+                  io,       io_ok ? rate : 0,       io_ok ? rate : 0,     io_age};
+              sweep.Check(300'000, {.storage = g});
             }
           }
         }
       }
     }
-    result.Expect(variants == 120 && fits,
-                  "every Battery value and note variant fits 148 px (fresh and Last)");
+    overview.Render(340'000);  // link lost: everything retained
+    sweep.Measure();
+    result.Expect(sweep.variants() > 400 && sweep.fits(),
+                  "every Storage dial text fits (fresh, Last and unavailable)");
   }
-  // Every Agents card text variant (all 64 state combinations, fresh and
-  // "Last", plus each unavailable wording) fits the 148 px of both lines.
+
+  // Battery: every state and condition wire value, fresh and Last.
   {
-    size_t agents_index = 0;
-    for (size_t i = 0; i < domain::Cards().size(); ++i) {
-      if (std::string(domain::Cards()[i].id) == "agents") agents_index = i;
-    }
-    bool fits = true;
-    int variants = 0;
-    int widest_value = 0, widest_note = 0;
-    const auto measure = [&](const char* what) {
-      for (lv_obj_t* label :
-           {ui.card(agents_index).value_label(), ui.card(agents_index).note_label()}) {
-        lv_point_t text;
-        lv_text_get_size(&text, lv_label_get_text(label), lv_obj_get_style_text_font(label, 0), 0,
-                         0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-        (label == ui.card(agents_index).value_label() ? widest_value : widest_note) =
-            std::max(label == ui.card(agents_index).value_label() ? widest_value : widest_note,
-                     static_cast<int>(text.x));
-        if (text.x > 148) {
-          std::printf("agents text too wide (%d px, %s): %s\n", static_cast<int>(text.x), what,
-                      lv_label_get_text(label));
-          fits = false;
-        }
-      }
-    };
-    for (const uint32_t age : {0u, 20'000u}) {
-      for (uint8_t a = 0; a < 4; ++a) {
-        for (uint8_t b = 0; b < 4; ++b) {
-          for (uint8_t c = 0; c < 4; ++c) {
-            proto::AgentsSnapshot g;
-            g.availability = proto::Availability::kAvailable;
-            g.source_age_ms = age;
-            // Every combination of wire values.
-            g.state = {static_cast<proto::AgentState>(a), static_cast<proto::AgentState>(b),
-                       static_cast<proto::AgentState>(c)};
-            proto::Envelope envelope;
-            envelope.type = proto::MessageType::kSnapshot;
-            envelope.sequence = static_cast<uint32_t>(1000 + variants);
-            envelope.session = session;
-            const proto::CpuSnapshot cpu{proto::Availability::kAvailable, 480, 0,
-                                         proto::Freshness::kFresh, 0};
-            std::vector<uint8_t> frame;
-            proto::EncodeSnapshot(envelope, cpu, {.agents = g}, &frame);
-            clock.Set(2'000'000);
-            feed.Push(frame);
-            render(2'000'000);
-            ++variants;
-            measure("states");
+    FitSweep sweep(overview, "battery");
+    for (const uint32_t age : {0u, 200'000u}) {
+      for (uint8_t state = 0; state <= 4; ++state) {
+        for (uint8_t condition = 0; condition <= 3; ++condition) {
+          for (const uint16_t per_mille : {uint16_t{1000}, uint16_t{870}, uint16_t{5}}) {
+            proto::BatterySnapshot g;
+            g.charge_availability = proto::Availability::kAvailable;
+            g.charge_per_mille = per_mille;
+            g.state = static_cast<proto::BatteryState>(state);
+            g.charge_age_ms = age;
+            g.condition_availability = proto::Availability::kAvailable;
+            g.max_capacity_per_mille = per_mille;
+            g.condition = static_cast<proto::BatteryCondition>(condition);
+            g.condition_age_ms = age * 100;
+            sweep.Check(1'000'000, {.battery = g});
           }
         }
       }
     }
-    for (uint8_t availability = 1; availability <= 4; ++availability) {
-      proto::AgentsSnapshot g;
-      g.availability = static_cast<proto::Availability>(availability);
-      proto::Envelope envelope;
-      envelope.type = proto::MessageType::kSnapshot;
-      envelope.sequence = static_cast<uint32_t>(1000 + variants);
-      envelope.session = session;
-      const proto::CpuSnapshot cpu{proto::Availability::kAvailable, 480, 0,
-                                   proto::Freshness::kFresh, 0};
-      std::vector<uint8_t> frame;
-      proto::EncodeSnapshot(envelope, cpu, {.agents = g}, &frame);
-      clock.Set(2'000'000);
-      feed.Push(frame);
-      render(2'000'000);
-      ++variants;
-      measure("unavailable");
-    }
-    std::printf("agents widest value %d px, widest note %d px\n", widest_value, widest_note);
-    result.Expect(variants == 132 && fits,
-                  "every Agents value and note variant fits 148 px (fresh and Last)");
+    result.Expect(sweep.variants() == 120 && sweep.fits(),
+                  "every Battery value and note variant fits (fresh and Last)");
   }
-  // Every Network card text variant fits the 148 px of both lines: each route
-  // kind (tunnel or not), coverage and channel up to the wire maximum of 255,
-  // fresh and stale halves, the widest rates, and each unavailable wording.
+
+  // Network: each route kind (tunnel or not), coverage and channel up to the
+  // wire maximum of 255, fresh and stale halves, the widest rates, and each
+  // unavailable wording.
   {
-    size_t network_index = 0;
-    for (size_t i = 0; i < domain::Cards().size(); ++i) {
-      if (std::string(domain::Cards()[i].id) == "network") network_index = i;
-    }
-    bool fits = true;
-    int variants = 0;
-    int widest_value = 0, widest_note = 0;
-    const auto measure = [&](const char* what) {
-      for (lv_obj_t* label :
-           {ui.card(network_index).value_label(), ui.card(network_index).note_label()}) {
-        lv_point_t text;
-        lv_text_get_size(&text, lv_label_get_text(label), lv_obj_get_style_text_font(label, 0), 0,
-                         0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-        (label == ui.card(network_index).value_label() ? widest_value : widest_note) =
-            std::max(label == ui.card(network_index).value_label() ? widest_value : widest_note,
-                     static_cast<int>(text.x));
-        if (text.x > 148) {
-          std::printf("network text too wide (%d px, %s): %s\n", static_cast<int>(text.x), what,
-                      lv_label_get_text(label));
-          fits = false;
-        }
-      }
-    };
-    const auto push_network = [&](const proto::NetworkSnapshot& g) {
-      proto::Envelope envelope;
-      envelope.type = proto::MessageType::kSnapshot;
-      envelope.sequence = static_cast<uint32_t>(3000 + variants);
-      envelope.session = session;
-      const proto::CpuSnapshot cpu{proto::Availability::kAvailable, 480, 0,
-                                   proto::Freshness::kFresh, 0};
-      std::vector<uint8_t> frame;
-      proto::EncodeSnapshot(envelope, cpu, {.network = g}, &frame);
-      clock.Set(3'000'000);
-      feed.Push(frame);
-      render(3'000'000);
-      ++variants;
-    };
+    FitSweep sweep(overview, "network");
     const proto::RouteKind kinds[] = {proto::RouteKind::kUnknown, proto::RouteKind::kWifi,
                                       proto::RouteKind::kEthernet, proto::RouteKind::kOther,
                                       proto::RouteKind::kNone};
@@ -453,8 +496,7 @@ int RunSystemScreen() {
                   g.context_age_ms = context_age;
                   g.coverage = coverage;
                   g.channel = channel;
-                  push_network(g);
-                  measure("route");
+                  sweep.Check(3'000'000, {.network = g});
                 }
               }
             }
@@ -466,24 +508,96 @@ int RunSystemScreen() {
       proto::NetworkSnapshot g;
       g.traffic_availability = static_cast<proto::Availability>(availability);
       g.route_kind = proto::RouteKind::kWifi;
-      push_network(g);
-      measure("unavailable");
+      sweep.Check(3'000'000, {.network = g});
     }
     // Offline retained after the Host link is lost: "Last Offline", dimmed.
-    {
-      proto::NetworkSnapshot g;
-      g.traffic_availability = proto::Availability::kAbsent;
-      g.route_kind = proto::RouteKind::kNone;
-      push_network(g);
-      render(3'040'000);
-      measure("offline, link lost");
-      result.Expect(Has(ui.card(network_index).note_label(), "Last Offline") &&
-                        ui.card(network_index).dimmed(),
-                    "offline after link loss reads Last Offline, dimmed");
+    proto::NetworkSnapshot offline;
+    offline.traffic_availability = proto::Availability::kAbsent;
+    offline.route_kind = proto::RouteKind::kNone;
+    sweep.Check(3'000'000, {.network = offline}, 3'040'000);
+    result.Expect(Has(overview.Card("network").note_label(), "Last Offline") &&
+                      overview.Card("network").dimmed(),
+                  "offline after link loss reads Last Offline, dimmed");
+    result.Expect(sweep.variants() > 500 && sweep.fits(),
+                  "every Network value and note variant fits (fresh and Last)");
+  }
+
+  // The Agents bar: every combination of the three agents' wire states, fresh
+  // and Last, plus each unavailable wording, fits the bar; and each state has
+  // its own icon motion, which stops when the reading is retained.
+  {
+    const firmware::ui::system::AgentsBar& bar = ui.agents_bar();
+    int variants = 0;
+    bool fits = true;
+    const auto measure = [&] {
+      ++variants;
+      std::string why;
+      if (!ChildrenInside(bar.root(), &why)) {
+        std::string shown = lv_label_get_text(bar.message_label());
+        for (size_t slot = 0; slot < proto::kAgentSlots; ++slot) {
+          if (bar.badge_visible(slot))
+            shown += std::string(" [") + lv_label_get_text(bar.badge_label(slot)) + "]";
+        }
+        std::printf("agents bar does not fit: %s (%s)\n", why.c_str(), shown.c_str());
+        fits = false;
+      }
+    };
+    for (const uint32_t age : {0u, 20'000u}) {
+      for (uint8_t a = 0; a < 4; ++a) {
+        for (uint8_t b = 0; b < 4; ++b) {
+          for (uint8_t c = 0; c < 4; ++c) {
+            proto::AgentsSnapshot g;
+            g.availability = proto::Availability::kAvailable;
+            g.source_age_ms = age;
+            g.state = {static_cast<proto::AgentState>(a), static_cast<proto::AgentState>(b),
+                       static_cast<proto::AgentState>(c)};
+            overview.Push(2'000'000, {.agents = g});
+            overview.Render(2'000'000);
+            measure();
+          }
+        }
+      }
     }
-    std::printf("network widest value %d px, widest note %d px\n", widest_value, widest_note);
-    result.Expect(variants > 500 && fits,
-                  "every Network value and note variant fits 148 px (fresh and Last)");
+    for (uint8_t availability = 1; availability <= 4; ++availability) {
+      proto::AgentsSnapshot g;
+      g.availability = static_cast<proto::Availability>(availability);
+      overview.Push(2'000'000, {.agents = g});
+      overview.Render(2'000'000);
+      measure();
+      result.Expect(Has(bar.message_label(), "--") && !bar.badge_visible(0) &&
+                        !bar.badge_visible(1) && !bar.badge_visible(2),
+                    "an unavailable process listing is -- with its cause, never None running");
+    }
+    result.Expect(variants == 132 && fits, "every Agents bar variant fits (fresh and Last)");
+
+    proto::AgentsSnapshot mixed;
+    mixed.availability = proto::Availability::kAvailable;
+    mixed.state = {proto::AgentState::kBusy, proto::AgentState::kRunning, proto::AgentState::kIdle};
+    overview.Push(2'100'000, {.agents = mixed});
+    overview.Render(2'100'000);
+    result.Expect(bar.spinning(0) && !bar.pulsing(0) && Has(bar.badge_label(0), "Codex busy"),
+                  "a busy agent spins");
+    result.Expect(bar.pulsing(1) && !bar.spinning(1) && Has(bar.badge_label(1), "Claude ?"),
+                  "an agent of unknown activity pulses and says ?, never busy or idle");
+    result.Expect(!bar.pulsing(2) && !bar.spinning(2) && Has(bar.badge_label(2), "Grok idle"),
+                  "an idle agent is still");
+    overview.Render(2'104'000);  // 4 s without a frame: link stale
+    result.Expect(bar.dimmed() && Has(bar.message_label(), "Last") && bar.badge_visible(1) &&
+                      !bar.pulsing(1) && !bar.spinning(0),
+                  "a retained reading keeps its badges, labelled Last, with every icon still");
+    proto::AgentsSnapshot none;
+    none.availability = proto::Availability::kAvailable;
+    overview.Push(2'110'000, {.agents = none});
+    overview.Render(2'110'000);
+    result.Expect(Has(bar.message_label(), "None running") && !bar.badge_visible(0) &&
+                      !bar.badge_visible(1) && !bar.badge_visible(2) && !bar.dimmed(),
+                  "with nothing running the bar says so");
+    overview.Render(2'110'000, {}, "Incompatible protocol: Host data rejected");
+    std::string why;
+    result.Expect(!lv_obj_has_flag(bar.notice_label(), LV_OBJ_FLAG_HIDDEN) &&
+                      lv_obj_has_flag(bar.message_label(), LV_OBJ_FLAG_HIDDEN) &&
+                      ChildrenInside(bar.root(), &why),
+                  "a link fault takes the Agents bar's place and fits it");
   }
   return result.Finish("simulator system-screen");
 }

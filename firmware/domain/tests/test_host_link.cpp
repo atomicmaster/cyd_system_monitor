@@ -333,7 +333,6 @@ int main() {
     hello.hello = proto::HelloBody{.supported_major = 1, .utc_ms = 1'700'000'000'000ULL};
     link.Push(Frame(hello));
     CHECK(MakeCpuView(link.state(), clock.now).clock == "17:13");
-    CHECK(MakeCpuView(link.state(), clock.now, {.show_zone = true}).clock == "17:13 UTC-5");
     Pairing(link, S1, H);
     link.ConfirmPairing(true);
     proto::Envelope snap;
@@ -347,7 +346,6 @@ int main() {
     CHECK(proto::EncodeSnapshot(snap, cpu, {}, &wire) == proto::Error::kNone);
     link.Push(wire);
     CHECK(MakeCpuView(link.state(), clock.now).clock == "00:13");
-    CHECK(MakeCpuView(link.state(), clock.now, {.show_zone = true}).clock == "00:13 UTC+1");
   }
 
   if (g_failures != 0) {

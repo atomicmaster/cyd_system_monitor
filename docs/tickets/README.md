@@ -93,7 +93,7 @@ The dependency column repeats each ticket's prerequisite links for navigation. E
 | [TB14](TB14.md) | Add BLE advertisement flooding episodes | Outline | [TB13](TB13.md) |
 | [TB15](TB15.md) | Add BLE identifier-churn episodes | Outline | [TB13](TB13.md) |
 | [TB16](TB16.md) | Change settings consistently from touch and Host commands | Outline | [TB13](TB13.md), [TB08](TB08.md) |
-| [TB17](TB17.md) | Complete and verify the six-card appliance interface | Outline | [TB03](TB03.md), [TB04](TB04.md), [TB05](TB05.md), [TB06](TB06.md), [TB07](TB07.md), [TB08](TB08.md), [TB10](TB10.md), [TB11](TB11.md), [TB14](TB14.md), [TB15](TB15.md), [TB16](TB16.md) |
+| [TB17](TB17.md) | Complete and verify the appliance interface | Outline | [TB03](TB03.md), [TB04](TB04.md), [TB05](TB05.md), [TB06](TB06.md), [TB07](TB07.md), [TB08](TB08.md), [TB10](TB10.md), [TB11](TB11.md), [TB14](TB14.md), [TB15](TB15.md), [TB16](TB16.md) |
 | [TB18](TB18.md) | Export diagnostics and erase only explicitly selected data | Outline | [TB13](TB13.md), [TB16](TB16.md) |
 | [R01](R01.md) | Install and remove a signed macOS appliance package | Outline | [TB08](TB08.md), [TB17](TB17.md), [TB18](TB18.md) |
 | [R02](R02.md) | Fetch a verified release and recover USB firmware updates | Outline | [TB08](TB08.md), [TB16](TB16.md) |

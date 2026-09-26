@@ -11,7 +11,6 @@ namespace firmware::domain {
 // these under the shared configuration-revision and Host-command path.
 struct DisplaySettings {
   bool use_24h = true;
-  bool show_zone = false;  // "UTC-5" after the time; never hidden when the zone is unknown
   // Off: follow the Host's own local offset. On: a fixed offset chosen here.
   bool manual_zone = false;
   int16_t manual_offset_minutes = 0;  // only meaningful when manual_zone

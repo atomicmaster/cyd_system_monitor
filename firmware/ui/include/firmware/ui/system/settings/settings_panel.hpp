@@ -10,8 +10,8 @@
 
 namespace firmware::ui::system {
 
-// The clock settings overlay: 24-hour or 12-hour, show or hide the timezone,
-// and follow the Mac's zone or use a fixed UTC offset. It renders and edits a
+// The clock settings overlay: 24-hour or 12-hour, and follow the Mac's zone or
+// use a fixed UTC offset. It renders and edits a
 // DisplaySettings value, and offers the recalibrate-touch and debug-screen entries; persistence is
 // the caller's, through `on_change`.
 class SettingsPanel {
@@ -34,7 +34,6 @@ class SettingsPanel {
 
   lv_obj_t* panel() const { return panel_; }
   lv_obj_t* use_24h_switch() const { return use_24h_switch_; }
-  lv_obj_t* show_zone_switch() const { return show_zone_switch_; }
   lv_obj_t* manual_zone_switch() const { return manual_zone_switch_; }
   lv_obj_t* offset_label() const { return offset_label_; }
   lv_obj_t* offset_down_button() const { return offset_down_; }
@@ -54,7 +53,6 @@ class SettingsPanel {
   firmware::domain::DisplaySettings settings_;
   lv_obj_t* panel_ = nullptr;
   lv_obj_t* use_24h_switch_ = nullptr;
-  lv_obj_t* show_zone_switch_ = nullptr;
   lv_obj_t* manual_zone_switch_ = nullptr;
   lv_obj_t* offset_label_ = nullptr;
   lv_obj_t* offset_down_ = nullptr;

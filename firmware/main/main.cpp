@@ -19,6 +19,7 @@
 #include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "firmware/domain/agents_bar.hpp"
 #include "firmware/domain/calibration/calibration.hpp"
 #include "firmware/domain/card_registry.hpp"
 #include "firmware/domain/cpu_replay.hpp"
@@ -356,7 +357,8 @@ void DrawMonitor() {
     for (const auto& card : firmware::domain::Cards()) cards.push_back(card.make(state, now_ms));
     g_link->screen->Update(firmware::domain::MakeCpuView(state, now_ms, g_link->screen->settings()),
                            cards,
-                           firmware::domain::MakeLinkView(g_link->link, g_link->link.paired()));
+                           firmware::domain::MakeLinkView(g_link->link, g_link->link.paired()),
+                           firmware::domain::MakeAgentsBar(state, now_ms));
   }
 }
 

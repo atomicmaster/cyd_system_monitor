@@ -140,7 +140,7 @@ int main() {
                std::string::npos,
            "the replay checkpoint keeps the observed share");
     ledger.SetFault(Radio::kWifi, "init failed");
-    Expect(text(1025) == "WiFi fault BLE gap", "a fault reads fault");
+    Expect(text(1025) == "WiFi err BLE gap", "a fault reads err (\"fault\" does not fit the bar)");
     scheduler.Configure({.wifi_enabled = false});
     Expect(text(1025) == "WiFi off BLE gap", "a disabled radio reads off");
     scheduler.Configure({.wifi_enabled = false, .ble_enabled = false});

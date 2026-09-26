@@ -17,16 +17,23 @@ int g_failures = 0;
 }  // namespace
 
 int main() {
-  {  // Defaults: 24-hour, zone hidden, follow the Host.
+  {  // Defaults: 24-hour, follow the Host.
     const DisplaySettings s;
-    CHECK(s.use_24h && !s.show_zone && !s.manual_zone && s.manual_offset_minutes == 0);
+    CHECK(s.use_24h && !s.manual_zone && s.manual_offset_minutes == 0);
+  }
+  {  // A record from before the "show timezone" flag was retired still loads.
+    SettingsRecord old = Serialize({.manual_zone = true, .manual_offset_minutes = 60});
+    old[1] |= 2;
+    old[4] = static_cast<uint8_t>(0xA5 ^ old[0] ^ old[1] ^ old[2] ^ old[3]);
+    const auto back = Deserialize(old);
+    CHECK(back.has_value() && back->manual_zone && back->manual_offset_minutes == 60);
+    CHECK(Serialize(*back)[1] == old[1] - 2);
   }
   {  // Every combination survives storage.
-    for (int bits = 0; bits < 8; ++bits) {
+    for (int bits = 0; bits < 4; ++bits) {
       for (int offset : {-720, -570, -15, 0, 15, 345, 840}) {
         DisplaySettings s{.use_24h = (bits & 1) != 0,
-                          .show_zone = (bits & 2) != 0,
-                          .manual_zone = (bits & 4) != 0,
+                          .manual_zone = (bits & 2) != 0,
                           .manual_offset_minutes = static_cast<int16_t>(offset)};
         const auto back = Deserialize(Serialize(s));
         CHECK(back.has_value() && *back == s);
@@ -34,7 +41,7 @@ int main() {
     }
   }
   {  // Damaged records fall back to the defaults instead of being half-trusted.
-    const SettingsRecord good = Serialize({.show_zone = true});
+    const SettingsRecord good = Serialize({.use_24h = false});
     CHECK(Deserialize(good).has_value());
     for (size_t i = 0; i < good.size(); ++i) {
       SettingsRecord bad = good;

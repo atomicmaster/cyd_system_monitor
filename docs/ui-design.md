@@ -4,6 +4,8 @@
 
 The active E32R28T uses a calibrated 320×240 landscape touch interface with a dark, accessible theme. Color is always paired with text, icon, or shape; Alert severity colors are reserved for Alerts, while complementary accents distinguish navigation and data.
 
+The palette ([`theme.hpp`](../firmware/ui/include/firmware/ui/theme.hpp)) is deep navy surfaces with rounded, thinly bordered panels, muted captions, and cool neon data accents: cyan, violet, blue, teal, pink and magenta. Red, orange, amber and yellow never appear as data accents, so no gauge or value can read as an Alert. Stock widgets follow LVGL's default theme in dark mode.
+
 ## Persistent status bar
 
 Every screen keeps:
@@ -13,20 +15,19 @@ Every screen keeps:
 - compact host/USB state; and
 - the current WiFi or BLE Observation Window.
 
-Tapping a status item opens the relevant detail. Alert priority sorts by Severity, then Confidence, then recency.
+The bar is one 12 pt line, and every combination of its longest texts must fit its 312 px ("Disconnected", "WiFi gap BLE scan", "Time unavailable"; checked by the simulator's `system-screen` scenario). That is why its words are short ("Waiting", "Incompatible", `err` for a faulted radio) and the clock has no zone suffix. When the zone is unknown the clock still says `UTC`, so it can never pass as local time.
+
+Tapping the connection text opens the Host link panel (versions, pairing, and any link fault); tapping the rest of the bar opens clock settings. Tapping a status item opens the relevant detail. Alert priority sorts by Severity, then Confidence, then recency.
 
 ## Overview
 
-Overview is the primary screen and contains six large expandable cards in a 2×3 grid:
+Overview is the primary screen. Under the status bar it shows the Host Metric cards, and along the bottom the Agents bar:
 
-- System;
-- Storage;
-- Network;
-- Agents;
-- WiFi; and
-- BLE.
+- **dials**, three to a row: CPU, RAM (Physical RAM Occupied) and Storage. Each is a 270° gauge with its share in the centre and one short line under it (used / total, or read/write rates);
+- **panels**, two to a row: Battery and Network, each with a value, a note, and a bar when the value is a proportion; and
+- **the Agents bar**: one badge per detected agent (Codex, Claude, Grok Build), an icon in the agent's accent color whose motion says what is known. A slow pulse means running with activity unknown, labelled `?`; this is all an MVP Host can report. A spinner means busy and a still ring means idle; both need an activity adapter. With nothing running the bar says `None running`, and when processes cannot be listed it shows `--` and the cause, never `None running`. A link fault takes the bar's place, so its cause stays visible.
 
-Cards use dials, animated state icons, and at most two or three concise numerical values such as network RX/TX. The MVP Overview has no graphs, sparklines, automatic rotation, or scrolling. Tapping a card opens its expanded screen; a clear back control returns to Overview. Alerts open from the persistent status bar, and Settings opens from a dedicated gear control.
+Cards come from the card registry in order, and a card's view chooses dial or panel, so adding a metric needs no layout change while the grid has room. WiFi and BLE have no Overview view yet; their place is open until the radio slices (M5) define their summaries. The CPU, RAM and Storage dials, and the Battery and Network panels, together use about 42 KB of the board's 58 KB LVGL pool at peak. Cards use dials, animated state icons, and at most two or three concise numerical values such as network RX/TX. The MVP Overview has no graphs, sparklines, automatic rotation, or scrolling. Tapping a card opens its expanded screen; a clear back control returns to Overview. Alerts open from the persistent status bar, and Settings opens from a dedicated gear control.
 
 ## Stale host state
 

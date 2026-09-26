@@ -32,9 +32,23 @@ build() {
   cmake --build "$(_simulator_build_dir)"
 }
 
+# Every scenario that checks itself (preview only writes images).
+_SIMULATOR_SCENARIOS=(smoke display-smoke calibration peripherals capacity protocol-replay
+  cpu-lifecycle cpu-replay metric-cards storage-cards battery-cards agents-bar network-cards
+  system-screen settings coverage)
+
 check() {
-  _check_format
-  build
+  _check_format || return 1
+  build || return 1
+  local failed=0
+  for scenario in "${_SIMULATOR_SCENARIOS[@]}"; do
+    if ! "$(_simulator_build_dir)/simulator" "$scenario" >/dev/null 2>&1; then
+      echo "scenario failed: $scenario (rerun: ./dev run simulator -- $scenario)" >&2
+      failed=1
+    fi
+  done
+  [[ $failed -eq 0 ]] && echo "simulator: ${#_SIMULATOR_SCENARIOS[@]} scenarios ok"
+  return $failed
 }
 
 run() {

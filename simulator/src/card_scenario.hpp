@@ -2,7 +2,7 @@
 #pragma once
 
 // Shared harness for the per-card scenarios (storage-cards, battery-cards,
-// agents-cards, network-cards): a scripted clock, a HostFeed with an open
+// network-cards): a scripted clock, a HostFeed with an open
 // session, snapshot frames carrying any metric groups, the registered card
 // under test, and a transcript compared with simulator/scenarios/<name>.expected.
 

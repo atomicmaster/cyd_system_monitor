@@ -49,11 +49,12 @@ add_executable(simulator
   src/scenarios/metric_cards_scenario.cpp
   src/scenarios/storage_cards_scenario.cpp
   src/scenarios/battery_cards_scenario.cpp
-  src/scenarios/agents_cards_scenario.cpp
+  src/scenarios/agents_bar_scenario.cpp
   src/scenarios/network_cards_scenario.cpp
   src/scenarios/system_screen_scenario.cpp
   src/scenarios/settings_scenario.cpp
   src/scenarios/coverage_scenario.cpp
+  src/scenarios/preview_scenario.cpp
   src/fixtures.cpp)
 target_link_libraries(simulator PRIVATE firmware_domain firmware_ui lvgl)
 target_compile_features(simulator PRIVATE cxx_std_20)
