@@ -22,6 +22,11 @@ pub fn run_dir() -> PathBuf {
     home().join("Library/Application Support/CYD System Monitor/run")
 }
 
+/// `<run dir>/agent-events`: Claude hook events (`cyd-host agent-event`).
+pub fn agent_events_dir() -> PathBuf {
+    run_dir().join("agent-events")
+}
+
 /// `$CYD_LOG_DIR`, else `~/Library/Logs/CYD System Monitor`.
 pub fn log_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("CYD_LOG_DIR") {

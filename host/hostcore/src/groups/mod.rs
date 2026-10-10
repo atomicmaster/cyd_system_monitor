@@ -38,7 +38,7 @@ pub(crate) fn all(provider: Box<dyn WifiContextProvider>) -> Vec<Box<dyn Group>>
         Box::new(RamCollector::new()),
         Box::new(StorageCollector::new()),
         Box::new(BatteryCollector::new()),
-        Box::new(AgentsCollector::new()),
+        Box::new(AgentsCollector::new(crate::paths::agent_events_dir())),
         Box::new(platform_macos::network::collector(provider)),
     ]
 }

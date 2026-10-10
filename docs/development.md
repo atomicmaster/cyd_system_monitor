@@ -165,6 +165,28 @@ cyd-host unpair|reset-calibration --port ...                       # recovery co
 
 First pairing needs a touch on the display within 60 s; see `docs/tickets/TB02.md` for the operator steps.
 
+## Agent activity: Claude Code hooks
+
+The Agents bar shows Codex and Grok Build busy or idle from their CPU use.
+Claude Code's comes from its hooks, which call `cyd-host agent-event claude
+busy|idle` (see [agent-integrations.md](agent-integrations.md#busy-and-idle-claude-code-hooks)).
+Build the CLI with `cd host && cargo build --release`, then add to
+`~/.claude/settings.json` under `"hooks"`, with the absolute path of that
+binary:
+
+```json
+"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "'<repo>/host/target/release/cyd-host' agent-event claude busy 2>/dev/null || true", "timeout": 5}]}],
+"PreToolUse":  [{"matcher": "*", "hooks": [{"type": "command", "command": "... agent-event claude busy 2>/dev/null || true", "timeout": 5}]}],
+"PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "... agent-event claude busy 2>/dev/null || true", "timeout": 5}]}],
+"Stop":         [{"hooks": [{"type": "command", "command": "... agent-event claude idle 2>/dev/null || true", "timeout": 5}]}],
+"Notification": [{"hooks": [{"type": "command", "command": "... agent-event claude idle 2>/dev/null || true", "timeout": 5}]}],
+"SessionEnd":   [{"hooks": [{"type": "command", "command": "... agent-event claude idle 2>/dev/null || true", "timeout": 5}]}]
+```
+
+Merge these with any hooks already there. Without them Claude shows as
+running, never busy. `cargo clean` removes the binary; the `|| true` keeps
+Claude Code unaffected until it is rebuilt.
+
 ## Host service and setup status (TB08)
 
 ```sh

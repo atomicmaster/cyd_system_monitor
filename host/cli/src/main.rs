@@ -51,6 +51,10 @@ commands:
                        --launch-agents-dir <d> (default ~/Library/LaunchAgents)
                        --log-dir <d>           (default ~/Library/Logs/CYD System
                                                Monitor)
+  agent-event claude busy|idle
+                     For Claude Code hooks: record that the Claude process
+                     running the hook is busy or idle (shown on the Agents bar).
+                     Reads nothing from the hook's input; always exits 0.
   help               Show this message.
 
 When the daemon runs, unpair, reset-calibration and forget are sent to it.
@@ -350,6 +354,33 @@ fn service_command(args: &[String]) -> ExitCode {
     }
 }
 
+/// The Claude Code hook entry point. It must never fail or slow the hook: any
+/// problem is ignored and the exit status is always 0 (a non-zero status from a
+/// PreToolUse hook would block the tool).
+fn agent_event(args: &[String]) -> ExitCode {
+    use io::{IsTerminal, Read};
+    use metrics::agents::HookActivity;
+    // Claude Code writes JSON (which can include the prompt) to stdin; drain it
+    // unread so the writer never sees a broken pipe.
+    let stdin = io::stdin();
+    if !stdin.is_terminal() {
+        let _ = io::copy(&mut stdin.lock().take(1 << 20), &mut io::sink());
+    }
+    let activity = match (
+        args.get(1).map(String::as_str),
+        args.get(2).map(String::as_str),
+    ) {
+        (Some("claude"), Some("busy")) => HookActivity::Busy,
+        (Some("claude"), Some("idle")) => HookActivity::Idle,
+        _ => return ExitCode::SUCCESS,
+    };
+    if let Some(pid) = platform_macos::agents::hook_caller_claude_pid() {
+        let _ =
+            platform_macos::agents::record_hook_event(&paths::agent_events_dir(), pid, activity);
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let name = args.first().map(String::as_str).unwrap_or("help");
@@ -377,6 +408,7 @@ fn main() -> ExitCode {
         ("pair-cancel", _) => daemon_command("pair_cancel", None),
         ("stop", _) => daemon_command("stop", None),
         ("service", _) => service_command(&args),
+        ("agent-event", _) => agent_event(&args),
         (other, _) => {
             eprintln!("error: unknown command '{other}'");
             eprint!("{USAGE}");
@@ -399,6 +431,7 @@ mod tests {
             "pair-cancel",
             "stop",
             "service",
+            "agent-event",
             "help",
         ] {
             assert!(super::USAGE.contains(word), "{word}");
