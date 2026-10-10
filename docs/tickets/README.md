@@ -4,7 +4,7 @@
 
 This is the repository-local MVP backlog. The [implementation plan](../../IMPLEMENTATION_PLAN.md) defines milestone acceptance; ticket prerequisites define the order in which work can start. A tracer bullet carries one observable behavior through the required layers. Toolchains, contract foundations, and measurement gates are identified separately rather than presented as user features.
 
-**C01, TB01, TB02 and C02 are done**; the first working Host path (agreed snapshot bytes, shared display state under replay, a physically paired Mac showing live CPU with stale/reconnect behavior) is complete. TB03 is code-complete awaiting a recorded physical smoke, TB08 is code-complete on the desktop awaiting signing, consent and hardware steps, TB09 is in progress (scheduler, coverage model, and status line done), and TB04–TB08 are next. The remaining tickets are specified or outlined below.
+**C01, TB01, TB02 and C02 are done**; the first working Host path (agreed snapshot bytes, shared display state under replay, a physically paired Mac showing live CPU with stale/reconnect behavior) is complete. TB03–TB07 are code-complete awaiting recorded physical smokes, TB08 is code-complete on the desktop awaiting signing, consent and hardware steps, and TB09 is in progress (scheduler, coverage model, and status line done; the ESP32 driver and physical runs remain). The remaining tickets are specified or outlined below.
 
 ## Start here
 
