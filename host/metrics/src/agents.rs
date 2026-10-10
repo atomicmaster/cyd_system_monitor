@@ -150,6 +150,19 @@ const ALLOWLIST: &[Entry] = &[
             lit("codex"),
         ]),
     },
+    // Codex: the VS Code extension's bundled CLI (verified), Apple Silicon.
+    Entry {
+        agent: Agent::Codex,
+        root: Root::Home,
+        shape: Shape::Executable(&[
+            lit(".vscode"),
+            lit("extensions"),
+            Seg::Versioned("openai.chatgpt-", "-darwin-arm64"),
+            lit("bin"),
+            lit("macos-aarch64"),
+            lit("codex"),
+        ]),
+    },
     // Codex desktop app bundle and its helpers (unverified: not installed here).
     Entry {
         agent: Agent::Codex,
@@ -218,6 +231,19 @@ const ALLOWLIST: &[Entry] = &[
             lit("claude"),
             lit("versions"),
             Seg::Versioned("", ""),
+        ]),
+    },
+    // Claude: the VS Code extension's bundled CLI (verified), Apple Silicon.
+    Entry {
+        agent: Agent::Claude,
+        root: Root::Home,
+        shape: Shape::Executable(&[
+            lit(".vscode"),
+            lit("extensions"),
+            Seg::Versioned("anthropic.claude-code-", "-darwin-arm64"),
+            lit("resources"),
+            lit("native-binary"),
+            lit("claude"),
         ]),
     },
     // Claude desktop app bundle and its helpers (unverified: not installed here).
@@ -424,6 +450,71 @@ mod tests {
         assert_eq!(
             identify("/Users/tester/.local/share/claude/versions/2.1.3", HOME),
             Some(Agent::Claude)
+        );
+    }
+
+    #[test]
+    fn the_vs_code_extension_binaries_match() {
+        assert_eq!(
+            identify(
+                "/Users/tester/.vscode/extensions/anthropic.claude-code-2.1.296-darwin-arm64/resources/native-binary/claude",
+                HOME
+            ),
+            Some(Agent::Claude)
+        );
+        assert_eq!(
+            identify(
+                "/Users/tester/.vscode/extensions/openai.chatgpt-26.1007.21434-darwin-arm64/bin/macos-aarch64/codex",
+                HOME
+            ),
+            Some(Agent::Codex)
+        );
+    }
+
+    #[test]
+    fn vs_code_rows_need_the_exact_extension_layout() {
+        for path in [
+            // Another user's extensions, or outside ~/.vscode.
+            "/Users/other/.vscode/extensions/anthropic.claude-code-2.1.296-darwin-arm64/resources/native-binary/claude",
+            "/Users/tester/vscode/extensions/anthropic.claude-code-2.1.296-darwin-arm64/resources/native-binary/claude",
+            // A look-alike publisher, an unversioned or Intel directory.
+            "/Users/tester/.vscode/extensions/evil.claude-code-2.1.296-darwin-arm64/resources/native-binary/claude",
+            "/Users/tester/.vscode/extensions/anthropic.claude-code-latest-darwin-arm64/resources/native-binary/claude",
+            "/Users/tester/.vscode/extensions/anthropic.claude-code-2.1.296-darwin-x64/resources/native-binary/claude",
+            // The right directory but another file in it.
+            "/Users/tester/.vscode/extensions/anthropic.claude-code-2.1.296-darwin-arm64/resources/native-binary/node",
+            "/Users/tester/.vscode/extensions/openai.chatgpt-26.1007.21434-darwin-arm64/bin/macos-aarch64/rg",
+            "/Users/tester/.vscode/extensions/openai.chatgpt-26.1007.21434-darwin-arm64/bin/codex",
+        ] {
+            assert_eq!(states(&[rec(UID, path)]), [0, 0, 0], "{path}");
+        }
+    }
+
+    #[test]
+    fn t3_code_sessions_count_through_the_binaries_it_launches() {
+        // T3 Code launches the configured `claude`/`codex` (by default the ones
+        // on PATH) unchanged; the collector sees their resolved paths. The app
+        // itself and its helpers are not agents.
+        assert_eq!(
+            states(&[
+                rec(UID, "/Applications/T3 Code (Alpha).app/Contents/MacOS/T3 Code (Alpha)"),
+                rec(UID, "/Applications/T3 Code (Alpha).app/Contents/Resources/resource-monitor/t3-resource-monitor"),
+            ]),
+            [0, 0, 0]
+        );
+        assert_eq!(
+            states(&[
+                rec(
+                    UID,
+                    "/Applications/T3 Code (Alpha).app/Contents/MacOS/T3 Code (Alpha)"
+                ),
+                rec(
+                    UID,
+                    "/opt/homebrew/Caskroom/claude-code@latest/2.1.296/claude"
+                ),
+                rec(UID, "/opt/homebrew/Caskroom/codex/0.162.1/bin/codex"),
+            ]),
+            [1, 1, 0]
         );
     }
 

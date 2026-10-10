@@ -26,16 +26,20 @@ Allowlist (`~` is the current user's `realpath`ed home; a version segment is `<s
 | Codex | `/opt/homebrew/Caskroom/codex/<semver>/bin/codex` | Verified: `/opt/homebrew/bin/codex` resolves here. Apple Silicon Homebrew cask. |
 | Codex | `/usr/local/Caskroom/codex/<semver>/bin/codex` | Intel Homebrew cask prefix. Unverified. |
 | Codex | `/opt/homebrew/Cellar/codex/<semver>/bin/codex`, `/usr/local/Cellar/codex/<semver>/bin/codex` | Homebrew formula layout. Unverified. |
+| Codex | `~/.vscode/extensions/openai.chatgpt-<semver>-darwin-arm64/bin/macos-aarch64/codex` | Verified: the CLI bundled with OpenAI's VS Code extension, running from there on the development Mac. Apple Silicon only, like the MVP. |
 | Codex | `/Applications/Codex.app/Contents/**` | Desktop app bundle root and its helper processes. Not installed on the development Mac; the bundle name is unverified. |
 | Claude | `/opt/homebrew/Caskroom/claude-code@latest/<semver>/claude` | Verified: `/opt/homebrew/bin/claude` resolves here. |
 | Claude | `/opt/homebrew/Caskroom/claude-code/<semver>/claude` | The versioned cask name. Unverified. |
 | Claude | `/usr/local/Caskroom/claude-code@latest/<semver>/claude`, `/usr/local/Caskroom/claude-code/<semver>/claude` | Intel Homebrew prefix. Unverified. |
 | Claude | `~/.local/share/claude/versions/<semver>` | Native installer `versions/<semver>` layout that `~/.local/bin/claude` links to. Unverified. |
+| Claude | `~/.vscode/extensions/anthropic.claude-code-<semver>-darwin-arm64/resources/native-binary/claude` | Verified: the CLI bundled with the Claude Code VS Code extension, running from there on the development Mac. Apple Silicon only. |
 | Claude | `/Applications/Claude.app/Contents/**` | Desktop app bundle root and helpers. Not installed on the development Mac. |
 | Grok Build | `~/.grok/bin/grok` | The documented install path; kept for an install that ships a real file there. |
 | Grok Build | `~/.grok/downloads/grok-<semver>-macos-aarch64`, `...-macos-x86_64` | Verified: `~/.grok/bin/grok` is a symlink to `../downloads/grok-1.0.30-macos-aarch64`, so a running process resolves to the versioned download. Only under `~/.grok`. |
 
 A `Contents/**` row is a bundle root: the path must be `<bundle root>/Contents/<something>`, so a helper counts only inside the bundle (not `/Applications/Claude.app` itself, not a same-named app elsewhere, not a bundle nested inside another app).
+
+T3 Code needs no row of its own: on macOS it launches its configured Claude/Codex binary unchanged (by default the `claude` and `codex` on PATH, the Homebrew casks above), so its sessions count through those paths. The T3 Code app and its helpers are not agents (`t3_code_sessions_count_through_the_binaries_it_launches`). VS Code Insiders, Cursor and other forks keep extensions elsewhere and are not recognised yet.
 
 Deliberately not recognised: `/opt/homebrew/bin/grok` and any other `grok` outside `~/.grok` (Homebrew distributes an unrelated tool under that name: `homebrew_grok_is_not_grok_build`); the unresolved link paths `/opt/homebrew/bin/claude` and `/opt/homebrew/bin/codex` (a process resolves through them to a Caskroom path); npm or other installs that run the agent as a `node` process (identity would be `node`, a bare interpreter name shared with every other program; those Macs show the agent as not running until an accepted adapter or a new allowlist row is added). A cask upgrade that deletes the running version's directory makes that process unresolvable, so it stops counting until restarted.
 
