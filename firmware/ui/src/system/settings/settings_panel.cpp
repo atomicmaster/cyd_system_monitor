@@ -3,6 +3,8 @@
 
 #include <cstdio>
 
+#include "firmware/ui/theme.hpp"
+
 namespace firmware::ui::system {
 
 namespace domain = firmware::domain;
@@ -58,10 +60,10 @@ struct SettingsPanelEvents {
 
 lv_obj_t* SettingsPanel::AddRow(const char* text, lv_obj_t** control, bool is_switch) {
   lv_obj_t* row = lv_obj_create(panel_);
+  lv_obj_remove_style_all(row);
   lv_obj_set_size(row, LV_PCT(100), 34);
   lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_pad_all(row, 2, 0);
-  lv_obj_set_style_border_width(row, 0, 0);
+  theme::StyleRowRule(row);
   lv_obj_t* label = lv_label_create(row);
   lv_label_set_text(label, text);
   lv_obj_align(label, LV_ALIGN_LEFT_MID, 0, 0);
@@ -69,57 +71,60 @@ lv_obj_t* SettingsPanel::AddRow(const char* text, lv_obj_t** control, bool is_sw
     *control = lv_switch_create(row);
     lv_obj_set_size(*control, 44, 22);
     lv_obj_align(*control, LV_ALIGN_RIGHT_MID, 0, 0);
+    theme::StyleSwitch(*control);
   }
   return row;
 }
 
+namespace {
+
+// A text-only button sized to its label.
+lv_obj_t* TextButton(lv_obj_t* parent, const char* text, uint32_t color) {
+  lv_obj_t* button = lv_button_create(parent);
+  lv_obj_set_size(button, LV_SIZE_CONTENT, 28);
+  theme::StyleTextButton(button, color);
+  lv_obj_t* label = lv_label_create(button);
+  lv_label_set_text(label, text);
+  lv_obj_center(label);
+  return button;
+}
+
+}  // namespace
+
 SettingsPanel::SettingsPanel(lv_obj_t* parent, ChangeCallback on_change, Actions actions)
     : on_change_(std::move(on_change)), actions_(std::move(actions)) {
+  // A sheet rising from the bottom edge over the Overview, its actions as
+  // text in the header (the Quiet style).
   panel_ = lv_obj_create(parent);
-  lv_obj_set_size(panel_, 308, 232);
-  lv_obj_remove_flag(panel_, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_center(panel_);
+  theme::StyleSheet(panel_, 186);
   lv_obj_set_flex_flow(panel_, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_all(panel_, 4, 0);
   lv_obj_set_style_pad_row(panel_, 2, 0);
   lv_obj_add_flag(panel_, LV_OBJ_FLAG_HIDDEN);
 
-  lv_obj_t* title = lv_label_create(panel_);
-  lv_label_set_text(title, "Clock settings");
+  lv_obj_t* header = lv_obj_create(panel_);
+  lv_obj_remove_style_all(header);
+  lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(header, LV_PCT(100), 30);
+  lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_t* title = lv_label_create(header);
+  theme::StyleHeading(title);
+  lv_label_set_text(title, "Clock");
+  lv_obj_set_flex_grow(title, 1);
+  recalibrate_ = TextButton(header, "Recalibrate", theme::kMuted);
+  debug_ = TextButton(header, "Debug", theme::kMuted);
+  done_ = TextButton(header, "Done", theme::kCyan);
 
   AddRow("24-hour clock", &use_24h_switch_, true);
   AddRow("Set zone manually", &manual_zone_switch_, true);
 
   lv_obj_t* offset_row = AddRow("", nullptr, false);
-  offset_down_ = lv_button_create(offset_row);
-  lv_obj_set_size(offset_down_, 56, 30);
+  offset_down_ = TextButton(offset_row, "-15m", theme::kCyan);
   lv_obj_align(offset_down_, LV_ALIGN_LEFT_MID, 0, 0);
-  lv_label_set_text(lv_label_create(offset_down_), "-15m");
   offset_label_ = lv_label_create(offset_row);
   lv_obj_align(offset_label_, LV_ALIGN_CENTER, 0, 0);
-  offset_up_ = lv_button_create(offset_row);
-  lv_obj_set_size(offset_up_, 56, 30);
+  offset_up_ = TextButton(offset_row, "+15m", theme::kCyan);
   lv_obj_align(offset_up_, LV_ALIGN_RIGHT_MID, 0, 0);
-  lv_label_set_text(lv_label_create(offset_up_), "+15m");
-
-  lv_obj_t* buttons = lv_obj_create(panel_);
-  lv_obj_set_size(buttons, LV_PCT(100), 44);
-  lv_obj_remove_flag(buttons, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_pad_all(buttons, 0, 0);
-  lv_obj_set_style_border_width(buttons, 0, 0);
-  lv_obj_set_flex_flow(buttons, LV_FLEX_FLOW_ROW);
-  lv_obj_set_style_pad_column(buttons, 4, 0);
-  const auto make_button = [buttons](const char* text) {
-    lv_obj_t* button = lv_button_create(buttons);
-    lv_obj_set_size(button, 96, 40);
-    lv_obj_t* label = lv_label_create(button);
-    lv_label_set_text(label, text);
-    lv_obj_center(label);
-    return button;
-  };
-  recalibrate_ = make_button("Recalibrate");
-  debug_ = make_button("Debug");
-  done_ = make_button("Done");
 
   lv_obj_add_event_cb(use_24h_switch_, SettingsPanelEvents::Use24h, LV_EVENT_VALUE_CHANGED, this);
   lv_obj_add_event_cb(manual_zone_switch_, SettingsPanelEvents::ManualZone, LV_EVENT_VALUE_CHANGED,

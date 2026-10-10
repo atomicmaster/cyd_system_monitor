@@ -1,36 +1,36 @@
 no Host data yet
   message="--" | dimmed=0
 source available, nothing running
-  message="None running" | dimmed=0
+  message="" | dimmed=0
 Claude running, no activity source
-  message="" | 1:Claude ? (unknown) | dimmed=0
+  message="" | 1:claude (unknown) | dimmed=0
 Codex and Claude running, no activity source
-  message="" | 0:Codex ? (unknown) | 1:Claude ? (unknown) | dimmed=0
+  message="" | 0:codex (unknown) | 1:claude (unknown) | dimmed=0
 all three running, no activity source
-  message="" | 0:Codex ? (unknown) | 1:Claude ? (unknown) | 2:Grok ? (unknown) | dimmed=0
+  message="" | 0:codex (unknown) | 1:claude (unknown) | 2:grok (unknown) | dimmed=0
 process listing temporarily unavailable
   message="-- Unavailable" | dimmed=0
 process listing error
   message="-- Read error" | dimmed=0
 future adapter: Claude busy
-  message="" | 1:Claude busy (busy) | dimmed=0
+  message="" | 1:claude (busy) | dimmed=0
 future adapter: Grok idle
-  message="" | 2:Grok idle (idle) | dimmed=0
+  message="" | 2:grok (idle) | dimmed=0
 future adapter: busy, idle and unknown together
-  message="" | 0:Codex busy (busy) | 1:Claude idle (idle) | 2:Grok ? (unknown) | dimmed=0
+  message="" | 0:codex (busy) | 1:claude (idle) | 2:grok (unknown) | dimmed=0
 source sample 14.999 s old: fresh
-  message="" | 1:Claude ? (unknown) | dimmed=0
+  message="" | 1:claude (unknown) | dimmed=0
 source sample 15 s old in a new snapshot: stale
-  message="Last" | 1:Claude ? (unknown) | dimmed=1
+  message="Last" | 1:claude (unknown) | dimmed=1
 the same old sample re-sent 9 s later: still stale
-  message="Last" | 1:Claude ? (unknown) | dimmed=1
+  message="Last" | 1:claude (unknown) | dimmed=1
 refreshed sample: nothing running now
-  message="None running" | dimmed=0
+  message="" | dimmed=0
 same sample re-sent, 14.2 s old: still fresh
-  message="None running" | dimmed=0
+  message="" | dimmed=0
 same sample re-sent, 15.2 s old: stale, retained as Last
-  message="Last none running" | dimmed=1
+  message="Last" | dimmed=1
 last frame 2.9 s ago: still live
-  message="" | 1:Claude ? (unknown) | dimmed=0
+  message="" | 1:claude (unknown) | dimmed=0
 35 s without a frame: link stale, retained and dimmed
-  message="Last" | 1:Claude ? (unknown) | dimmed=1
+  message="Last" | 1:claude (unknown) | dimmed=1

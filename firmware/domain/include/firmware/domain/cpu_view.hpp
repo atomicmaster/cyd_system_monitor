@@ -15,6 +15,7 @@ struct CpuView {
   std::string value;       // "62%", "Last 62%", or "--"; a missing value is never "0%"
   std::string note;        // availability wording when there is no value, else empty
   std::string connection;  // persistent status text
+  bool connected = false;  // live Host data: the bar shows a USB glyph instead of the text
   std::string clock;       // "Time unavailable" until the Host supplies UTC
   bool has_value = false;
   bool dimmed = false;

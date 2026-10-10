@@ -14,7 +14,7 @@ double Gib(uint64_t bytes) { return static_cast<double>(bytes) / (1ULL << 30); }
 // share with "used / total GB" (binary gigabytes) under it. Never relabelled
 // as application memory or pressure.
 MetricCardView MakeRamCard(const HostState& state, uint64_t /*now_ms*/) {
-  MetricCardView view{.title = "RAM", .value = "--", .dial = true};
+  MetricCardView view{.title = "RAM", .value = "--", .layout = CardLayout::kDial};
   const RamMetricState& ram = state.ram;
   if (!ram.has_data) return view;
   if (ram.availability != protocol::Availability::kAvailable || ram.total_bytes == 0) {

@@ -32,6 +32,9 @@ proto::AgentsSnapshot Snap(proto::AgentState codex, proto::AgentState claude,
   return g;
 }
 
+// Wire slot names, for the transcript and checks.
+constexpr const char* kSlotNames[proto::kAgentSlots] = {"codex", "claude", "grok"};
+
 const char* ActivityName(firmware::domain::AgentActivity activity) {
   switch (activity) {
     case firmware::domain::AgentActivity::kBusy:
@@ -64,8 +67,8 @@ class BarScenario {
     const auto view = firmware::domain::MakeAgentsBar(feed_.state(), ms);
     transcript_ << label << "\n  message=\"" << view.message << "\"";
     for (const auto& badge : view.badges) {
-      transcript_ << " | " << static_cast<unsigned>(badge.slot) << ":" << badge.label << " ("
-                  << ActivityName(badge.activity) << ")";
+      transcript_ << " | " << static_cast<unsigned>(badge.slot) << ":" << kSlotNames[badge.slot]
+                  << " (" << ActivityName(badge.activity) << ")";
     }
     transcript_ << " | dimmed=" << (view.dimmed ? 1 : 0) << "\n";
     return view;
@@ -91,7 +94,10 @@ class BarScenario {
 
 std::string Labels(const firmware::domain::AgentsBarView& view) {
   std::string labels;
-  for (const auto& badge : view.badges) labels += (labels.empty() ? "" : ",") + badge.label;
+  for (const auto& badge : view.badges) {
+    labels += std::string(labels.empty() ? "" : ",") + kSlotNames[badge.slot] + "(" +
+              ActivityName(badge.activity) + ")";
+  }
   return labels;
 }
 
@@ -112,18 +118,20 @@ int RunAgentsBar() {
 
   push(2000, ++seq, Snap(kOff, kOff, kOff, 100));
   view = at(2000, "source available, nothing running");
-  result.Expect(view.message == "None running" && view.badges.empty() && !view.dimmed,
+  result.Expect(view.message.empty() && view.badges.empty() && view.badges.empty() && !view.dimmed,
                 "none running is a real reading, undimmed");
 
   push(3000, ++seq, Snap(kOff, kOn, kOff, 100));
   view = at(3000, "Claude running, no activity source");
-  result.Expect(view.message.empty() && Labels(view) == "Claude ?" && view.badges[0].slot == 1 &&
+  result.Expect(view.message.empty() && Labels(view) == "claude(unknown)" &&
+                    view.badges[0].slot == 1 &&
                     view.badges[0].activity == firmware::domain::AgentActivity::kUnknown,
                 "running without an adapter is a badge of unknown activity, never busy or idle");
 
   push(4000, ++seq, Snap(kOn, kOn, kOff, 100));
   view = at(4000, "Codex and Claude running, no activity source");
-  result.Expect(Labels(view) == "Codex ?,Claude ?", "each running agent gets its own badge");
+  result.Expect(Labels(view) == "codex(unknown),claude(unknown)",
+                "each running agent gets its own badge");
   push(4500, ++seq, Snap(kOn, kOn, kOn, 100));
   at(4500, "all three running, no activity source");
 
@@ -140,17 +148,17 @@ int RunAgentsBar() {
   view = at(5500, "process listing error");
   result.Expect(view.message == "-- Read error", "an error source is -- too");
 
-  // Busy and idle exist on the wire for a future adapter; the badges label them.
+  // Busy and idle come from the Host's activity sources; each badge carries it.
   push(6000, ++seq, Snap(kOff, kBusy, kOff, 100));
   view = at(6000, "future adapter: Claude busy");
-  result.Expect(Labels(view) == "Claude busy" &&
+  result.Expect(Labels(view) == "claude(busy)" &&
                     view.badges[0].activity == firmware::domain::AgentActivity::kBusy,
-                "busy is labelled busy");
+                "busy is carried as busy");
   push(6500, ++seq, Snap(kOff, kOff, kIdle, 100));
   view = at(6500, "future adapter: Grok idle");
-  result.Expect(Labels(view) == "Grok idle" &&
+  result.Expect(Labels(view) == "grok(idle)" &&
                     view.badges[0].activity == firmware::domain::AgentActivity::kIdle,
-                "idle is labelled idle");
+                "idle is carried as idle");
   push(7000, ++seq, Snap(kBusy, kIdle, kOn, 100));
   at(7000, "future adapter: busy, idle and unknown together");
 
@@ -160,7 +168,7 @@ int RunAgentsBar() {
   result.Expect(!view.dimmed && view.message.empty(), "just under 15 s is fresh");
   push(21'000, ++seq, Snap(kOff, kOn, kOff, 15'000));
   view = at(21'000, "source sample 15 s old in a new snapshot: stale");
-  result.Expect(view.dimmed && view.message == "Last" && Labels(view) == "Claude ?",
+  result.Expect(view.dimmed && view.message == "Last" && Labels(view) == "claude(unknown)",
                 "a re-sent old sample does not look fresh");
   // Frames keep coming (link live) but the sample keeps being re-sent.
   push(30'000, ++seq, Snap(kOff, kOn, kOff, 24'000));
@@ -168,23 +176,24 @@ int RunAgentsBar() {
   result.Expect(view.dimmed, "an aging re-sent sample stays stale");
   push(31'000, ++seq, Snap(kOff, kOff, kOff, 200));
   view = at(31'000, "refreshed sample: nothing running now");
-  result.Expect(!view.dimmed && view.message == "None running", "a fresh sample is fresh");
+  result.Expect(!view.dimmed && view.message.empty() && view.badges.empty(),
+                "a fresh sample is fresh");
 
   // The source ages while frames keep arriving (the Host re-sends the same
   // sample, sampled at 30.8 s): retained once it is 15 s old.
   push(45'000, ++seq, Snap(kOff, kOff, kOff, 14'200));
   view = at(45'000, "same sample re-sent, 14.2 s old: still fresh");
-  result.Expect(!view.dimmed && view.message == "None running", "14.2 s old is fresh");
+  result.Expect(!view.dimmed && view.message.empty() && view.badges.empty(), "14.2 s old is fresh");
   push(46'000, ++seq, Snap(kOff, kOff, kOff, 15'200));
   view = at(46'000, "same sample re-sent, 15.2 s old: stale, retained as Last");
-  result.Expect(view.dimmed && view.message == "Last none running",
+  result.Expect(view.dimmed && view.message == "Last" && view.badges.empty(),
                 "a sample that ages past 15 s is retained and dimmed");
 
   // Frames stop: link lost retains the last reading, dimmed.
   push(50'000, ++seq, Snap(kOff, kOn, kOff, 100));
   at(52'900, "last frame 2.9 s ago: still live");
   view = at(85'000, "35 s without a frame: link stale, retained and dimmed");
-  result.Expect(view.dimmed && view.message == "Last" && Labels(view) == "Claude ?",
+  result.Expect(view.dimmed && view.message == "Last" && Labels(view) == "claude(unknown)",
                 "link loss retains the badges with Last");
 
   return scenario.Finish();

@@ -52,9 +52,11 @@ int RunBatteryCards() {
   auto g = Snap(870, kCharging, 95, 250, 30 * 60 * 1000);
   push(2000, ++seq, g);
   auto view = at(2000, "live charging: 87%, health 91% Normal");
-  result.Expect(view.has_value && !view.dimmed && view.value == "87% Charging" &&
-                    view.note == "Health 91% Normal" && view.bar_per_mille == 870,
-                "a live charging battery shows charge, state, health, and the charge bar");
+  result.Expect(view.has_value && !view.dimmed && view.value == "87%" &&
+                    view.detail == "1h35m to full" && view.charging &&
+                    view.meter_caption == "Health" && view.meter_value == "91%" &&
+                    view.show_meter && view.bar_per_mille == 870,
+                "a live charging battery shows charge, state, a bolt, health, and the cell fill");
   g = Snap(640, kDischarging, 95, 100, 31 * 60 * 1000);
   push(3000, ++seq, g);
   at(3000, "discharging 64% with 95 min remaining");
@@ -85,36 +87,39 @@ int RunBatteryCards() {
   g.cycle_count = proto::kBatteryUnknownU16;
   push(130'000, ++seq, g);
   view = at(130'000, "condition unavailable while charge is live");
-  result.Expect(view.has_value && !view.dimmed && view.note == "Health Unavailable",
+  result.Expect(view.has_value && !view.dimmed && view.meter_caption == "Health Unavailable" &&
+                    view.meter_value.empty() && !view.show_meter,
                 "charge stays live and undimmed while the condition is unavailable");
 
   // Condition sample sits at the 3 h boundary; charge is live.
   g = Snap(860, kDischarging, 118, 300, 3 * kHourMs - 1);
   push(200'000, ++seq, g);
   view = at(200'000, "condition 2 h 59 m 59.999 s old: fresh");
-  result.Expect(!view.dimmed && view.note == "Health 91% Normal", "condition is fresh below 3 h");
+  result.Expect(!view.dimmed && view.meter_caption == "Health" && view.meter_value == "91%",
+                "condition is fresh below 3 h");
   g = Snap(850, kDischarging, 117, 300, 3 * kHourMs);
   push(201'000, ++seq, g);
   view = at(201'000, "condition 3 h old, charge live: condition stale, charge live");
-  result.Expect(view.dimmed && view.value == "85% Draining" && view.note == "Last 91% Normal",
+  result.Expect(view.dimmed && view.value == "85%" && view.meter_caption == "Last" &&
+                    view.meter_value == "91%",
                 "a 3 h old condition is retained and dimmed while the charge is live");
   // The same old sample re-sent later (its age keeps growing) is still stale.
   g = Snap(840, kDischarging, 116, 300, 3 * kHourMs + 60'000);
   push(261'000, ++seq, g);
   view = at(261'000, "old condition sample re-sent 60 s later: still stale");
-  result.Expect(view.dimmed && view.note.starts_with("Last"),
+  result.Expect(view.dimmed && view.meter_caption == "Last",
                 "a re-sent old condition sample does not look fresh");
   // A refreshed condition sample is fresh again.
   g = Snap(830, kDischarging, 115, 300, 500);
   push(262'000, ++seq, g);
   view = at(262'000, "condition refreshed: fresh");
-  result.Expect(!view.dimmed && view.note == "Health 91% Normal", "a refreshed condition is fresh");
+  result.Expect(!view.dimmed && view.meter_caption == "Health", "a refreshed condition is fresh");
 
   // Charge sample re-carried past 90 s is stale even in a new snapshot.
   g = Snap(830, kDischarging, 115, 91'000, 1000);
   push(263'000, ++seq, g);
   view = at(263'000, "charge sample 91 s old in a new snapshot: stale");
-  result.Expect(view.dimmed && view.value == "Last 83% Draining",
+  result.Expect(view.dimmed && view.value == "Last 83%",
                 "a re-sent old charge sample does not look fresh");
 
   // Charge read error with the condition still reported.
@@ -151,7 +156,7 @@ int RunBatteryCards() {
   // Frames stop: everything is retained and dimmed.
   at(269'700, "last frame 2.9 s ago: still live");
   view = at(300'000, "34 s without a frame: link stale, both halves retained and dimmed");
-  result.Expect(view.dimmed && view.value.starts_with("Last ") && view.note.starts_with("Last"),
+  result.Expect(view.dimmed && view.value.starts_with("Last ") && view.meter_caption == "Last",
                 "link loss retains both readings with Last and dims");
 
   return scenario.Finish();

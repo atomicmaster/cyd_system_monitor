@@ -7,6 +7,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <vector>
 
 #include "firmware/domain/agents_bar.hpp"
 #include "firmware/domain/cpu_view.hpp"
@@ -46,7 +47,9 @@ class LinkScreen {
   lv_obj_t* about_panel() const { return about_panel_; }
   bool about_visible() const { return !lv_obj_has_flag(about_panel_, LV_OBJ_FLAG_HIDDEN); }
   lv_obj_t* about_done_button() const { return about_done_; }
-  lv_obj_t* about_label() const { return about_label_; }
+  // The Host link rows (a label and a value each), one per LinkView detail.
+  lv_obj_t* details_list() const { return details_; }
+  lv_obj_t* code_label() const { return code_label_; }
   lv_obj_t* fault_label() const { return fault_label_; }
 
  private:
@@ -55,6 +58,7 @@ class LinkScreen {
     bool accepted = false;
   };
   void MakeButton(const char* text, lv_align_t align, Target* target);
+  void ShowDetails();
   SystemScreen system_;
   firmware::domain::DisplaySettings settings_;
   std::unique_ptr<SettingsPanel> settings_panel_;
@@ -63,10 +67,12 @@ class LinkScreen {
   Target decline_target_;
   lv_obj_t* about_panel_ = nullptr;
   lv_obj_t* about_done_ = nullptr;
-  lv_obj_t* about_label_ = nullptr;
+  lv_obj_t* details_ = nullptr;
+  std::vector<firmware::domain::LinkDetail> latest_details_;
+  std::vector<firmware::domain::LinkDetail> shown_details_;
   lv_obj_t* fault_label_ = nullptr;
   lv_obj_t* prompt_panel_ = nullptr;
-  lv_obj_t* prompt_label_ = nullptr;
+  lv_obj_t* code_label_ = nullptr;
 };
 
 }  // namespace firmware::ui::system

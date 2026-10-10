@@ -7,11 +7,12 @@
 namespace firmware::domain {
 
 // Root storage: a dial of the used share of the filesystem containing "/",
-// with the physical device's read/write rates as the note ("R12M W4.5M"). Capacity and I/O are
+// with the physical device's read/write rates under it in two fixed slots
+// (`rates`: read first, write second). Capacity and I/O are
 // independent: each has its own availability, `--` plus wording when it is not
 // available, and its own retained-and-dimmed state.
 MetricCardView MakeStorageCard(const HostState& state, uint64_t /*now_ms*/) {
-  MetricCardView view{.title = "Storage", .value = "--", .dial = true};
+  MetricCardView view{.title = "Storage", .value = "--", .layout = CardLayout::kDial};
   const StorageMetricState& storage = state.storage;
   if (!storage.has_data) return view;
   const bool link_lost = state.LinkLost();
@@ -39,10 +40,12 @@ MetricCardView MakeStorageCard(const HostState& state, uint64_t /*now_ms*/) {
     // Retained rates are shown only beside a retained capacity, whose "Last"
     // covers the card; otherwise "Last R999G W999G" is too wide for the dial,
     // and bare rates beside a current capacity would pass as current.
-    view.note = !io_retained || (capacity_ok && capacity_retained)
-                    ? "R" + CompactRate(storage.read_bytes_per_s) + " W" +
-                          CompactRate(storage.write_bytes_per_s)
-                    : "I/O stale";
+    if (!io_retained || (capacity_ok && capacity_retained)) {
+      view.rates = RatePair{.first = CompactRate(storage.read_bytes_per_s),
+                            .second = CompactRate(storage.write_bytes_per_s)};
+    } else {
+      view.note = "I/O stale";
+    }
     view.dimmed = view.dimmed || io_retained;
   } else if (capacity_ok) {
     // "I/O Unsupported" is too wide for the dial: unsupported and absent both

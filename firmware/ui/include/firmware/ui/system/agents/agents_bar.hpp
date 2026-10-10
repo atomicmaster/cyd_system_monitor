@@ -11,15 +11,17 @@
 
 namespace firmware::ui::system {
 
-// The Overview's bottom bar: one badge per detected agent, each an animated
-// icon in the agent's accent and a label. The icon's motion is its meaning,
-// alongside the label's words:
-//   activity unknown ("Claude ?")  a slowly pulsing dot;
-//   busy                           a spinner orbiting the dot;
-//   idle                           a still, hollow ring.
-// A dimmed bar is a retained reading, so every icon stops (docs/ui-design.md:
-// animations decay to neutral when stale). A non-empty notice (a link fault)
-// replaces the agents, so the cause stays visible on the Overview.
+// The Overview's bottom bar: each agent's mascot in its own third of the bar,
+// in a fixed place, with three states:
+//   not running        a dim silhouette;
+//   running or idle    the mascot in its own colour, still;
+//   busy               animated (the crab dances, Codex's cursor blinks, the
+//                      Grok mark rocks).
+// A dimmed bar is a retained reading, labelled "Last", and every mascot stops
+// (docs/ui-design.md: animations decay to neutral when stale). When there is
+// no reading ("--" and its cause) no mascot is drawn, so it never reads as
+// nothing running. A non-empty notice (a link fault) replaces the agents, so
+// the cause stays visible on the Overview.
 class AgentsBar {
  public:
   AgentsBar(lv_obj_t* parent, int32_t width, int32_t height);
@@ -34,28 +36,26 @@ class AgentsBar {
   lv_obj_t* notice_label() const { return notice_label_; }
   bool dimmed() const { return dimmed_; }
   // Per wire slot (codex, claude, grok).
-  bool badge_visible(size_t slot) const;
-  lv_obj_t* badge_label(size_t slot) const { return badges_[slot].label; }
-  bool pulsing(size_t slot) const;
-  bool spinning(size_t slot) const;
+  lv_obj_t* mascot(size_t slot) const { return mascots_[slot].image; }
+  bool mascot_visible(size_t slot) const;
+  // Drawn in its own colour (running), not as a silhouette or hidden.
+  bool lit(size_t slot) const {
+    return mascots_[slot].state == State::kStill || mascots_[slot].state == State::kBusy;
+  }
+  bool animating(size_t slot) const;
 
  private:
-  struct Badge {
-    lv_obj_t* box = nullptr;
-    lv_obj_t* dot = nullptr;
-    lv_obj_t* spinner = nullptr;
-    lv_obj_t* label = nullptr;
-    bool shown = false;
-    firmware::domain::AgentActivity activity = firmware::domain::AgentActivity::kUnknown;
-    bool still = false;  // animations stopped (dimmed)
+  enum class State : uint8_t { kHidden, kSilhouette, kStill, kBusy };
+  struct Mascot {
+    lv_obj_t* image = nullptr;
+    State state = State::kHidden;
   };
-  void Show(Badge& badge, firmware::domain::AgentActivity activity, bool still);
+  void Set(size_t slot, State state);
 
   lv_obj_t* root_ = nullptr;
-  lv_obj_t* title_label_ = nullptr;
   lv_obj_t* message_label_ = nullptr;
   lv_obj_t* notice_label_ = nullptr;
-  std::array<Badge, cyd::protocol::kAgentSlots> badges_{};
+  std::array<Mascot, cyd::protocol::kAgentSlots> mascots_{};
   bool dimmed_ = false;
 };
 

@@ -84,6 +84,8 @@ class Preview {
     ui_.Update(status, cards, link, domain::MakeAgentsBar(feed_.state(), ms), coverage);
   }
 
+  firmware::ui::system::LinkScreen& ui() { return ui_; }
+
  private:
   ScriptedClock clock_;
   domain::HostFeed feed_;
@@ -114,8 +116,12 @@ int RunPreview(const std::string& dir) {
       lv_timer_handler();
     }
     const std::string path = dir + "/" + name + ".bmp";
+    lv_mem_monitor_t memory;
+    lv_mem_monitor(&memory);
     if (SaveScreenshot(path, 3)) {
-      std::printf("wrote %s\n", path.c_str());
+      std::printf("wrote %s (LVGL pool %u used, peak %u)\n", path.c_str(),
+                  static_cast<unsigned>(memory.total_size - memory.free_size),
+                  static_cast<unsigned>(memory.max_used));
     } else {
       std::fprintf(stderr, "preview: could not write %s\n", path.c_str());
       ++failures;
@@ -165,6 +171,44 @@ int RunPreview(const std::string& dir) {
     preview.Render(1000, Coverage(RadioState::kFault, RadioState::kGap, Radio::kWifi, 13),
                    "Time unavailable", "Incompatible", link);
     save("5-status-bar-worst-case");
+  }
+  {
+    Preview preview(screen);
+    preview.Push(2000, 1);
+    preview.Render(2000, Coverage(RadioState::kObserving, RadioState::kObserving, Radio::kWifi, 6),
+                   "10:42 PM");
+    preview.ui().settings_panel().Show(domain::DisplaySettings{});
+    save("6-clock-settings");
+  }
+  {
+    Preview preview(screen);
+    preview.Push(2000, 1);
+    domain::LinkView link;
+    link.details = {
+        {"Supported", "1.0"}, {"Host", "1.0"}, {"Negotiated", "1.0"}, {"Pairing", "Paired"}};
+    preview.Render(2000, Coverage(RadioState::kObserving, RadioState::kObserving, Radio::kWifi, 6),
+                   "10:42 PM", {}, link);
+    // A tap on the connection text opens it, as on the board.
+    lv_obj_send_event(preview.ui().system().connection_label(), LV_EVENT_CLICKED, nullptr);
+    save("7-host-link");
+  }
+  {
+    Preview preview(screen);
+    domain::LinkView link;
+    link.prompt_visible = true;
+    link.code = "317734";
+    preview.Render(1000, Coverage(RadioState::kNoData, RadioState::kNoData, {}, 0), {}, {}, link);
+    save("8-pairing-prompt");
+  }
+  {
+    // Nothing running: three silhouettes, no words.
+    Preview preview(screen);
+    preview.Push(2000, 1,
+                 {proto::AgentState::kNotRunning, proto::AgentState::kNotRunning,
+                  proto::AgentState::kNotRunning});
+    preview.Render(2000, Coverage(RadioState::kObserving, RadioState::kObserving, Radio::kWifi, 6),
+                   "10:42 PM");
+    save("9-agents-none");
   }
   return failures == 0 ? 0 : 1;
 }

@@ -43,6 +43,8 @@ SystemScreen::SystemScreen(lv_obj_t* parent) {
   lv_obj_set_flex_flow(bar_row, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(bar_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
+  // A hairline under the bar instead of a panel (the Quiet style).
+  theme::StyleRowRule(bar_row);
   lv_obj_remove_flag(bar_row, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(bar_row, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(
@@ -88,14 +90,19 @@ void SystemScreen::Update(const firmware::domain::CpuView& status,
                           std::span<const firmware::domain::MetricCardView> cards,
                           const firmware::domain::AgentsBarView& agents,
                           const std::string& coverage, const std::string& notice) {
-  lv_label_set_text(connection_label_, status.connection.c_str());
+  // Live Host data needs no word: a cyan USB glyph. Every other state is spelled out.
+  lv_label_set_text(connection_label_,
+                    status.connected ? LV_SYMBOL_USB : status.connection.c_str());
+  lv_obj_set_style_text_color(connection_label_,
+                              theme::Color(status.connected ? theme::kCyan : theme::kText), 0);
   lv_label_set_text(coverage_label_, coverage.c_str());
   lv_label_set_text(clock_label_, status.clock.c_str());
   while (cards_.size() < cards.size()) {
     const size_t index = cards_.size();
-    const bool dial = cards[index].dial;
+    const auto layout = cards[index].layout;
+    const bool dial = layout == firmware::domain::CardLayout::kDial;
     cards_.push_back(std::make_unique<MetricCard>(card_area_, dial ? kDialWidth : kPanelWidth,
-                                                  dial ? kDialHeight : kPanelHeight, dial,
+                                                  dial ? kDialHeight : kPanelHeight, layout,
                                                   theme::CardAccent(index)));
   }
   for (size_t i = 0; i < cards.size(); ++i) cards_[i]->Update(cards[i]);

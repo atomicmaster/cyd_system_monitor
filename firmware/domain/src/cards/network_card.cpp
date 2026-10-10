@@ -7,65 +7,64 @@
 namespace firmware::domain {
 namespace {
 
-// The WiFi half of the note. Only what the Host reported and only while it is
-// fresh: a stale, absent or denied context is "unknown" (never a guess), and
-// a 5/6 GHz association says the board cannot capture it. Observable is not a
-// promise of continuous capture, so the wording claims only the band/channel.
-// `compact` is used behind the "VPN " prefix, where the full wording would not
-// fit 148 px at 12 pt.
-std::string WifiNote(const NetworkMetricState& network, bool context_retained, bool compact) {
-  if (context_retained) return "WiFi context ?";
+// The WiFi link after its glyph: only what the Host reported and only while
+// it is fresh. A stale, absent or denied context is "band ?" (never a
+// guess), and a 5/6 GHz association says the board cannot see it ("unseen").
+// Observable is not a promise of continuous capture, so the wording claims
+// only the band/channel.
+std::string WifiText(const NetworkMetricState& network, bool context_retained) {
+  if (context_retained) return "band ?";
   switch (network.coverage) {
     case protocol::WifiCoverage::kObservable: {
-      const char* band = compact ? "2.4G" : "2.4GHz";
-      if (network.channel == 0) return std::string("WiFi ") + band;
-      char text[40];
-      std::snprintf(text, sizeof text, "WiFi ch%u %s", static_cast<unsigned>(network.channel),
-                    band);
+      if (network.channel == 0) return "2.4G";
+      char text[24];
+      std::snprintf(text, sizeof text, "ch%u 2.4G", static_cast<unsigned>(network.channel));
       return text;
     }
     case protocol::WifiCoverage::kOutsideSupported:
-      return compact ? "5/6GHz: no capture" : "WiFi 5/6GHz: no capture";
+      return "5/6G unseen";
     case protocol::WifiCoverage::kUnknown:
       break;
   }
-  return "WiFi context ?";
+  return "band ?";
 }
 
-std::string RouteNote(const NetworkMetricState& network, bool context_retained) {
-  std::string note;
+std::string LinkText(const NetworkMetricState& network, bool context_retained) {
+  std::string link;
   switch (network.route_kind) {
     case protocol::RouteKind::kWifi:
-      note = WifiNote(network, context_retained, network.via_tunnel);
+      link = WifiText(network, context_retained);
       break;
     case protocol::RouteKind::kEthernet:
-      note = "Ethernet";
+      link = "Ethernet";
       break;
     case protocol::RouteKind::kOther:
-      note = "Other link";
+      link = "Other link";
       break;
     case protocol::RouteKind::kNone:
       return "Offline";
     case protocol::RouteKind::kUnknown:
-      note = "Link unknown";
+      link = "Link unknown";
       break;
   }
   // The tunnel's own rate, never summed with the link under it.
-  return network.via_tunnel ? "VPN " + note : note;
+  return network.via_tunnel ? "VPN " + link : link;
 }
 
 }  // namespace
 
-// Network: the primary-route interface's download and upload rates as the
-// value ("D1.2M U340K"), the link and Host WiFi coverage as the note. A tunnel
-// primary route reports the tunnel's own rate labelled "VPN" and is never
-// summed with the interface beneath it. An unavailable rate is `--` with the
-// reason (a first sample or a route change is unavailable, never 0); offline
-// says so ("Last Offline", dimmed, once stale). The traffic and WiFi-context halves have their own
-// freshness; a stale context reads "WiFi context ?" while live rates continue. No bar: a rate is
-// not a proportion.
+// Network: the link on top (a WiFi glyph and the Host WiFi coverage, or the
+// link kind), then the primary-route interface's download and upload rates as
+// two rows with log-scale meters. A tunnel primary route reports the tunnel's
+// own rate labelled "VPN" and is never summed with the interface beneath it.
+// An unavailable rate is `--` with the reason (a first sample or a route
+// change is unavailable, never 0); offline says so ("Last Offline", dimmed,
+// once stale). Retained rates keep their text, drop their meters, and the link
+// line says "Last". The traffic and WiFi-context halves have their own
+// freshness.
 MetricCardView MakeNetworkCard(const HostState& state, uint64_t /*now_ms*/) {
-  MetricCardView view{.title = "Network", .value = "--", .show_bar = false};
+  MetricCardView view{
+      .title = "Network", .value = "--", .show_bar = false, .layout = CardLayout::kRates};
   const NetworkMetricState& network = state.network;
   if (!network.has_data) return view;
   const bool link_lost = state.LinkLost();
@@ -84,9 +83,15 @@ MetricCardView MakeNetworkCard(const HostState& state, uint64_t /*now_ms*/) {
     view.note = AvailabilityNote(network.traffic_availability);
     return view;
   }
-  view.value = std::string(traffic_retained ? "Last " : "") + "D" +
-               CompactRate(network.rx_bytes_per_s) + " U" + CompactRate(network.tx_bytes_per_s);
-  view.note = RouteNote(network, context_retained);
+  view.value = "";
+  view.rates = RatePair{
+      .first = CompactRate(network.rx_bytes_per_s),
+      .second = CompactRate(network.tx_bytes_per_s),
+      .first_per_mille = traffic_retained ? uint16_t{0} : LogRatePerMille(network.rx_bytes_per_s),
+      .second_per_mille = traffic_retained ? uint16_t{0} : LogRatePerMille(network.tx_bytes_per_s)};
+  // A retained line leads with "Last" and gets the glyph's width back.
+  view.wifi = network.route_kind == protocol::RouteKind::kWifi && !traffic_retained;
+  view.note = std::string(traffic_retained ? "Last " : "") + LinkText(network, context_retained);
   view.has_value = true;
   view.dimmed = traffic_retained;
   return view;

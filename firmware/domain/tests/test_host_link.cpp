@@ -115,6 +115,15 @@ void Pairing(HostLink& link, const Identity& s, const Identity& h) {
   link.Push(Pair(s, h, Id(0), 123456));
 }
 
+// The About rows as "Key=value" pairs, space separated.
+std::string Details(const LinkView& view) {
+  std::string text;
+  for (const auto& row : view.details) {
+    text += (text.empty() ? "" : " ") + row.label + "=" + row.value;
+  }
+  return text;
+}
+
 }  // namespace
 
 int main() {
@@ -304,22 +313,23 @@ int main() {
     Store store;
     HostLink link(clock, store, 1);
     auto view = MakeLinkView(link, link.paired());
-    CHECK(view.about == "Supported: 1.0\nHost: none\nNegotiated: none\nNot paired");
+    CHECK(Details(view) == "Supported=1.0 Host=none Negotiated=none Pairing=Not paired");
     CHECK(!view.prompt_visible && view.fault.empty());
     Pairing(link, S1, H);
     view = MakeLinkView(link, link.paired());
-    CHECK(view.prompt_visible && view.prompt == "Pair with this Mac?\nCode 123456");
-    CHECK(view.about.find("Host: 1.0") != std::string::npos);
+    CHECK(view.prompt_visible && view.code == "123456");
+    CHECK(Details(view).find("Host=1.0") != std::string::npos);
     link.ConfirmPairing(true);
     view = MakeLinkView(link, link.paired());
-    CHECK(!view.prompt_visible && view.about.find("Paired") != std::string::npos);
+    CHECK(!view.prompt_visible && view.code.empty() &&
+          Details(view).find("Pairing=Paired") != std::string::npos);
     Clock c2;
     Store s2;
     HostLink bad(c2, s2, 1);
     bad.Push(Hello(2, 0));
     view = MakeLinkView(bad, false);
     CHECK(view.fault == "Incompatible protocol: Host data rejected");
-    CHECK(view.about.find("Host: 2.0") != std::string::npos);
+    CHECK(Details(view).find("Host=2.0") != std::string::npos);
   }
 
   {  // The Host's offset arrives with its UTC (Hello and snapshots) and shows local time.

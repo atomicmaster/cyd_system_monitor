@@ -12,6 +12,18 @@
 namespace simulator::scenarios {
 namespace {
 
+// Whether any label under `object` contains `text`.
+bool ContainsText(lv_obj_t* object, const char* text) {
+  if (lv_obj_check_type(object, &lv_label_class) &&
+      std::strstr(lv_label_get_text(object), text) != nullptr) {
+    return true;
+  }
+  for (uint32_t i = 0; i < lv_obj_get_child_count(object); ++i) {
+    if (ContainsText(lv_obj_get_child(object, static_cast<int32_t>(i)), text)) return true;
+  }
+  return false;
+}
+
 namespace domain = firmware::domain;
 namespace ui = firmware::ui::system;
 
@@ -107,12 +119,14 @@ int RunSettings() {
   // Tapping the connection text opens the Host link panel instead: versions,
   // pairing and any fault, which no longer sit over the Overview's cards.
   domain::LinkView details;
-  details.about = "Supported: 1.0\nHost: 1.0\nNegotiated: 1.0\nPaired";
+  details.details = {
+      {"Supported", "1.0"}, {"Host", "1.0"}, {"Negotiated", "1.0"}, {"Pairing", "Paired"}};
   link.Update(domain::CpuView{.connection = "Connected", .clock = "17:13"}, {}, details);
   result.Expect(!link.about_visible(), "the Host link panel is closed until tapped");
   Click(link.system().connection_label());
   result.Expect(link.about_visible() && !link.settings_panel().visible() &&
-                    std::strstr(lv_label_get_text(link.about_label()), "Negotiated") != nullptr,
+                    ContainsText(link.details_list(), "Negotiated") &&
+                    ContainsText(link.details_list(), "Paired"),
                 "tapping the connection text opens the Host link panel, not settings");
   Click(link.about_done_button());
   result.Expect(!link.about_visible(), "Done closes the Host link panel");
@@ -120,8 +134,11 @@ int RunSettings() {
   // A pending pairing prompt has priority over settings.
   domain::LinkView prompt;
   prompt.prompt_visible = true;
-  prompt.prompt = "Pair with this Mac?\nCode 123456";
+  prompt.code = "123456";
   link.Update(domain::CpuView{}, {}, prompt);
+  result.Expect(!lv_obj_has_flag(link.prompt_panel(), LV_OBJ_FLAG_HIDDEN) &&
+                    std::strcmp(lv_label_get_text(link.code_label()), "123456") == 0,
+                "a pending pairing shows its code");
   Click(link.system().status_bar());
   result.Expect(!link.settings_panel().visible(), "settings do not open over a pairing prompt");
   domain::LinkView none;

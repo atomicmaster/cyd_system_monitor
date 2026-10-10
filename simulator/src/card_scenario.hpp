@@ -89,7 +89,21 @@ class CardScenario {
       transcript_ << " | show_bar=" << (view.show_bar ? 1 : 0);
     }
     transcript_ << " | has_value=" << (view.has_value ? 1 : 0)
-                << " | dimmed=" << (view.dimmed ? 1 : 0) << "\n";
+                << " | dimmed=" << (view.dimmed ? 1 : 0);
+    // The structured parts, only where a card uses them.
+    if (view.rates) {
+      transcript_ << " | rates=" << view.rates->first << "@" << view.rates->first_per_mille << " "
+                  << view.rates->second << "@" << view.rates->second_per_mille;
+    }
+    if (!view.detail.empty()) transcript_ << " | detail=" << view.detail;
+    if (view.charging) transcript_ << " | charging";
+    if (!view.meter_caption.empty() || !view.meter_value.empty()) {
+      transcript_ << " | meter=" << view.meter_caption;
+      if (!view.meter_value.empty()) transcript_ << " " << view.meter_value;
+      if (view.show_meter) transcript_ << " @" << view.meter_per_mille;
+    }
+    if (view.wifi) transcript_ << " | wifi";
+    transcript_ << "\n";
     return view;
   }
 

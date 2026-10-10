@@ -57,6 +57,7 @@ std::string ClockText(const HostState& state, uint64_t now_ms, const DisplaySett
 CpuView MakeCpuView(const HostState& state, uint64_t now_ms, const DisplaySettings& settings) {
   CpuView view;
   view.connection = ConnectionText(state.connection);
+  view.connected = state.connection == ConnectionState::kLive;
   view.clock = ClockText(state, now_ms, settings);
   const bool measured =
       state.has_seen_host && state.cpu.availability == protocol::Availability::kAvailable;

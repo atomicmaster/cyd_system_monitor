@@ -78,7 +78,7 @@ int RunStorageCards() {
   // Everything stale: the frames stop.
   at(165'900, "last frame 2.9 s ago: still live");
   view = at(166'100, "last frame 3.1 s ago: I/O stale, capacity fresh, the link stale too");
-  result.Expect(view.dimmed && view.value.starts_with("Last ") && view.note.starts_with("R"),
+  result.Expect(view.dimmed && view.value.starts_with("Last ") && view.rates.has_value(),
                 "stale retains both readings and dims; the value's Last covers the rates too");
   at(179'000, "16 s without any frame: retained and dimmed");
 

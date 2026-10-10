@@ -14,6 +14,7 @@ set(_fu_sources
     "src/theme.cpp"
     "src/system/card/metric_card.cpp"
     "src/system/agents/agents_bar.cpp"
+    "src/system/agents/mascots.cpp"
     "src/system/settings/settings_panel.cpp"
     "src/system/system_screen.cpp"
     "src/system/link/link_screen.cpp")

@@ -21,5 +21,7 @@ show.
 
 `preview` renders the Overview through the same `LinkScreen` the board uses,
 in a few representative states (first start, live, stale, agents busy /
-unknown / idle, the status bar's worst case), and prints the LVGL pool use.
+unknown / idle and none running, the status bar's worst case, the clock
+settings and Host link sheets, the pairing prompt), and prints the LVGL pool
+use for each.
 Convert with `sips -s format png <file>.bmp --out <file>.png` on macOS.

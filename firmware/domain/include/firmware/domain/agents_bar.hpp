@@ -13,18 +13,19 @@ namespace firmware::domain {
 // running agent is kUnknown; busy and idle need an activity adapter.
 enum class AgentActivity : uint8_t { kUnknown, kBusy, kIdle };
 
-// One detected agent in the Overview's bottom bar.
+// One running agent in the Overview's bottom bar, drawn as its mascot.
 struct AgentBadge {
-  uint8_t slot = 0;   // wire slot: 0 codex, 1 claude, 2 grok (fixed accent per slot)
-  std::string label;  // "Claude ?", "Claude busy", "Claude idle"
+  uint8_t slot = 0;  // wire slot: 0 codex, 1 claude, 2 grok (fixed mascot per slot)
   AgentActivity activity = AgentActivity::kUnknown;
 };
 
-// The Agents bar: one badge per detected agent, in slot order. `message`
-// comes first and carries everything that is not a badge: "--" before any
-// data, "-- Read error" when processes cannot be listed (never "None
-// running"), "None running", and "Last" when a retained reading is shown.
-// A dimmed bar also stops its animations: a retained reading is not activity.
+// The Agents bar: every agent's mascot in its fixed slot, lit when it is in
+// `badges` (running) and a dim silhouette otherwise. `message` carries the
+// only words: "--" before any data and "-- Read error" (or another cause) when
+// processes cannot be listed, when no mascot is drawn so it never reads as
+// "nothing running"; "Last" when a retained reading is shown; empty
+// otherwise. A dimmed bar also stops its animations: a retained reading is not
+// activity.
 struct AgentsBarView {
   std::string message;
   std::vector<AgentBadge> badges;

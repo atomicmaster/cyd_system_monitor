@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "firmware/domain/card_registry.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <iterator>
 
@@ -19,6 +20,12 @@ constexpr CardDescriptor kCards[] = {
 }  // namespace
 
 std::span<const CardDescriptor> Cards() { return kCards; }
+
+uint16_t LogRatePerMille(uint64_t bytes_per_s) {
+  if (bytes_per_s < 100) return 0;
+  const double level = (std::log10(static_cast<double>(bytes_per_s)) - 2.0) / 7.0;
+  return static_cast<uint16_t>(std::fmin(1.0, level) * 1000.0);
+}
 
 std::string CompactRate(uint64_t bytes_per_s) {
   constexpr double kClamp = 999.4e9;

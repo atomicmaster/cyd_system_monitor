@@ -1,45 +1,45 @@
 no Host data yet
   Network | -- |  | show_bar=0 | has_value=0 | dimmed=0
 WiFi live with rates, channel 6
-  Network | D1.2M U340K | WiFi ch6 2.4GHz | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
 Ethernet primary route
-  Network | D45M U2.5M | Ethernet | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | Ethernet | show_bar=0 | has_value=1 | dimmed=0 | rates=45M@807 2.5M@628
 tunnel primary route over WiFi
-  Network | D900K U100K | VPN WiFi ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | VPN ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=900K@564 100K@428 | wifi
 route changed: rate re-baselining
   Network | -- | Unavailable | show_bar=0 | has_value=0 | dimmed=0
 route settled: rate back
-  Network | D800B U0B | Ethernet | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | Ethernet | show_bar=0 | has_value=1 | dimmed=0 | rates=800B@129 0B@0
 WiFi on channel 149 (5 GHz)
-  Network | D1.2M U340K | WiFi 5/6GHz: no capture | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | 5/6G unseen | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
 WiFi 5/6 GHz, channel unknown
-  Network | D1.2M U340K | WiFi 5/6GHz: no capture | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | 5/6G unseen | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
 context unknown (authorized but unavailable)
-  Network | D50K U8.0K | WiFi context ? | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | band ? | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | wifi
 permission denied, channel still known
-  Network | D50K U8.0K | WiFi ch11 2.4GHz | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | ch11 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | wifi
 permission denied, no channel
-  Network | D50K U8.0K | WiFi context ? | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | band ? | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | wifi
 provider absent, station identity present
-  Network | D2.0K U1.0K | WiFi context ? | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | band ? | show_bar=0 | has_value=1 | dimmed=0 | rates=2.0K@185 1.0K@142 | wifi
 offline: no primary route
   Network | -- | Offline | show_bar=0 | has_value=0 | dimmed=0
 traffic read error
   Network | -- | Read error | show_bar=0 | has_value=0 | dimmed=0
 traffic 2.999 s old, context 14.999 s old: both fresh
-  Network | D1.2M U340K | WiFi ch6 2.4GHz | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
 traffic 3 s old while the WiFi context is live
-  Network | Last D1.2M U340K | WiFi ch6 2.4GHz | show_bar=0 | has_value=1 | dimmed=1
+  Network |  | Last ch6 2.4G | show_bar=0 | has_value=1 | dimmed=1 | rates=1.2M@0 340K@0
 traffic live while the WiFi context is 15 s old
-  Network | D1.2M U340K | WiFi context ? | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | band ? | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
 old samples re-sent in a new snapshot: both stale
-  Network | Last D1.2M U340K | WiFi context ? | show_bar=0 | has_value=1 | dimmed=1
+  Network |  | Last band ? | show_bar=0 | has_value=1 | dimmed=1 | rates=1.2M@0 340K@0
 fresh samples again
-  Network | D1.2M U340K | WiFi ch6 2.4GHz | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
 last frame 2.9 s ago: still live
-  Network | D1.2M U340K | WiFi ch6 2.4GHz | show_bar=0 | has_value=1 | dimmed=0
+  Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
 35 s without a frame: link lost
-  Network | Last D1.2M U340K | WiFi context ? | show_bar=0 | has_value=1 | dimmed=1
+  Network |  | Last band ? | show_bar=0 | has_value=1 | dimmed=1 | rates=1.2M@0 340K@0
 offline again, fresh
   Network | -- | Offline | show_bar=0 | has_value=0 | dimmed=0
 offline sample 3 s old

@@ -39,27 +39,43 @@ int TextWidth(lv_obj_t* label, const std::string& text) {
   return static_cast<int>(size.x);
 }
 
-// Whether a card's text fits its widget without clipping. A panel's value and
-// note are single clipped lines. A dial's value may wrap at spaces ("Last" /
-// "62%") but no word may be wider than the ring's opening, and the wrapped
-// text must fit the ring's inner height.
-bool CardFits(const MetricCard& card, std::string* why) {
-  lv_obj_t* value = card.value_label();
-  lv_obj_t* note = card.note_label();
-  lv_obj_update_layout(value);
-  const std::string value_text = lv_label_get_text(value);
-  const std::string note_text = lv_label_get_text(note);
-  if (TextWidth(note, note_text) > lv_obj_get_content_width(note)) {
-    *why = "note \"" + note_text + "\"";
-    return false;
-  }
-  if (!card.dial()) {
-    if (TextWidth(value, value_text) > lv_obj_get_content_width(value)) {
-      *why = "value \"" + value_text + "\"";
-      return false;
+// Every visible label under `object` lies inside the card's content box and
+// its text fits its own width (each is a single clipped line), except
+// `wrapped`, a dial's value, which is checked separately.
+bool LabelsFit(lv_obj_t* object, const lv_area_t& box, lv_obj_t* wrapped, std::string* why) {
+  for (uint32_t i = 0; i < lv_obj_get_child_count(object); ++i) {
+    lv_obj_t* child = lv_obj_get_child(object, static_cast<int32_t>(i));
+    if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
+    if (lv_obj_check_type(child, &lv_label_class) && child != wrapped) {
+      const std::string text = lv_label_get_text(child);
+      lv_area_t area;
+      lv_obj_get_coords(child, &area);
+      if (area.x1 < box.x1 || area.x2 > box.x2 || area.y1 < box.y1 || area.y2 > box.y2) {
+        *why = "outside the card \"" + text + "\"";
+        return false;
+      }
+      if (TextWidth(child, text) > lv_obj_get_content_width(child)) {
+        *why = "clipped \"" + text + "\"";
+        return false;
+      }
     }
-    return true;
+    if (!LabelsFit(child, box, wrapped, why)) return false;
   }
+  return true;
+}
+
+// Whether a card's text fits its widget without clipping. Every line is a
+// single clipped label. A dial's value may wrap at spaces ("Last" / "62%") but
+// no word may be wider than the ring's opening, and the wrapped text must fit
+// the ring's inner height.
+bool CardFits(const MetricCard& card, std::string* why) {
+  lv_obj_update_layout(card.root());
+  lv_area_t box;
+  lv_obj_get_content_coords(card.root(), &box);
+  lv_obj_t* value = card.dial() ? card.value_label() : nullptr;
+  if (!LabelsFit(card.root(), box, value, why)) return false;
+  if (value == nullptr) return true;
+  const std::string value_text = lv_label_get_text(value);
   size_t start = 0;
   while (start <= value_text.size()) {
     const size_t end = std::min(value_text.find(' ', start), value_text.size());
@@ -226,7 +242,8 @@ int RunSystemScreen() {
                     Has(ui.card(1).note_label(), "8.0 / 16.0 GB") && !ui.card(1).dimmed() &&
                     lv_arc_get_value(ui.card(1).arc()) == 500,
                 "RAM dial shows the occupied share, used / total under it, and a live arc");
-  result.Expect(Has(ui.connection_label(), "Connected"), "status bar shows Connected");
+  result.Expect(Has(ui.connection_label(), LV_SYMBOL_USB),
+                "status bar shows live Host data as the USB glyph");
 
   overview.Push(3000, {.ram = proto::RamSnapshot{proto::Availability::kError, 0, 0, 0,
                                                  proto::Freshness::kFresh}});
@@ -524,7 +541,7 @@ int RunSystemScreen() {
 
   // The Agents bar: every combination of the three agents' wire states, fresh
   // and Last, plus each unavailable wording, fits the bar; and each state has
-  // its own icon motion, which stops when the reading is retained.
+  // its own look, whose animation stops when the reading is retained.
   {
     const firmware::ui::system::AgentsBar& bar = ui.agents_bar();
     int variants = 0;
@@ -535,8 +552,7 @@ int RunSystemScreen() {
       if (!ChildrenInside(bar.root(), &why)) {
         std::string shown = lv_label_get_text(bar.message_label());
         for (size_t slot = 0; slot < proto::kAgentSlots; ++slot) {
-          if (bar.badge_visible(slot))
-            shown += std::string(" [") + lv_label_get_text(bar.badge_label(slot)) + "]";
+          if (bar.lit(slot)) shown += " [slot " + std::to_string(slot) + "]";
         }
         std::printf("agents bar does not fit: %s (%s)\n", why.c_str(), shown.c_str());
         fits = false;
@@ -564,9 +580,10 @@ int RunSystemScreen() {
       overview.Push(2'000'000, {.agents = g});
       overview.Render(2'000'000);
       measure();
-      result.Expect(Has(bar.message_label(), "--") && !bar.badge_visible(0) &&
-                        !bar.badge_visible(1) && !bar.badge_visible(2),
-                    "an unavailable process listing is -- with its cause, never None running");
+      result.Expect(Has(bar.message_label(), "--") && !bar.mascot_visible(0) &&
+                        !bar.mascot_visible(1) && !bar.mascot_visible(2),
+                    "an unavailable process listing is -- with its cause and no mascots, never "
+                    "silhouettes that read as nothing running");
     }
     result.Expect(variants == 132 && fits, "every Agents bar variant fits (fresh and Last)");
 
@@ -575,28 +592,27 @@ int RunSystemScreen() {
     mixed.state = {proto::AgentState::kBusy, proto::AgentState::kRunning, proto::AgentState::kIdle};
     overview.Push(2'100'000, {.agents = mixed});
     overview.Render(2'100'000);
-    result.Expect(bar.spinning(0) && !bar.pulsing(0) && Has(bar.badge_label(0), "Codex busy"),
-                  "a busy agent spins");
-    result.Expect(bar.pulsing(1) && !bar.spinning(1) && Has(bar.badge_label(1), "Claude ?"),
-                  "an agent of unknown activity pulses and says ?, never busy or idle");
-    result.Expect(!bar.pulsing(2) && !bar.spinning(2) && Has(bar.badge_label(2), "Grok idle"),
-                  "an idle agent is still");
+    result.Expect(bar.lit(0) && bar.animating(0), "a busy agent's mascot is lit and animated");
+    result.Expect(bar.lit(1) && !bar.animating(1),
+                  "an agent of unknown activity is lit and still, never shown busy");
+    result.Expect(bar.lit(2) && !bar.animating(2), "an idle agent is lit and still");
     overview.Render(2'104'000);  // 4 s without a frame: link stale
-    result.Expect(bar.dimmed() && Has(bar.message_label(), "Last") && bar.badge_visible(1) &&
-                      !bar.pulsing(1) && !bar.spinning(0),
-                  "a retained reading keeps its badges, labelled Last, with every icon still");
+    result.Expect(bar.dimmed() && Has(bar.message_label(), "Last") && bar.lit(0) && bar.lit(1) &&
+                      !bar.animating(0),
+                  "a retained reading keeps its mascots lit, labelled Last, every one still");
     proto::AgentsSnapshot none;
     none.availability = proto::Availability::kAvailable;
     overview.Push(2'110'000, {.agents = none});
     overview.Render(2'110'000);
-    result.Expect(Has(bar.message_label(), "None running") && !bar.badge_visible(0) &&
-                      !bar.badge_visible(1) && !bar.badge_visible(2) && !bar.dimmed(),
-                  "with nothing running the bar says so");
+    result.Expect(lv_obj_has_flag(bar.message_label(), LV_OBJ_FLAG_HIDDEN) &&
+                      bar.mascot_visible(0) && bar.mascot_visible(1) && bar.mascot_visible(2) &&
+                      !bar.lit(0) && !bar.lit(1) && !bar.lit(2) && !bar.dimmed(),
+                  "with nothing running every mascot is a dim silhouette, with no words");
     overview.Render(2'110'000, {}, "Incompatible protocol: Host data rejected");
     std::string why;
     result.Expect(!lv_obj_has_flag(bar.notice_label(), LV_OBJ_FLAG_HIDDEN) &&
                       lv_obj_has_flag(bar.message_label(), LV_OBJ_FLAG_HIDDEN) &&
-                      ChildrenInside(bar.root(), &why),
+                      !bar.mascot_visible(0) && ChildrenInside(bar.root(), &why),
                   "a link fault takes the Agents bar's place and fits it");
   }
   return result.Finish("simulator system-screen");

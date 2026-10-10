@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "firmware/ui/system/agents/agents_bar.hpp"
 
+#include <cstdint>
+
+#include "firmware/ui/system/agents/mascots.hpp"
 #include "firmware/ui/theme.hpp"
 
 namespace firmware::ui::system {
@@ -8,31 +11,40 @@ namespace {
 
 using firmware::domain::AgentActivity;
 
-constexpr int32_t kIconSize = 14;
-constexpr int32_t kDotSize = 7;
-constexpr uint32_t kPulseMs = 900;
-constexpr uint32_t kSpinMs = 1000;
+constexpr int32_t kContentWidth = 308;  // the 312 px Overview row less 2 px padding each side
+constexpr uint32_t kBeatMs = 300;       // half a dance step / cursor blink
+constexpr uint32_t kRockMs = 420;       // the Grok mark's swing to one side
+constexpr int32_t kRockTenthsOfDegree = 150;
 constexpr uint32_t kDimAnimationMs = 300;
 
 void SetOpacity(void* object, int32_t value) {
   lv_obj_set_style_opa(static_cast<lv_obj_t*>(object), static_cast<lv_opa_t>(value), 0);
 }
 
-void StartPulse(lv_obj_t* dot) {
-  lv_anim_t animation;
-  lv_anim_init(&animation);
-  lv_anim_set_var(&animation, dot);
-  lv_anim_set_exec_cb(&animation, SetOpacity);
-  lv_anim_set_values(&animation, LV_OPA_30, LV_OPA_COVER);
-  lv_anim_set_duration(&animation, kPulseMs);
-  lv_anim_set_playback_duration(&animation, kPulseMs);
-  lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
-  lv_anim_start(&animation);
+// Two-frame animation: the first half of each beat shows the mascot, the
+// second its busy frame. The slot is the image's user data.
+void SetFrame(void* object, int32_t value) {
+  auto* image = static_cast<lv_obj_t*>(object);
+  const auto slot = static_cast<size_t>(reinterpret_cast<uintptr_t>(lv_obj_get_user_data(image)));
+  const void* frame = value < 50 ? &mascots::Image(slot) : &mascots::BusyFrame(slot);
+  if (lv_image_get_src(image) != frame) lv_image_set_src(image, frame);
 }
 
-void StopPulse(lv_obj_t* dot) {
-  lv_anim_delete(dot, SetOpacity);
-  lv_obj_set_style_opa(dot, LV_OPA_COVER, 0);
+void SetRock(void* object, int32_t value) {
+  lv_image_set_rotation(static_cast<lv_obj_t*>(object), value);
+}
+
+void Loop(lv_obj_t* object, lv_anim_exec_xcb_t exec, int32_t from, int32_t to, uint32_t ms) {
+  lv_anim_t animation;
+  lv_anim_init(&animation);
+  lv_anim_set_var(&animation, object);
+  lv_anim_set_exec_cb(&animation, exec);
+  lv_anim_set_values(&animation, from, to);
+  lv_anim_set_duration(&animation, ms);
+  lv_anim_set_playback_duration(&animation, ms);
+  lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(&animation, lv_anim_path_ease_in_out);
+  lv_anim_start(&animation);
 }
 
 void SetHidden(lv_obj_t* object, bool hidden) {
@@ -46,61 +58,35 @@ void SetHidden(lv_obj_t* object, bool hidden) {
 }  // namespace
 
 AgentsBar::AgentsBar(lv_obj_t* parent, int32_t width, int32_t height) {
+  // No panel: the mascots sit straight on the screen (the Quiet style).
   root_ = lv_obj_create(parent);
+  lv_obj_remove_style_all(root_);
+  lv_obj_remove_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_size(root_, width, height);
-  theme::StylePanel(root_);
-  lv_obj_set_style_pad_hor(root_, 6, 0);
-  lv_obj_set_style_pad_ver(root_, 0, 0);
-  lv_obj_set_flex_flow(root_, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(root_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(root_, 5, 0);
+  lv_obj_set_style_pad_hor(root_, 2, 0);
+  lv_obj_set_style_text_color(root_, theme::Color(theme::kText), 0);
 
-  title_label_ = lv_label_create(root_);
-  theme::StyleCaption(title_label_);
-  lv_label_set_text(title_label_, "Agents");
-  message_label_ = lv_label_create(root_);
-  lv_obj_set_style_text_font(message_label_, &lv_font_montserrat_12, 0);
-
-  for (size_t slot = 0; slot < badges_.size(); ++slot) {
-    Badge& badge = badges_[slot];
-    const lv_color_t accent = theme::AgentAccent(slot);
-    badge.box = lv_obj_create(root_);
-    lv_obj_remove_style_all(badge.box);
-    lv_obj_set_size(badge.box, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(badge.box, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(badge.box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(badge.box, 3, 0);
-
-    lv_obj_t* icon = lv_obj_create(badge.box);
-    lv_obj_remove_style_all(icon);
-    lv_obj_set_size(icon, kIconSize, kIconSize);
-    badge.dot = lv_obj_create(icon);
-    lv_obj_remove_style_all(badge.dot);
-    lv_obj_set_size(badge.dot, kDotSize, kDotSize);
-    lv_obj_center(badge.dot);
-    lv_obj_set_style_radius(badge.dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(badge.dot, accent, 0);
-    lv_obj_set_style_border_color(badge.dot, accent, 0);
-    badge.spinner = lv_spinner_create(icon);
-    lv_spinner_set_anim_params(badge.spinner, kSpinMs, 90);
-    lv_obj_set_size(badge.spinner, kIconSize, kIconSize);
-    lv_obj_center(badge.spinner);
-    lv_obj_set_style_arc_width(badge.spinner, 2, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(badge.spinner, 2, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_opa(badge.spinner, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(badge.spinner, accent, LV_PART_INDICATOR);
-    lv_obj_add_flag(badge.spinner, LV_OBJ_FLAG_HIDDEN);
-
-    badge.label = lv_label_create(badge.box);
-    lv_obj_set_style_text_font(badge.label, &lv_font_montserrat_12, 0);
-    lv_obj_add_flag(badge.box, LV_OBJ_FLAG_HIDDEN);
+  for (size_t slot = 0; slot < mascots_.size(); ++slot) {
+    lv_obj_t* image = lv_image_create(root_);
+    lv_image_set_src(image, &mascots::Image(slot));
+    lv_obj_set_user_data(image, reinterpret_cast<void*>(static_cast<uintptr_t>(slot)));
+    lv_obj_set_style_image_recolor_opa(image, LV_OPA_COVER, 0);
+    // Each mascot centred in its own third of the bar, so none moves when
+    // another starts or stops.
+    const int32_t centre = static_cast<int32_t>(2 * slot + 1) * kContentWidth / 6;
+    lv_obj_align(image, LV_ALIGN_LEFT_MID,
+                 centre - static_cast<int32_t>(mascots::Image(slot).header.w) / 2, 0);
+    lv_obj_add_flag(image, LV_OBJ_FLAG_HIDDEN);
+    mascots_[slot].image = image;
   }
 
+  message_label_ = lv_label_create(root_);
+  theme::StyleCaption(message_label_);
   notice_label_ = lv_label_create(root_);
   lv_obj_set_style_text_font(notice_label_, &lv_font_montserrat_12, 0);
-  lv_obj_set_flex_grow(notice_label_, 1);
+  lv_obj_set_width(notice_label_, LV_PCT(100));
   lv_label_set_long_mode(notice_label_, LV_LABEL_LONG_DOT);
+  lv_obj_align(notice_label_, LV_ALIGN_LEFT_MID, 0, 0);
   lv_obj_add_flag(notice_label_, LV_OBJ_FLAG_HIDDEN);
   Update(firmware::domain::AgentsBarView{.message = "--"});
 }
@@ -108,55 +94,58 @@ AgentsBar::AgentsBar(lv_obj_t* parent, int32_t width, int32_t height) {
 AgentsBar::~AgentsBar() {
   if (root_ == nullptr) return;
   lv_anim_delete(root_, SetOpacity);
-  for (Badge& badge : badges_) lv_anim_delete(badge.dot, SetOpacity);
+  for (Mascot& mascot : mascots_) {
+    lv_anim_delete(mascot.image, SetFrame);
+    lv_anim_delete(mascot.image, SetRock);
+  }
   lv_obj_delete(root_);
 }
 
-void AgentsBar::Show(Badge& badge, AgentActivity activity, bool still) {
-  if (badge.shown && badge.activity == activity && badge.still == still) return;
-  badge.shown = true;
-  badge.activity = activity;
-  badge.still = still;
-  lv_obj_remove_flag(badge.box, LV_OBJ_FLAG_HIDDEN);
-  const bool idle = activity == AgentActivity::kIdle;
-  // Idle is a hollow ring; unknown and busy are a filled dot.
-  lv_obj_set_style_bg_opa(badge.dot, idle ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(badge.dot, idle ? 2 : 0, 0);
-  SetHidden(badge.spinner, still || activity != AgentActivity::kBusy);
-  if (!still && activity == AgentActivity::kUnknown) {
-    StartPulse(badge.dot);
+void AgentsBar::Set(size_t slot, State state) {
+  Mascot& mascot = mascots_[slot];
+  if (mascot.state == state) return;
+  mascot.state = state;
+  lv_obj_t* image = mascot.image;
+  lv_anim_delete(image, SetFrame);
+  lv_anim_delete(image, SetRock);
+  lv_image_set_src(image, &mascots::Image(slot));
+  lv_image_set_rotation(image, 0);
+  SetHidden(image, state == State::kHidden);
+  lv_obj_set_style_image_recolor(
+      image, theme::Color(state == State::kSilhouette ? theme::kTrack : mascots::Color(slot)), 0);
+  if (state != State::kBusy) return;
+  if (slot == 2) {
+    Loop(image, SetRock, -kRockTenthsOfDegree, kRockTenthsOfDegree, kRockMs);
   } else {
-    StopPulse(badge.dot);
+    Loop(image, SetFrame, 0, 100, kBeatMs);
   }
 }
 
 void AgentsBar::Update(const firmware::domain::AgentsBarView& view, const std::string& notice) {
   const bool noticing = !notice.empty();
+  // "--" and its cause: no reading, so no mascot at all.
+  const bool reading = !noticing && view.message.rfind("--", 0) != 0;
   SetHidden(notice_label_, !noticing);
-  // The badges name themselves; the title is for the message alone ("Agents
-  // None running"), and leaves room for "Last" and three badges.
-  SetHidden(title_label_, noticing || !view.badges.empty());
   lv_label_set_text(notice_label_, notice.c_str());
   lv_label_set_text(message_label_, view.message.c_str());
   SetHidden(message_label_, noticing || view.message.empty());
+  // The cause reads from the left; "Last" sits at the right end, clear of the mascots.
+  lv_obj_align(message_label_, reading ? LV_ALIGN_RIGHT_MID : LV_ALIGN_LEFT_MID, 0, 0);
 
-  std::array<const firmware::domain::AgentBadge*, cyd::protocol::kAgentSlots> by_slot{};
+  std::array<const firmware::domain::AgentBadge*, cyd::protocol::kAgentSlots> running{};
   for (const auto& badge : view.badges) {
-    if (badge.slot < by_slot.size()) by_slot[badge.slot] = &badge;
+    if (badge.slot < running.size()) running[badge.slot] = &badge;
   }
-  for (size_t slot = 0; slot < badges_.size(); ++slot) {
-    Badge& badge = badges_[slot];
-    if (noticing || by_slot[slot] == nullptr) {
-      if (badge.shown) {
-        badge.shown = false;
-        StopPulse(badge.dot);
-        lv_obj_add_flag(badge.spinner, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(badge.box, LV_OBJ_FLAG_HIDDEN);
-      }
-      continue;
+  for (size_t slot = 0; slot < mascots_.size(); ++slot) {
+    State state = State::kHidden;
+    if (reading && running[slot] == nullptr) {
+      state = State::kSilhouette;
+    } else if (reading) {
+      // A retained reading is not activity: every mascot is still.
+      state = running[slot]->activity == AgentActivity::kBusy && !view.dimmed ? State::kBusy
+                                                                              : State::kStill;
     }
-    lv_label_set_text(badge.label, by_slot[slot]->label.c_str());
-    Show(badge, by_slot[slot]->activity, view.dimmed);
+    Set(slot, state);
   }
 
   const bool dimmed = view.dimmed && !noticing;
@@ -173,16 +162,13 @@ void AgentsBar::Update(const firmware::domain::AgentsBarView& view, const std::s
   }
 }
 
-bool AgentsBar::badge_visible(size_t slot) const {
-  return !lv_obj_has_flag(badges_[slot].box, LV_OBJ_FLAG_HIDDEN);
+bool AgentsBar::mascot_visible(size_t slot) const {
+  return !lv_obj_has_flag(mascots_[slot].image, LV_OBJ_FLAG_HIDDEN);
 }
 
-bool AgentsBar::pulsing(size_t slot) const {
-  return lv_anim_get(badges_[slot].dot, SetOpacity) != nullptr;
-}
-
-bool AgentsBar::spinning(size_t slot) const {
-  return badge_visible(slot) && !lv_obj_has_flag(badges_[slot].spinner, LV_OBJ_FLAG_HIDDEN);
+bool AgentsBar::animating(size_t slot) const {
+  lv_obj_t* image = mascots_[slot].image;
+  return lv_anim_get(image, SetFrame) != nullptr || lv_anim_get(image, SetRock) != nullptr;
 }
 
 }  // namespace firmware::ui::system

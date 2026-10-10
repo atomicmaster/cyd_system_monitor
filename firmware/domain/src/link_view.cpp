@@ -30,17 +30,17 @@ LinkView MakeLinkView(const HostLink& link, bool paired) {
   const auto& d = link.diagnostics();
   LinkView view;
   if (const auto code = link.pending_code()) {
-    char text[64];
-    std::snprintf(text, sizeof(text), "Pair with this Mac?\nCode %06u",
-                  static_cast<unsigned>(*code));
+    char text[8];
+    std::snprintf(text, sizeof(text), "%06u", static_cast<unsigned>(*code));
     view.prompt_visible = true;
-    view.prompt = text;
+    view.code = text;
   }
-  view.about = "Supported: " + Version(d.supported_major, d.supported_minor) + "\nHost: ";
-  view.about += d.host_major ? Version(*d.host_major, d.host_minor.value_or(0)) : "none";
-  view.about += "\nNegotiated: ";
-  view.about += d.negotiated_minor ? Version(d.supported_major, *d.negotiated_minor) : "none";
-  view.about += paired ? "\nPaired" : "\nNot paired";
+  view.details = {
+      {"Supported", Version(d.supported_major, d.supported_minor)},
+      {"Host", d.host_major ? Version(*d.host_major, d.host_minor.value_or(0)) : "none"},
+      {"Negotiated", d.negotiated_minor ? Version(d.supported_major, *d.negotiated_minor) : "none"},
+      {"Pairing", paired ? "Paired" : "Not paired"},
+  };
   view.fault = FaultText(d.fault);
   return view;
 }
