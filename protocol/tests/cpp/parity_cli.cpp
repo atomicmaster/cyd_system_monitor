@@ -58,9 +58,9 @@ std::string Body(const p::Decoded &d) {
         << d.cpu.configuration_revision;
     if (d.groups.ram) {
       const auto &g = *d.groups.ram;
-      out << ";ram=" << static_cast<int>(g.availability) << ','
-          << g.used_bytes << ',' << g.total_bytes << ','
-          << g.source_age_ms << ',' << static_cast<int>(g.freshness);
+      out << ";ram=" << static_cast<int>(g.availability) << ',' << g.used_bytes
+          << ',' << g.total_bytes << ',' << g.source_age_ms << ','
+          << static_cast<int>(g.freshness);
     }
     if (d.groups.storage) {
       const auto &g = *d.groups.storage;
@@ -83,7 +83,8 @@ std::string Body(const p::Decoded &d) {
       const auto &g = *d.groups.agents;
       out << ";agents=" << static_cast<int>(g.availability) << ','
           << g.source_age_ms << ',' << static_cast<int>(g.state[0]) << ','
-          << static_cast<int>(g.state[1]) << ',' << static_cast<int>(g.state[2]);
+          << static_cast<int>(g.state[1]) << ','
+          << static_cast<int>(g.state[2]);
     }
     if (d.groups.network) {
       const auto &g = *d.groups.network;
@@ -96,7 +97,15 @@ std::string Body(const p::Decoded &d) {
           << g.tx_bytes_per_s << ',' << static_cast<int>(g.context_availability)
           << ',' << g.context_age_ms << ',' << static_cast<int>(g.coverage)
           << ',' << static_cast<int>(g.channel) << ',' << mac(g.station) << ','
-          << Hex(g.ssid.data(), g.ssid.size()) << ',' << mac(g.bssid);
+          << Hex(g.ssid.data(), g.ssid.size()) << ',' << mac(g.bssid) << ',';
+      if (g.links) {
+        std::vector<uint8_t> kinds;
+        for (const auto kind : *g.links)
+          kinds.push_back(static_cast<uint8_t>(kind));
+        out << Hex(kinds.data(), kinds.size());
+      } else {
+        out << '-';
+      }
     }
   } else if (e.hello) {
     out << static_cast<int>(e.hello->supported_major) << ','
@@ -126,16 +135,17 @@ std::string Summary(p::Error error, const p::Decoded &d) {
   out << "ok " << KindName(e.type) << " v" << static_cast<int>(e.version.major)
       << '.' << static_cast<int>(e.version.minor)
       << " sess=" << Hex(e.session.data(), 16) << " seq=" << e.sequence
-      << " utc=" << Opt(e.utc_ms) << " unc=" << Opt(e.utc_uncertainty_ms) << " off=" << Opt(e.local_offset_minutes)
-      << " body=" << Body(d);
+      << " utc=" << Opt(e.utc_ms) << " unc=" << Opt(e.utc_uncertainty_ms)
+      << " off=" << Opt(e.local_offset_minutes) << " body=" << Body(d);
   return out.str();
 }
 
 std::string Reencode(const p::Decoded &d) {
   std::vector<uint8_t> frame;
-  const auto error = d.envelope.type == p::MessageType::kSnapshot
-                         ? p::EncodeSnapshot(d.envelope, d.cpu, d.groups, &frame)
-                         : p::Encode(d.envelope, &frame);
+  const auto error =
+      d.envelope.type == p::MessageType::kSnapshot
+          ? p::EncodeSnapshot(d.envelope, d.cpu, d.groups, &frame)
+          : p::Encode(d.envelope, &frame);
   return error == p::Error::kNone ? Hex(frame.data(), frame.size())
                                   : std::string("err ") + p::ErrorName(error);
 }

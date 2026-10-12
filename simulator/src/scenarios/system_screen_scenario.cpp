@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -489,38 +490,47 @@ int RunSystemScreen() {
     const proto::WifiCoverage coverages[] = {proto::WifiCoverage::kUnknown,
                                              proto::WifiCoverage::kObservable,
                                              proto::WifiCoverage::kOutsideSupported};
-    for (const proto::RouteKind kind : kinds) {
-      for (const bool tunnel : {false, true}) {
-        if (tunnel && (kind == proto::RouteKind::kUnknown || kind == proto::RouteKind::kNone))
-          continue;  // the codec refuses a tunnel with no route under it
-        for (const proto::WifiCoverage coverage : coverages) {
-          for (const uint8_t channel : {0, 6, 14, 149, 255}) {
-            if (coverage == proto::WifiCoverage::kUnknown && channel != 0) continue;
-            for (const uint64_t rate : {uint64_t{0}, uint64_t{999}, uint64_t{1'234'567},
-                                        uint64_t{999'400'000'000ULL}, UINT64_MAX}) {
-              for (const uint32_t context_age : {0u, 20'000u}) {
-                for (const uint32_t traffic_age : {0u, 4'000u}) {
-                  proto::NetworkSnapshot g;
-                  g.traffic_availability = kind == proto::RouteKind::kNone
-                                               ? proto::Availability::kAbsent
-                                               : proto::Availability::kAvailable;
-                  g.route_kind = kind;
-                  g.via_tunnel = tunnel;
-                  g.rx_bytes_per_s =
-                      g.traffic_availability == proto::Availability::kAvailable ? rate : 0;
-                  g.tx_bytes_per_s = g.rx_bytes_per_s;
-                  g.traffic_age_ms = traffic_age;
-                  g.context_age_ms = context_age;
-                  g.coverage = coverage;
-                  g.channel = channel;
-                  sweep.Check(3'000'000, {.network = g});
+    using Links = std::optional<std::vector<proto::RouteKind>>;
+    const Links link_sets[] = {
+        std::nullopt, std::vector<proto::RouteKind>{proto::RouteKind::kWifi},
+        std::vector<proto::RouteKind>{proto::RouteKind::kWifi, proto::RouteKind::kEthernet},
+        std::vector<proto::RouteKind>{proto::RouteKind::kWifi, proto::RouteKind::kEthernet,
+                                      proto::RouteKind::kOther, proto::RouteKind::kOther,
+                                      proto::RouteKind::kEthernet}};
+    for (const Links& links : link_sets)
+      for (const proto::RouteKind kind : kinds) {
+        for (const bool tunnel : {false, true}) {
+          if (tunnel && (kind == proto::RouteKind::kUnknown || kind == proto::RouteKind::kNone))
+            continue;  // the codec refuses a tunnel with no route under it
+          for (const proto::WifiCoverage coverage : coverages) {
+            for (const uint8_t channel : {0, 6, 14, 149, 255}) {
+              if (coverage == proto::WifiCoverage::kUnknown && channel != 0) continue;
+              for (const uint64_t rate : {uint64_t{0}, uint64_t{999}, uint64_t{1'234'567},
+                                          uint64_t{999'400'000'000ULL}, UINT64_MAX}) {
+                for (const uint32_t context_age : {0u, 20'000u}) {
+                  for (const uint32_t traffic_age : {0u, 4'000u}) {
+                    proto::NetworkSnapshot g;
+                    g.traffic_availability = kind == proto::RouteKind::kNone
+                                                 ? proto::Availability::kAbsent
+                                                 : proto::Availability::kAvailable;
+                    g.route_kind = kind;
+                    g.via_tunnel = tunnel;
+                    g.rx_bytes_per_s =
+                        g.traffic_availability == proto::Availability::kAvailable ? rate : 0;
+                    g.tx_bytes_per_s = g.rx_bytes_per_s;
+                    g.traffic_age_ms = traffic_age;
+                    g.context_age_ms = context_age;
+                    g.coverage = coverage;
+                    g.channel = channel;
+                    g.links = links;
+                    sweep.Check(3'000'000, {.network = g});
+                  }
                 }
               }
             }
           }
         }
       }
-    }
     for (uint8_t availability = 1; availability <= 4; ++availability) {
       proto::NetworkSnapshot g;
       g.traffic_availability = static_cast<proto::Availability>(availability);

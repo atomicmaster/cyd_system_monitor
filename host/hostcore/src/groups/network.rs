@@ -16,10 +16,11 @@ impl Group for NetworkCollector {
         let network = network_snapshot(self.collect(now_ms).value);
         report.status("network", network.traffic_availability);
         report.line_with_provider_drops(format!(
-            "network {:?} kind {:?}{} rate {} context {:?} coverage {:?} ch {} station {} ssid {} bssid {}",
+            "network {:?} kind {:?}{} links {:?} rate {} context {:?} coverage {:?} ch {} station {} ssid {} bssid {}",
             network.traffic_availability,
             network.route_kind,
             if network.via_tunnel { " via tunnel" } else { "" },
+            network.links.as_deref().unwrap_or(&[]),
             if network.traffic_availability == Availability::Available {
                 format!("{}/{} B/s", network.rx_bytes_per_s, network.tx_bytes_per_s)
             } else {
@@ -60,9 +61,17 @@ fn network_snapshot(reading: Option<NetworkReading>) -> NetworkSnapshot {
             station: None,
             ssid: Vec::new(),
             bssid: None,
+            links: None,
         };
     };
     let (t, w) = (reading.traffic, reading.wifi);
+    let kind = |k: NetRouteKind| match k {
+        NetRouteKind::Unknown => RouteKind::Unknown,
+        NetRouteKind::Wifi => RouteKind::Wifi,
+        NetRouteKind::Ethernet => RouteKind::Ethernet,
+        NetRouteKind::Other => RouteKind::Other,
+        NetRouteKind::None => RouteKind::None,
+    };
     let snapshot = NetworkSnapshot {
         traffic_availability: match (t.availability, t.rate) {
             (MetricAvailability::Available, None) => Availability::Error, // no value behind it
@@ -70,13 +79,7 @@ fn network_snapshot(reading: Option<NetworkReading>) -> NetworkSnapshot {
         },
         // The sample is taken as it is collected.
         traffic_age_ms: 0,
-        route_kind: match t.route_kind {
-            NetRouteKind::Unknown => RouteKind::Unknown,
-            NetRouteKind::Wifi => RouteKind::Wifi,
-            NetRouteKind::Ethernet => RouteKind::Ethernet,
-            NetRouteKind::Other => RouteKind::Other,
-            NetRouteKind::None => RouteKind::None,
-        },
+        route_kind: kind(t.route_kind),
         via_tunnel: t.via_tunnel,
         rx_bytes_per_s: t.rate.map_or(0, |r| r.rx_bytes_per_s),
         tx_bytes_per_s: t.rate.map_or(0, |r| r.tx_bytes_per_s),
@@ -101,6 +104,8 @@ fn network_snapshot(reading: Option<NetworkReading>) -> NetworkSnapshot {
         station: w.station,
         ssid: w.ssid,
         bssid: w.bssid,
+        // One kind per link the rates total.
+        links: Some(t.links.iter().map(|k| kind(*k)).collect()),
     };
     if snapshot.is_valid() {
         snapshot
@@ -116,6 +121,7 @@ fn network_snapshot(reading: Option<NetworkReading>) -> NetworkSnapshot {
             channel: 0,
             ssid: Vec::new(),
             bssid: None,
+            links: None,
             ..snapshot
         }
     }
@@ -134,6 +140,15 @@ mod tests {
                 route_kind: kind,
                 via_tunnel,
                 rate,
+                // The primary route's own link, when it is one.
+                links: if matches!(
+                    kind,
+                    NetRouteKind::Wifi | NetRouteKind::Ethernet | NetRouteKind::Other
+                ) {
+                    vec![kind]
+                } else {
+                    Vec::new()
+                },
             },
             wifi,
         };
@@ -168,6 +183,7 @@ mod tests {
             AssociationContext::PermissionNotRequested
         );
         assert!(g.station.is_some());
+        assert_eq!(g.links, Some(vec![RouteKind::Wifi]), "one kind per link");
         // A rate pending after a route change is unavailable with zero values.
         let g = network_snapshot(
             reading(

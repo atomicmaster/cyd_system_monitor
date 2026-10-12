@@ -41,8 +41,11 @@ A V2 source-specific estimate of GPU or Apple Neural Engine power, frequency, an
 _Avoid_: GPU utilization, NPU utilization
 
 **Primary Network Interface**:
-The active non-loopback interface selected by the Monitored Host's primary route. Tunnel and underlying-interface rates are shown separately and are never summed.
-_Avoid_: Total network interface
+The active non-loopback interface selected by the Monitored Host's primary route. It decides the route kind, whether a VPN is in use, and offline; it does not limit the traffic shown.
+
+**Active Physical Link**:
+A WiFi or Ethernet port with a carrier or association, or the Primary Network Interface itself when it is another non-tunnel link. The Network rates are the totals over all Active Physical Links, and the display shows one icon per link. Tunnels and other virtual interfaces are never links, so tunnel traffic is never counted twice.
+_Avoid_: counting every interface that is merely up (macOS keeps unplugged ports up and running)
 
 **Host Station Identity**:
 The current over-the-air link-layer address of the Monitored Host's active WiFi interface, which may be a private randomized address rather than its factory hardware address.

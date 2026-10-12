@@ -234,11 +234,18 @@ impl NetworkSystem for MacNetworkSystem {
             self.sc_read_at = Some(std::time::Instant::now());
         }
         let links = imp::link_interfaces()?;
+        let media = imp::MediaQuery::open();
         let mut interfaces: Vec<InterfaceInfo> = links
             .into_iter()
             .map(|l| {
                 let kind = classify(&l.name, l.loopback, &self.sc);
+                // A carrier or association, asked only of up WiFi and Ethernet
+                // ports: an unplugged port is still up and running on macOS.
+                let link_active = l.up_running
+                    && matches!(kind, LinkKind::Wifi | LinkKind::Ethernet)
+                    && media.as_ref().is_some_and(|m| m.active(&l.name));
                 InterfaceInfo {
+                    link_active,
                     station: if kind == LinkKind::Wifi { l.mac } else { None },
                     // Only an interface that is up has counters worth a syscall.
                     counters: if l.up_running {
@@ -330,6 +337,9 @@ mod imp {
     #[link(name = "SystemConfiguration", kind = "framework")]
     extern "C" {
         fn SCNetworkInterfaceCopyAll() -> *const c_void;
+        fn socket(domain: c_int, kind: c_int, protocol: c_int) -> c_int;
+        fn ioctl(fd: c_int, request: std::ffi::c_ulong, ...) -> c_int;
+        fn close(fd: c_int) -> c_int;
         fn SCNetworkInterfaceGetBSDName(interface: *const c_void) -> *const c_void;
         fn SCNetworkInterfaceGetInterfaceType(interface: *const c_void) -> *const c_void;
     }
@@ -385,6 +395,73 @@ mod imp {
     }
 
     /// Runs a sysctl that returns a buffer, growing until it fits.
+    /// `struct ifmediareq` from `<net/if.h>`, declared there under
+    /// `#pragma pack(4)` (44 bytes, not 48); the size is part of the ioctl
+    /// number, so the layout must match exactly. Only the status is read.
+    #[repr(C, packed(4))]
+    struct IfMediaReq {
+        name: [u8; 16],
+        current: c_int,
+        mask: c_int,
+        status: c_int,
+        active: c_int,
+        count: c_int,
+        list: *mut c_int,
+    }
+    const _: () = assert!(std::mem::size_of::<IfMediaReq>() == 44);
+    const IFM_AVALID: c_int = 0x1;
+    const IFM_ACTIVE: c_int = 0x2;
+    // _IOWR('i', 56, struct ifmediareq)
+    const SIOCGIFMEDIA: std::ffi::c_ulong = 0xC000_0000
+        | (((std::mem::size_of::<IfMediaReq>() & 0x1fff) as std::ffi::c_ulong) << 16)
+        | ((b'i' as std::ffi::c_ulong) << 8)
+        | 56;
+
+    /// One datagram socket for `SIOCGIFMEDIA` queries, closed on drop.
+    pub struct MediaQuery(c_int);
+
+    impl MediaQuery {
+        pub fn open() -> Option<Self> {
+            // SAFETY: plain socket creation; checked below.
+            let fd = unsafe {
+                socket(2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0)
+            };
+            (fd >= 0).then_some(Self(fd))
+        }
+
+        /// Whether `name` has an active link (carrier, or WiFi association),
+        /// as `ifconfig` reports `status: active`. An interface without media
+        /// reporting is not active.
+        pub fn active(&self, name: &str) -> bool {
+            let mut request = IfMediaReq {
+                name: [0; 16],
+                current: 0,
+                mask: 0,
+                status: 0,
+                active: 0,
+                count: 0,
+                list: std::ptr::null_mut(),
+            };
+            let bytes = name.as_bytes();
+            if bytes.len() >= request.name.len() {
+                return false;
+            }
+            request.name[..bytes.len()].copy_from_slice(bytes);
+            // SAFETY: a valid socket and a properly sized, NUL-terminated request
+            // with no media list to fill.
+            let ok = unsafe { ioctl(self.0, SIOCGIFMEDIA, &mut request as *mut IfMediaReq) } == 0;
+            let status = request.status;
+            ok && status & IFM_AVALID != 0 && status & IFM_ACTIVE != 0
+        }
+    }
+
+    impl Drop for MediaQuery {
+        fn drop(&mut self) {
+            // SAFETY: the descriptor came from socket() and is closed once.
+            unsafe { close(self.0) };
+        }
+    }
+
     pub fn sysctl_buffer(mib: &[c_int]) -> Option<Vec<u8>> {
         let mut mib = mib.to_vec();
         for _ in 0..4 {
@@ -470,6 +547,15 @@ mod imp {
     }
     pub fn system_configuration_types() -> HashMap<String, ScType> {
         HashMap::new()
+    }
+    pub struct MediaQuery;
+    impl MediaQuery {
+        pub fn open() -> Option<Self> {
+            None
+        }
+        pub fn active(&self, _name: &str) -> bool {
+            false
+        }
     }
 }
 
@@ -637,11 +723,12 @@ mod tests {
         let v = metrics::network::NetworkSystem::read(&mut view).expect("system view");
         for i in &v.interfaces {
             println!(
-                "if {} idx {} {:?} up_running {} station {} counters {:?}",
+                "if {} idx {} {:?} up_running {} link_active {} station {} counters {:?}",
                 i.name,
                 i.index,
                 i.kind,
                 i.up_running,
+                i.link_active,
                 if i.station.is_some() {
                     "present"
                 } else {

@@ -13,8 +13,8 @@ namespace firmware::ui::system {
 //   kPanel    title, value, note, and a bar along the bottom;
 //   kBattery  a battery cell filled to the charge (a bolt while on power), the
 //             value and detail beside it, and a meter line underneath;
-//   kRates    a link line (with a WiFi glyph for WiFi) over two rate rows,
-//             each an arrow, a value and a log-scale meter.
+//   kRates    a link line (one icon per active link, then the note) over two
+//             rate rows, each an arrow, a value and a log-scale meter.
 // It renders a MetricCardView and owns no state. A dimmed card fades to half
 // opacity and its arc or bars decay to empty (the battery cell turns grey
 // instead: an empty cell would read as a flat battery), while the text keeps
@@ -52,7 +52,10 @@ class MetricCard {
   // Dial rate slots and rates rows: index 0 is the first rate, 1 the second.
   lv_obj_t* rate_value(int index) const { return rate_value_[index]; }
   lv_obj_t* rate_meter(int index) const { return rate_meter_[index]; }
-  lv_obj_t* wifi_glyph() const { return wifi_glyph_; }
+  // The link line's icon slots (rates layout): the WiFi glyph or a pixel
+  // icon, and which one each shows; hidden slots show nothing.
+  lv_obj_t* link_wifi(size_t slot) const { return link_wifi_[slot]; }
+  lv_obj_t* link_image(size_t slot) const { return link_image_[slot]; }
 
  private:
   void BuildDial(lv_color_t accent);
@@ -79,7 +82,8 @@ class MetricCard {
   lv_obj_t* rate_slots_ = nullptr;  // dial: the container of the two slots
   lv_obj_t* rate_value_[2] = {};
   lv_obj_t* rate_meter_[2] = {};
-  lv_obj_t* wifi_glyph_ = nullptr;
+  lv_obj_t* link_wifi_[firmware::domain::kMaxLinkGlyphs] = {};
+  lv_obj_t* link_image_[firmware::domain::kMaxLinkGlyphs] = {};
   bool dimmed_ = false;
 };
 

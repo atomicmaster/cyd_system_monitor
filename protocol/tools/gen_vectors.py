@@ -496,7 +496,8 @@ write("agents-snapshot-v1-duplicate-group.hex",
 # 3 other, 2 Ethernet, 4 none), 3 via tunnel, 4 rx B/s, 5 tx B/s,
 # 6 association context availability (0-6), 7 context age ms, 8 coverage
 # (0 unknown, 1 observable, 2 outside), 9 channel, 10 station (byte string of
-# 0 or 6), 11 SSID (0-32 bytes), 12 BSSID (0 or 6).
+# 0 or 6), 11 SSID (0-32 bytes), 12 BSSID (0 or 6), and the optional 13 active
+# physical links (byte string of 0-8 kinds, each 1 WiFi, 2 Ethernet, 3 other).
 def with_network(group, extra_body=(), ram=None, storage=None, battery=None, agents=None):
     items = [(0, u(0)), (1, u(723)), (2, u(1000)), (3, u(0)), (4, u(4))]
     for key, value in ((5, ram), (6, storage), (7, battery), (8, agents)):
@@ -568,8 +569,16 @@ for n, name in enumerate(["available", "not-requested", "denied", "restricted",
 write("network-snapshot-v1-max.hex",
       network_frame([(0, u(0)), (1, u(0xffffffff)), (2, u(3)), (3, u(1)), (4, u(2**64 - 1)),
                      (5, u(2**64 - 1)), (6, u(0)), (7, u(0xffffffff)), (8, u(2)), (9, u(233)),
-                     (10, bstr(STATION)), (11, bstr(bytes(range(0x80, 0xa0)))), (12, bstr(BSSID))]),
-      "Network at every maximum: 64-bit rates, 32-bit ages, 32-byte SSID: valid, the largest group (98 bytes)")
+                     (10, bstr(STATION)), (11, bstr(bytes(range(0x80, 0xa0)))), (12, bstr(BSSID)),
+                     (13, bstr(bytes([1, 2, 3, 3, 3, 3, 3, 3])))]),
+      "Network at every maximum: 64-bit rates, 32-bit ages, 32-byte SSID, eight links: valid, the "
+      "largest group (108 bytes)")
+write("network-snapshot-v1-links.hex",
+      network_frame(NET + [(13, bstr(b"\x01\x02"))]),
+      "Network with WiFi and Ethernet both active: the rates are their totals, one link each")
+write("network-snapshot-v1-links-empty.hex",
+      network_frame(NET + [(13, bstr(b""))]),
+      "Network reporting no active physical link (empty key 13): valid")
 write("network-snapshot-v1-with-groups.hex",
       frame(envelope(4, with_network(ram_group(NET), ram=ram_group(RAM), storage=ram_group(STORAGE),
                                      battery=ram_group(BATTERY), agents=ram_group(AGENTS)))),
@@ -600,6 +609,11 @@ bad = {
     "missing-field": (NET[:12], "Network group without the BSSID (key 12)"),
     "duplicate-key": (NET[:3] + [NET[2]] + NET[3:], "Network key 2 twice"),
     "noncanonical": (net_with(k1=b"\x18\x05"), "traffic age encoded with a needless extra byte"),
+    "bad-link-kind": (NET + [(13, bstr(b"\x01\x04"))], "link kind 4 (none) is not an active link"),
+    "link-kind-zero": (NET + [(13, bstr(b"\x00"))], "link kind 0 (unknown) is not an active link"),
+    "links-oversize": (NET + [(13, bstr(bytes([2] * 9)))], "nine links, over the bound of eight"),
+    "links-as-uint": (NET + [(13, u(1))], "links encoded as an integer, not a byte string"),
+    "links-duplicate": (NET + [(13, bstr(b"\x01")), (13, bstr(b"\x02"))], "Network key 13 twice"),
 }
 for name, (items, note) in bad.items():
     write(f"network-snapshot-v1-{name}.hex", network_frame(items), f"{note}: malformed")
@@ -607,10 +621,10 @@ write("network-snapshot-v1-not-a-map.hex",
       frame(envelope(4, with_network(uint(2, 3) + b"\x01\x02\x03"))),
       "Network group is a byte string, not a field map: malformed")
 write("network-snapshot-v1-unknown-field.hex",
-      network_frame(NET + [(13, uint(4, 2) + u(1) + u(2))]),
-      "unknown optional Network field 13 holding [1, 2]: skipped, snapshot applies")
+      network_frame(NET + [(14, uint(4, 2) + u(1) + u(2))]),
+      "unknown optional Network field 14 holding [1, 2]: skipped, snapshot applies")
 write("network-snapshot-v1-unknown-too-deep.hex",
-      network_frame(NET + [(13, nest(4))]),
+      network_frame(NET + [(14, nest(4))]),
       "unknown Network field nested four arrays deep: over the skip limit, malformed")
 write("network-snapshot-v1-duplicate-group.hex",
       frame(envelope(4, with_network(ram_group(NET), extra_body=[(9, ram_group(NET))]))),

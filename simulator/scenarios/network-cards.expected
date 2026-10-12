@@ -1,48 +1,54 @@
 no Host data yet
   Network | -- |  | show_bar=0 | has_value=0 | dimmed=0
 WiFi live with rates, channel 6
-  Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
+  Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | links=wifi
 Ethernet primary route
-  Network |  | Ethernet | show_bar=0 | has_value=1 | dimmed=0 | rates=45M@807 2.5M@628
+  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=45M@807 2.5M@628 | links=ethernet
 tunnel primary route over WiFi
-  Network |  | VPN ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=900K@564 100K@428 | wifi
+  Network |  | VPN ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=900K@564 100K@428 | links=wifi
 route changed: rate re-baselining
-  Network | -- | Unavailable | show_bar=0 | has_value=0 | dimmed=0
+  Network | -- | Unavailable | show_bar=0 | has_value=0 | dimmed=0 | links=ethernet
 route settled: rate back
-  Network |  | Ethernet | show_bar=0 | has_value=1 | dimmed=0 | rates=800B@129 0B@0
+  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=800B@129 0B@0 | links=ethernet
 WiFi on channel 149 (5 GHz)
-  Network |  | 5/6G unseen | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
+  Network |  | 5/6G unseen | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | links=wifi
 WiFi 5/6 GHz, channel unknown
-  Network |  | 5/6G unseen | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
+  Network |  | 5/6G unseen | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | links=wifi
 context unknown (authorized but unavailable)
-  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | wifi
+  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | links=wifi
 permission denied, channel still known
-  Network |  | ch11 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | wifi
+  Network |  | ch11 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | links=wifi
 permission denied, no channel
-  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | wifi
+  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | links=wifi
 provider absent, station identity present
-  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=2.0K@185 1.0K@142 | wifi
+  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=2.0K@185 1.0K@142 | links=wifi
 offline: no primary route
   Network | -- | Offline | show_bar=0 | has_value=0 | dimmed=0
 traffic read error
   Network | -- | Read error | show_bar=0 | has_value=0 | dimmed=0
 traffic 2.999 s old, context 14.999 s old: both fresh
-  Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
+  Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | links=wifi
 traffic 3 s old while the WiFi context is live
   Network |  | Last ch6 2.4G | show_bar=0 | has_value=1 | dimmed=1 | rates=1.2M@0 340K@0
 traffic live while the WiFi context is 15 s old
-  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
+  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | links=wifi
 old samples re-sent in a new snapshot: both stale
-  Network |  | Last | show_bar=0 | has_value=1 | dimmed=1 | rates=1.2M@0 340K@0 | wifi
+  Network |  | Last | show_bar=0 | has_value=1 | dimmed=1 | rates=1.2M@0 340K@0 | links=wifi
 fresh samples again
-  Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
+  Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | links=wifi
 last frame 2.9 s ago: still live
-  Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
+  Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | links=wifi
 35 s without a frame: link lost
-  Network |  | Last | show_bar=0 | has_value=1 | dimmed=1 | rates=1.2M@0 340K@0 | wifi
+  Network |  | Last | show_bar=0 | has_value=1 | dimmed=1 | rates=1.2M@0 340K@0 | links=wifi
 offline again, fresh
   Network | -- | Offline | show_bar=0 | has_value=0 | dimmed=0
 offline sample 3 s old
   Network | -- | Last Offline | show_bar=0 | has_value=0 | dimmed=1
 offline, then 34 s without a frame: link lost
   Network | -- | Last Offline | show_bar=0 | has_value=0 | dimmed=1
+WiFi and Ethernet both up: totals, two icons
+  Network |  | ch6 | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | links=wifi,ethernet
+five links: three icons and +2
+  Network |  | +2 ch6 | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | links=wifi,ethernet,ethernet
+a cable up but no route: offline beside its icon
+  Network | -- | Offline | show_bar=0 | has_value=0 | dimmed=0 | links=ethernet

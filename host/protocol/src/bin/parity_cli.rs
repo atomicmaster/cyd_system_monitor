@@ -114,7 +114,7 @@ fn summary(result: &Result<Decoded, String>) -> String {
                     }
                 };
                 text += &format!(
-                    ";network={},{},{},{},{},{},{},{},{},{},{},{},{}",
+                    ";network={},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                     g.traffic_availability as u8,
                     g.traffic_age_ms,
                     g.route_kind as u8,
@@ -127,7 +127,10 @@ fn summary(result: &Result<Decoded, String>) -> String {
                     g.channel,
                     hex(g.station.as_ref().map_or(&[][..], |m| &m[..])),
                     hex(&g.ssid),
-                    hex(g.bssid.as_ref().map_or(&[][..], |m| &m[..]))
+                    hex(g.bssid.as_ref().map_or(&[][..], |m| &m[..])),
+                    g.links.as_ref().map_or("-".to_string(), |kinds| {
+                        hex(&kinds.iter().map(|k| *k as u8).collect::<Vec<_>>())
+                    })
                 );
             }
             (e, text)

@@ -102,7 +102,16 @@ class CardScenario {
       if (!view.meter_value.empty()) transcript_ << " " << view.meter_value;
       if (view.show_meter) transcript_ << " @" << view.meter_per_mille;
     }
-    if (view.wifi) transcript_ << " | wifi";
+    if (!view.links.empty()) {
+      transcript_ << " | links=";
+      for (size_t i = 0; i < view.links.size(); ++i) {
+        const auto glyph = view.links[i];
+        transcript_ << (i ? "," : "")
+                    << (glyph == firmware::domain::LinkGlyph::kWifi       ? "wifi"
+                        : glyph == firmware::domain::LinkGlyph::kEthernet ? "ethernet"
+                                                                          : "other");
+      }
+    }
     transcript_ << "\n";
     return view;
   }

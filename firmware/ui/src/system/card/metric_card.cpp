@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "firmware/ui/system/card/metric_card.hpp"
 
+#include <algorithm>
+
+#include "firmware/ui/pixel_art.hpp"
 #include "firmware/ui/theme.hpp"
 
 namespace firmware::ui::system {
@@ -18,6 +21,33 @@ constexpr int32_t kDialWidth = 6;
 constexpr int32_t kTextLeft = 56;  // battery value and detail, right of the cell
 constexpr int32_t kRowValueX = 18;
 constexpr int32_t kRowMeterX = 70;
+constexpr int32_t kLinkSlotWidth = 18;  // one link icon and its gap
+
+// clang-format off: one row of pixels per line.
+// An Ethernet port seen from the front: the socket, its pins, the latch tab.
+constexpr const char* kEthernetArt[] = {
+    "############",
+    "#..........#",
+    "#.#.#..#.#.#",
+    "#..........#",
+    "#..........#",
+    "###......###",
+    "..#......#..",
+    "..########..",
+};
+// Any other link: two nodes joined.
+constexpr const char* kOtherLinkArt[] = {
+    "###......###",
+    "#.#......#.#",
+    "#.########.#",
+    "#.#......#.#",
+    "###......###",
+};
+// clang-format on
+constexpr auto kEthernetPixels = pixel_art::Pixels<12, 8, 1, 1>(kEthernetArt);
+constexpr auto kOtherLinkPixels = pixel_art::Pixels<12, 5, 1, 2>(kOtherLinkArt);
+const lv_image_dsc_t kEthernetImage = pixel_art::Image(kEthernetPixels.data(), 12, 8);
+const lv_image_dsc_t kOtherLinkImage = pixel_art::Image(kOtherLinkPixels.data(), 12, 10);
 
 void SetOpacity(void* object, int32_t value) {
   lv_obj_set_style_opa(static_cast<lv_obj_t*>(object), static_cast<lv_opa_t>(value), 0);
@@ -224,8 +254,18 @@ void MetricCard::BuildBattery(lv_color_t accent) {
 }
 
 void MetricCard::BuildRates() {
-  wifi_glyph_ = Placed(root_, &lv_font_montserrat_12, theme::kMuted, 0, 0);
-  lv_label_set_text(wifi_glyph_, LV_SYMBOL_WIFI);
+  // Each icon slot holds the WiFi glyph (a font symbol) and a pixel icon
+  // (Ethernet or another link); at most one shows.
+  for (size_t slot = 0; slot < firmware::domain::kMaxLinkGlyphs; ++slot) {
+    const int32_t x = static_cast<int32_t>(slot) * kLinkSlotWidth;
+    link_wifi_[slot] = Placed(root_, &lv_font_montserrat_12, theme::kMuted, x, 0);
+    lv_label_set_text(link_wifi_[slot], LV_SYMBOL_WIFI);
+    link_image_[slot] = lv_image_create(root_);
+    lv_obj_remove_flag(link_image_[slot], LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_image_recolor(link_image_[slot], theme::Color(theme::kMuted), 0);
+    lv_obj_set_style_image_recolor_opa(link_image_[slot], LV_OPA_COVER, 0);
+    lv_obj_set_pos(link_image_[slot], x, 3);
+  }
   note_label_ = Placed(root_, &lv_font_montserrat_12, theme::kMuted, 0, 0, 146);
   const uint32_t colors[2] = {theme::kRateFirst, theme::kRateSecond};
   const char* arrows[2] = {LV_SYMBOL_DOWN, LV_SYMBOL_UP};
@@ -325,9 +365,20 @@ void MetricCard::UpdateBattery(const firmware::domain::MetricCardView& view, boo
 }
 
 void MetricCard::UpdateRates(const firmware::domain::MetricCardView& view, bool dim_changed) {
-  // The WiFi glyph stands for the word; other links are named in full.
-  SetHidden(wifi_glyph_, !view.wifi);
-  const int32_t x = view.wifi ? 18 : 0;
+  // One icon per link, then the words.
+  const size_t shown = std::min(view.links.size(), firmware::domain::kMaxLinkGlyphs);
+  for (size_t slot = 0; slot < firmware::domain::kMaxLinkGlyphs; ++slot) {
+    const bool used = slot < shown;
+    const bool wifi = used && view.links[slot] == firmware::domain::LinkGlyph::kWifi;
+    SetHidden(link_wifi_[slot], !wifi);
+    SetHidden(link_image_[slot], !used || wifi);
+    if (used && !wifi) {
+      const bool ethernet = view.links[slot] == firmware::domain::LinkGlyph::kEthernet;
+      lv_image_set_src(link_image_[slot], ethernet ? &kEthernetImage : &kOtherLinkImage);
+      lv_obj_set_y(link_image_[slot], ethernet ? 4 : 3);
+    }
+  }
+  const int32_t x = static_cast<int32_t>(shown) * kLinkSlotWidth;
   lv_obj_set_x(note_label_, x);
   lv_obj_set_width(note_label_, 146 - x);
   lv_label_set_text(note_label_, view.note.c_str());

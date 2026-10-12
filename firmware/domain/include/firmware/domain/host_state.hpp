@@ -123,6 +123,9 @@ struct NetworkMetricState {
   std::vector<uint8_t> ssid;
   std::optional<std::array<uint8_t, protocol::kMacBytes>> bssid;
   int64_t context_source_time_ms = 0;
+  // The active physical links the rates total, one kind each; unset when the
+  // Host does not report them (the card then shows the route kind alone).
+  std::optional<std::vector<protocol::RouteKind>> links;
 };
 struct HostState {
   ConnectionState connection = ConnectionState::kNegotiating;

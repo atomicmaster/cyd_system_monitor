@@ -111,7 +111,8 @@ void HostStateReducer::ApplySnapshot(const protocol::Decoded& decoded, uint64_t 
                       .station = g.station,
                       .ssid = g.ssid,
                       .bssid = g.bssid,
-                      .context_source_time_ms = SourceTime(now_ms, g.context_age_ms)};
+                      .context_source_time_ms = SourceTime(now_ms, g.context_age_ms),
+                      .links = g.links};
     DeriveNetworkFreshness(&state_.network, now_ms);
   }
 }

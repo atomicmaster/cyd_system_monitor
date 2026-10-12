@@ -1,19 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Root storage: capacity of the filesystem containing `/` (30 s cache) and the
-//! read/write byte rate of the physical storage driver backing it (1 s).
+//! Storage: capacity of the filesystem containing `/` (30 s cache) and the
+//! read/write byte rates totalled over every physical storage device (1 s).
 //!
 //! Capacity is `statfs("/")`, the same volume-level figure Foundation reports;
 //! on APFS it is the container's shared space, so volumes are never summed and
 //! purgeable space is not counted as available. I/O is the public user-space
 //! IOKit `IOBlockStorageDriver` `Statistics` dictionary ("Bytes (Read)" and
-//! "Bytes (Write)"), reached by walking up the I/O Registry from the `IOMedia`
-//! of `/`'s device: an APFS volume `disk3s1s1` is on the synthesized container
-//! `disk3`, which is stored on the physical `disk0`. No root, no dependency.
+//! "Bytes (Write)") of every block-storage driver, internal and external,
+//! except those on a virtual device (a mounted disk image, whose traffic is
+//! already counted on the disk holding the image). APFS containers are not
+//! block-storage drivers, so nothing is counted twice. Each device keeps its
+//! own baseline: a device that appears makes the total unavailable for one
+//! sample, one that disappears simply stops counting. No root, no dependency.
 
 use metrics::cache::{RefreshPolicy, SampleCache};
 use metrics::storage::{DiskCounters, DiskIoSampler, DiskRate, StorageCapacityReading};
 use metrics::{Collector, MetricAvailability, MetricSample};
+use std::collections::HashMap;
 
 /// How long a capacity sample is reused before `/` is asked again.
 pub const CAPACITY_REFRESH_MS: u64 = 30_000;
@@ -30,24 +34,23 @@ pub struct StorageReading {
 
 /// Capacity of `/`, or `None` if the call fails or the numbers are impossible.
 pub type CapacitySource = Box<dyn FnMut() -> Option<StorageCapacityReading>>;
-/// Cumulative counters of the physical driver backing `/`, with its device name
-/// (a change of name re-baselines the sampler), or `None` if unreachable.
-pub type CounterSource = Box<dyn FnMut() -> Option<(DiskCounters, String)>>;
+/// Cumulative counters of every physical storage device, each with a stable
+/// identity (a new identity is a new device with its own baseline), or `None`
+/// if the devices cannot be listed.
+pub type CounterSource = Box<dyn FnMut() -> Option<Vec<(String, DiskCounters)>>>;
 
 pub struct StorageCollector {
     capacity_source: CapacitySource,
     counter_source: CounterSource,
     capacity: SampleCache<StorageCapacityReading>,
-    sampler: DiskIoSampler,
-    device: Option<String>,
+    samplers: HashMap<String, DiskIoSampler>,
 }
 
 impl StorageCollector {
     pub fn new() -> Self {
-        let mut disk = imp::RootDisk::default();
         Self::with_sources(
             Box::new(imp::read_capacity),
-            Box::new(move || disk.read_counters()),
+            Box::new(imp::physical_disk_counters),
         )
     }
 
@@ -60,8 +63,7 @@ impl StorageCollector {
                 refresh_ms: CAPACITY_REFRESH_MS,
                 retry_until_sampled: true,
             }),
-            sampler: DiskIoSampler::default(),
-            device: None,
+            samplers: HashMap::new(),
         }
     }
 
@@ -77,19 +79,49 @@ impl StorageCollector {
     }
 
     fn io(&mut self, now_ms: u64) -> MetricSample<DiskRate> {
-        match (self.counter_source)() {
-            Some((counters, device)) => {
-                if self.device.as_deref() != Some(&device) {
-                    self.sampler.reset(); // remapped or hot-plugged: new baseline
-                    self.device = Some(device);
+        let disks = match (self.counter_source)() {
+            Some(disks) if !disks.is_empty() => disks,
+            _ => {
+                self.samplers.clear();
+                return MetricSample::unavailable(MetricAvailability::Error);
+            }
+        };
+        // Every device is sampled each second, so each keeps its baseline; a
+        // device without one (just attached) leaves the total unavailable.
+        let mut total = Some(DiskRate {
+            read_bytes_per_s: 0,
+            write_bytes_per_s: 0,
+        });
+        let mut availability = MetricAvailability::Available;
+        for (device, counters) in &disks {
+            let sample = self
+                .samplers
+                .entry(device.clone())
+                .or_default()
+                .sample(*counters, now_ms);
+            match (sample.value, total) {
+                (Some(rate), Some(sum)) => {
+                    total = Some(DiskRate {
+                        read_bytes_per_s: sum
+                            .read_bytes_per_s
+                            .saturating_add(rate.read_bytes_per_s),
+                        write_bytes_per_s: sum
+                            .write_bytes_per_s
+                            .saturating_add(rate.write_bytes_per_s),
+                    });
                 }
-                self.sampler.sample(counters, now_ms)
+                (None, _) => {
+                    availability = sample.availability;
+                    total = None;
+                }
+                (Some(_), None) => {}
             }
-            None => {
-                self.sampler.reset();
-                self.device = None;
-                MetricSample::unavailable(MetricAvailability::Error)
-            }
+        }
+        self.samplers
+            .retain(|device, _| disks.iter().any(|(d, _)| d == device));
+        match total {
+            Some(rate) => MetricSample::available(rate),
+            None => MetricSample::unavailable(availability),
         }
     }
 }
@@ -115,8 +147,7 @@ impl Collector for StorageCollector {
 
     fn on_wake(&mut self) {
         self.capacity.expire();
-        self.sampler.reset();
-        self.device = None;
+        self.samplers.clear();
     }
 }
 
@@ -180,6 +211,8 @@ mod imp {
     #[link(name = "IOKit", kind = "framework")]
     extern "C" {
         fn IOBSDNameMatching(main_port: u32, options: u32, bsd_name: *const c_char) -> *mut c_void;
+        fn IOServiceMatching(name: *const c_char) -> *mut c_void;
+        fn IORegistryEntryGetRegistryEntryID(entry: IoObject, id: *mut u64) -> c_int;
         fn IOServiceGetMatchingServices(
             main_port: u32,
             matching: *mut c_void,
@@ -361,34 +394,66 @@ mod imp {
         })
     }
 
-    /// The driver behind `/`, resolved lazily and re-resolved every
-    /// `RE_RESOLVE_EVERY` reads so a remapped or replaced device is noticed.
-    #[derive(Default)]
-    pub struct RootDisk {
-        current: Option<(String, Object)>,
-        reads: u32,
+    /// At most this many storage devices are read per second.
+    const MAX_DISKS: usize = 32;
+
+    /// Whether a block-storage driver sits on a virtual device (a mounted disk
+    /// image): its device's Protocol Characteristics say so.
+    fn is_virtual(driver: IoObject) -> bool {
+        parents(driver).iter().any(|device| {
+            let Some(characteristics) = property(device.0, c"Protocol Characteristics") else {
+                return false;
+            };
+            if !cf::is_dictionary(characteristics.get()) {
+                return false;
+            }
+            // A mounted disk image says "Virtual Interface" (verified with
+            // `hdiutil attach`; its location is "File").
+            cf::dictionary_value(characteristics.get(), c"Physical Interconnect")
+                .and_then(cf::string_value::<64>)
+                .as_deref()
+                == Some("Virtual Interface")
+        })
     }
 
-    const RE_RESOLVE_EVERY: u32 = 30;
-
-    impl RootDisk {
-        pub fn read_counters(&mut self) -> Option<(DiskCounters, String)> {
-            if self.current.is_none() || self.reads.is_multiple_of(RE_RESOLVE_EVERY) {
-                match resolve() {
-                    Some((_, physical, driver)) => self.current = Some((physical, driver)),
-                    None => self.current = None,
-                }
-            }
-            self.reads = self.reads.wrapping_add(1);
-            let (name, driver) = self.current.as_ref()?;
-            match read_statistics(driver.0) {
-                Some(counters) => Some((counters, name.clone())),
-                None => {
-                    self.current = None; // resolve again next second
-                    None
-                }
+    /// The counters of every physical block-storage driver, each keyed by its
+    /// I/O Registry entry ID (stable while the device is attached). `None` when
+    /// the drivers cannot be listed.
+    pub fn physical_disk_counters() -> Option<Vec<(String, DiskCounters)>> {
+        let mut iterator = 0;
+        // SAFETY: the matching dictionary is consumed by the call; the
+        // iterator is released by `Object`.
+        unsafe {
+            let matching = IOServiceMatching(c"IOBlockStorageDriver".as_ptr());
+            if matching.is_null()
+                || IOServiceGetMatchingServices(0, matching, &mut iterator) != 0
+                || iterator == 0
+            {
+                return None;
             }
         }
+        let iterator = Object(iterator);
+        let mut disks = Vec::new();
+        loop {
+            // SAFETY: a valid iterator.
+            let next = unsafe { IOIteratorNext(iterator.0) };
+            if next == 0 {
+                break;
+            }
+            let driver = Object(next);
+            if disks.len() >= MAX_DISKS || is_virtual(driver.0) {
+                continue;
+            }
+            let mut id = 0u64;
+            // SAFETY: a valid entry and out pointer.
+            if unsafe { IORegistryEntryGetRegistryEntryID(driver.0, &mut id) } != 0 {
+                continue;
+            }
+            if let Some(counters) = read_statistics(driver.0) {
+                disks.push((format!("{id:x}"), counters));
+            }
+        }
+        Some(disks)
     }
 }
 
@@ -403,12 +468,8 @@ mod imp {
     pub fn probe() -> Option<RootDiskInfo> {
         None
     }
-    #[derive(Default)]
-    pub struct RootDisk;
-    impl RootDisk {
-        pub fn read_counters(&mut self) -> Option<(DiskCounters, String)> {
-            None
-        }
+    pub fn physical_disk_counters() -> Option<Vec<(String, DiskCounters)>> {
+        None
     }
 }
 
@@ -425,14 +486,14 @@ mod tests {
         }
     }
 
-    fn counters(read: u64, write: u64, device: &str) -> Option<(DiskCounters, String)> {
-        Some((
+    fn counters(read: u64, write: u64, device: &str) -> Option<Vec<(String, DiskCounters)>> {
+        Some(vec![(
+            device.to_string(),
             DiskCounters {
                 read_bytes: read,
                 write_bytes: write,
             },
-            device.to_string(),
-        ))
+        )])
     }
 
     #[test]
@@ -593,12 +654,102 @@ mod tests {
         println!("storage capacity: {:?}", read_capacity());
         assert!(info.mounted_from.starts_with("/dev/disk"), "{info:?}");
         assert!(metrics::storage::whole_disk_name(&info.physical_disk).is_some());
-        // The counters move between reads only if there was I/O; they never go backwards.
-        let mut disk = imp::RootDisk::default();
-        let (first, device) = disk.read_counters().expect("counters");
-        let (second, again) = disk.read_counters().expect("counters");
-        assert_eq!(device, again);
-        assert!(second.read_bytes >= first.read_bytes && second.write_bytes >= first.write_bytes);
+        // Every physical disk is listed, the root's among them, and counters
+        // never go backwards between reads.
+        let first = imp::physical_disk_counters().expect("block-storage drivers");
+        let second = imp::physical_disk_counters().expect("block-storage drivers");
+        println!("physical disks: {}", first.len());
+        assert!(!first.is_empty());
+        for (device, before) in &first {
+            if let Some((_, after)) = second.iter().find(|(d, _)| d == device) {
+                assert!(
+                    after.read_bytes >= before.read_bytes
+                        && after.write_bytes >= before.write_bytes
+                );
+            }
+        }
+    }
+
+    fn disks(list: &[(&str, u64, u64)]) -> Option<Vec<(String, DiskCounters)>> {
+        Some(
+            list.iter()
+                .map(|(device, read, write)| {
+                    (
+                        device.to_string(),
+                        DiskCounters {
+                            read_bytes: *read,
+                            write_bytes: *write,
+                        },
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn io_is_the_total_over_every_physical_disk() {
+        let script = Rc::new(RefCell::new(disks(&[
+            ("internal", 0, 0),
+            ("external", 0, 0),
+        ])));
+        let feed = script.clone();
+        let mut c = StorageCollector::with_sources(
+            Box::new(|| Some(cap(500, 100))),
+            Box::new(move || feed.borrow().clone()),
+        );
+        c.collect(0);
+        *script.borrow_mut() = disks(&[("internal", 1_000, 500), ("external", 4_000, 8_000)]);
+        let io = c.collect(1000).value.unwrap().io;
+        assert_eq!(
+            io.value,
+            Some(DiskRate {
+                read_bytes_per_s: 5_000,
+                write_bytes_per_s: 8_500
+            })
+        );
+    }
+
+    #[test]
+    fn an_attached_disk_needs_a_baseline_and_a_removed_one_stops_counting() {
+        let script = Rc::new(RefCell::new(disks(&[("internal", 0, 0)])));
+        let feed = script.clone();
+        let mut c = StorageCollector::with_sources(
+            Box::new(|| Some(cap(500, 100))),
+            Box::new(move || feed.borrow().clone()),
+        );
+        c.collect(0);
+        *script.borrow_mut() = disks(&[("internal", 1_000, 0)]);
+        assert!(c.collect(1000).value.unwrap().io.value.is_some());
+        // A USB disk plugged in: no baseline for it yet, so no total this second.
+        *script.borrow_mut() = disks(&[("internal", 2_000, 0), ("usb", 70_000, 0)]);
+        let attached = c.collect(2000).value.unwrap().io;
+        assert_eq!(
+            (attached.availability, attached.value),
+            (MetricAvailability::TemporarilyUnavailable, None)
+        );
+        *script.borrow_mut() = disks(&[("internal", 3_000, 0), ("usb", 90_000, 0)]);
+        assert_eq!(
+            c.collect(3000)
+                .value
+                .unwrap()
+                .io
+                .value
+                .unwrap()
+                .read_bytes_per_s,
+            21_000
+        );
+        // Ejected: the internal disk's total carries on.
+        *script.borrow_mut() = disks(&[("internal", 4_000, 0)]);
+        assert_eq!(
+            c.collect(4000)
+                .value
+                .unwrap()
+                .io
+                .value
+                .unwrap()
+                .read_bytes_per_s,
+            1_000
+        );
     }
 
     #[cfg(target_os = "macos")]

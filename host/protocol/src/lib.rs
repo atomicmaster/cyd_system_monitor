@@ -138,16 +138,20 @@ pub enum WifiCoverage {
     OutsideSupported = 2,
 }
 pub const MAX_SSID_BYTES: usize = 32;
-/// Network group (TB05): primary-route traffic and Host WiFi context, two
-/// halves with independent availability and source ages. A traffic half that
-/// is not Available has zero rates; SSID/BSSID are present only when
-/// `context_availability` is Available (`CORE_PROTOCOL.md`, group 9).
+/// At most this many active physical links in the Network group's key 13.
+pub const MAX_LINKS: usize = 8;
+/// Network group (TB05): traffic totals over the active physical links and
+/// Host WiFi context, two halves with independent availability and source
+/// ages. A traffic half that is not Available has zero rates; SSID/BSSID are
+/// present only when `context_availability` is Available
+/// (`CORE_PROTOCOL.md`, group 9).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkSnapshot {
     pub traffic_availability: Availability,
     pub traffic_age_ms: u32,
     pub route_kind: RouteKind,
-    /// The rates are the tunnel's own; never summed with the underlying link.
+    /// The primary route is a tunnel (a VPN) over `route_kind`. The rates are
+    /// still the physical links' totals, so tunnel traffic is never counted twice.
     pub via_tunnel: bool,
     pub rx_bytes_per_s: u64,
     pub tx_bytes_per_s: u64,
@@ -161,6 +165,10 @@ pub struct NetworkSnapshot {
     /// 0-32 raw octets.
     pub ssid: Vec<u8>,
     pub bssid: Option<[u8; 6]>,
+    /// The active physical links, one kind each (WiFi, Ethernet or other), at
+    /// most `MAX_LINKS`; `None` when the Host does not report them (key 13
+    /// absent: the device falls back to `route_kind`).
+    pub links: Option<Vec<RouteKind>>,
 }
 impl NetworkSnapshot {
     /// The rules shared with the C++ `ValidNetwork`: an encoder refuses and a
@@ -179,6 +187,15 @@ impl NetworkSnapshot {
         }
         if self.ssid.len() > MAX_SSID_BYTES {
             return false;
+        }
+        if let Some(links) = &self.links {
+            if links.len() > MAX_LINKS
+                || links
+                    .iter()
+                    .any(|k| !matches!(k, RouteKind::Wifi | RouteKind::Ethernet | RouteKind::Other))
+            {
+                return false;
+            }
         }
         (self.ssid.is_empty() && self.bssid.is_none())
             || self.context_availability == AssociationContext::Available
@@ -546,7 +563,8 @@ pub fn encode_groups(envelope: &Envelope, snapshot: &Snapshot) -> Result<Vec<u8>
     }
     if let Some(network) = network {
         uint(&mut c, 0, 9);
-        c.push(0xad);
+        // Thirteen entries, fourteen with the optional links.
+        c.push(if network.links.is_some() { 0xae } else { 0xad });
         for (k, v) in [
             (0, network.traffic_availability as u64),
             (1, network.traffic_age_ms as u64),
@@ -568,6 +586,11 @@ pub fn encode_groups(envelope: &Envelope, snapshot: &Snapshot) -> Result<Vec<u8>
             uint(&mut c, 0, k);
             uint(&mut c, 2, bytes.len() as u64);
             c.extend(bytes);
+        }
+        if let Some(links) = &network.links {
+            uint(&mut c, 0, 13);
+            uint(&mut c, 2, links.len() as u64);
+            c.extend(links.iter().map(|k| *k as u8));
         }
     }
     if let Some(utc_ms) = envelope.utc_ms {
@@ -967,8 +990,9 @@ fn read_byte_string(input: &[u8], p: &mut usize) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-/// The Network group: thirteen required fields (keys 10-12 are byte strings),
-/// unknown extra keys skipped (mirrors the C++ `ReadNetworkGroup`).
+/// The Network group: thirteen required fields (keys 10-12 are byte strings)
+/// and the optional links (key 13, a byte string of link kinds), unknown extra
+/// keys skipped (mirrors the C++ `ReadNetworkGroup`).
 fn decode_network_group(input: &[u8], p: &mut usize) -> Result<NetworkSnapshot, Error> {
     let count = read_uint(input, p, 5).ok_or(Error::Malformed)?;
     if count > 16 {
@@ -976,10 +1000,18 @@ fn decode_network_group(input: &[u8], p: &mut usize) -> Result<NetworkSnapshot, 
     }
     let mut value = [None; 10];
     let mut bytes: [Option<Vec<u8>>; 3] = [None, None, None];
+    let mut links: Option<Vec<u8>> = None;
     for _ in 0..count {
         let key = read_uint(input, p, 0).ok_or(Error::Malformed)? as usize;
-        if key > 12 {
+        if key > 13 {
             skip_value(input, p, 0)?;
+            continue;
+        }
+        if key == 13 {
+            if links.is_some() {
+                return Err(Error::Malformed);
+            }
+            links = Some(read_byte_string(input, p).ok_or(Error::Malformed)?);
             continue;
         }
         if key >= 10 {
@@ -1052,6 +1084,20 @@ fn decode_network_group(input: &[u8], p: &mut usize) -> Result<NetworkSnapshot, 
         station: mac(&station)?,
         ssid,
         bssid: mac(&bssid)?,
+        links: match links {
+            None => None,
+            Some(kinds) => Some(
+                kinds
+                    .iter()
+                    .map(|k| match k {
+                        1 => Ok(RouteKind::Wifi),
+                        2 => Ok(RouteKind::Ethernet),
+                        3 => Ok(RouteKind::Other),
+                        _ => Err(Error::Malformed),
+                    })
+                    .collect::<Result<_, _>>()?,
+            ),
+        },
     };
     if !snapshot.is_valid() {
         return Err(Error::Malformed);
@@ -2119,14 +2165,34 @@ mod tests {
             outside.network.unwrap().coverage,
             WifiCoverage::OutsideSupported
         );
-        // The largest group: 64-bit rates, 32-bit ages, a 32-byte SSID.
+        // Both links active: the rates are their totals, one kind each.
+        let (_, both) = decode_snapshot(&fixture("network-snapshot-v1-links.hex")).unwrap();
+        assert_eq!(
+            both.network.unwrap().links,
+            Some(vec![RouteKind::Wifi, RouteKind::Ethernet])
+        );
+        let (_, older) = decode_snapshot(&fixture("network-snapshot-v1.hex")).unwrap();
+        assert_eq!(
+            older.network.unwrap().links,
+            None,
+            "no key 13: not reported"
+        );
+        // The largest group: 64-bit rates, 32-bit ages, a 32-byte SSID, eight links.
         let max = fixture("network-snapshot-v1-max.hex");
         assert!(max.len() < 2048);
         let (envelope, snap) = decode_snapshot(&max).unwrap();
         let without = encode_groups(&envelope, &Snapshot::new(snap.cpu.clone())).unwrap();
-        assert_eq!(max.len() - without.len(), 98);
+        assert_eq!(max.len() - without.len(), 108);
         let n = snap.network.clone().unwrap();
         for bad in [
+            NetworkSnapshot {
+                links: Some(vec![RouteKind::Other; MAX_LINKS + 1]),
+                ..n.clone()
+            },
+            NetworkSnapshot {
+                links: Some(vec![RouteKind::None]),
+                ..n.clone()
+            },
             NetworkSnapshot {
                 ssid: vec![0; 33],
                 ..n.clone()

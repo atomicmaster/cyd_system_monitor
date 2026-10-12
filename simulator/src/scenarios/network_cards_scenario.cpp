@@ -9,6 +9,18 @@
 namespace simulator::scenarios {
 namespace {
 
+// The link icons as "wifi,ethernet,other".
+std::string Glyphs(const firmware::domain::MetricCardView& view) {
+  std::string text;
+  for (const auto glyph : view.links) {
+    text += std::string(text.empty() ? "" : ",") +
+            (glyph == firmware::domain::LinkGlyph::kWifi       ? "wifi"
+             : glyph == firmware::domain::LinkGlyph::kEthernet ? "ethernet"
+                                                               : "other");
+  }
+  return text;
+}
+
 // The rates as "D<down> U<up>", or empty when there are none.
 std::string Rates(const firmware::domain::MetricCardView& view) {
   return view.rates ? "D" + view.rates->first + " U" + view.rates->second : "";
@@ -65,16 +77,16 @@ int RunNetworkCards() {
   // WiFi primary route with rates and full context.
   push(2000, ++seq, Wifi(6, proto::WifiCoverage::kObservable, 0, 300));
   view = at(2000, "WiFi live with rates, channel 6");
-  result.Expect(Rates(view) == "D1.2M U340K" && view.note == "ch6 2.4G" && view.wifi &&
+  result.Expect(Rates(view) == "D1.2M U340K" && view.note == "ch6 2.4G" && Glyphs(view) == "wifi" &&
                     view.has_value && !view.dimmed && !view.show_bar,
                 "live WiFi rates with the observable channel note");
 
   // Ethernet.
   push(3000, ++seq, Base(proto::RouteKind::kEthernet, 45'000'000, 2'500'000));
   view = at(3000, "Ethernet primary route");
-  result.Expect(
-      Rates(view) == "D45M U2.5M" && view.note == "Ethernet" && !view.wifi && !view.dimmed,
-      "Ethernet shows its rates and no WiFi wording");
+  result.Expect(Rates(view) == "D45M U2.5M" && view.note.empty() && Glyphs(view) == "ethernet" &&
+                    !view.dimmed,
+                "Ethernet shows its rates under its icon, with no WiFi wording");
 
   // A tunnel as primary route: the tunnel's own rate, labelled, never summed
   // with the WiFi link beneath it.
@@ -84,8 +96,9 @@ int RunNetworkCards() {
   tunnel.tx_bytes_per_s = 100'000;
   push(4000, ++seq, tunnel);
   view = at(4000, "tunnel primary route over WiFi");
-  result.Expect(Rates(view) == "D900K U100K" && view.note == "VPN ch6 2.4G" && view.wifi,
-                "the tunnel's own rate is labelled VPN, not summed");
+  result.Expect(
+      Rates(view) == "D900K U100K" && view.note == "VPN ch6 2.4G" && Glyphs(view) == "wifi",
+      "the tunnel's own rate is labelled VPN, not summed");
 
   // A route change: the rate is unavailable, not zero, then recovers.
   auto changing = Base(proto::RouteKind::kEthernet, 0, 0);
@@ -112,7 +125,7 @@ int RunNetworkCards() {
   unknown.context_availability = proto::AssociationContext::kAuthorizedUnavailable;
   push(8000, ++seq, unknown);
   view = at(8000, "context unknown (authorized but unavailable)");
-  result.Expect(view.note.empty() && view.wifi && Rates(view) == "D50K U8.0K",
+  result.Expect(view.note.empty() && Glyphs(view) == "wifi" && Rates(view) == "D50K U8.0K",
                 "unknown context is explicit and never a guess");
 
   // Permission denied still shows a channel the provider could read without
@@ -128,12 +141,12 @@ int RunNetworkCards() {
   denied.channel = 0;
   push(9500, ++seq, denied);
   view = at(9500, "permission denied, no channel");
-  result.Expect(view.note.empty() && view.wifi, "denied with no band is unknown");
+  result.Expect(view.note.empty() && Glyphs(view) == "wifi", "denied with no band is unknown");
 
   // Provider absent: no context source at all; traffic still works.
   push(10'000, ++seq, Base(proto::RouteKind::kWifi, 2'000, 1'000));
   view = at(10'000, "provider absent, station identity present");
-  result.Expect(view.note.empty() && view.wifi && Rates(view) == "D2.0K U1.0K",
+  result.Expect(view.note.empty() && Glyphs(view) == "wifi" && Rates(view) == "D2.0K U1.0K",
                 "an absent provider leaves traffic live and context unknown");
 
   // Offline and unreadable.
@@ -161,11 +174,12 @@ int RunNetworkCards() {
                 "stale traffic is retained, its meters drop, and the link line says Last");
   push(22'000, ++seq, Wifi(6, proto::WifiCoverage::kObservable, 0, 15'000));
   view = at(22'000, "traffic live while the WiFi context is 15 s old");
-  result.Expect(!view.dimmed && Rates(view) == "D1.2M U340K" && view.note.empty() && view.wifi,
-                "a stale context reads unknown while live rates continue");
+  result.Expect(
+      !view.dimmed && Rates(view) == "D1.2M U340K" && view.note.empty() && Glyphs(view) == "wifi",
+      "a stale context reads unknown while live rates continue");
   push(23'000, ++seq, Wifi(6, proto::WifiCoverage::kObservable, 4'000, 16'000));
   view = at(23'000, "old samples re-sent in a new snapshot: both stale");
-  result.Expect(view.dimmed && view.note == "Last" && view.wifi,
+  result.Expect(view.dimmed && view.note == "Last" && Glyphs(view) == "wifi",
                 "a re-sent old sample does not look fresh");
   push(24'000, ++seq, Wifi(6, proto::WifiCoverage::kObservable, 100, 200));
   view = at(24'000, "fresh samples again");
@@ -175,8 +189,9 @@ int RunNetworkCards() {
   push(50'000, ++seq, Wifi(6, proto::WifiCoverage::kObservable, 0, 0));
   at(52'900, "last frame 2.9 s ago: still live");
   view = at(85'000, "35 s without a frame: link lost");
-  result.Expect(view.dimmed && Rates(view) == "D1.2M U340K" && view.note == "Last" && view.wifi,
-                "link loss retains rates (Last on the link line) and drops the context to unknown");
+  result.Expect(
+      view.dimmed && Rates(view) == "D1.2M U340K" && view.note == "Last" && Glyphs(view) == "wifi",
+      "link loss retains rates (Last on the link line) and drops the context to unknown");
 
   // Offline goes stale like any reading: a stale route sample or a lost link
   // retains it dimmed as "Last Offline", never a live-looking "Offline".
@@ -193,6 +208,31 @@ int RunNetworkCards() {
   view = at(126'000, "offline, then 34 s without a frame: link lost");
   result.Expect(view.note == "Last Offline" && view.dimmed,
                 "link loss retains offline as Last Offline, dimmed");
+
+  // Several links: one icon each, WiFi first; the band follows the icons.
+  auto both = Wifi(6, proto::WifiCoverage::kObservable, 0, 300);
+  both.links = std::vector<proto::RouteKind>{proto::RouteKind::kWifi, proto::RouteKind::kEthernet};
+  push(130'000, ++seq, both);
+  view = at(130'000, "WiFi and Ethernet both up: totals, two icons");
+  result.Expect(
+      Glyphs(view) == "wifi,ethernet" && view.note == "ch6" && Rates(view) == "D1.2M U340K",
+      "each active link has its own icon, the rates are their totals, and the band is short"
+      " beside other icons");
+  auto many = both;
+  many.links = std::vector<proto::RouteKind>{proto::RouteKind::kWifi, proto::RouteKind::kEthernet,
+                                             proto::RouteKind::kEthernet, proto::RouteKind::kOther,
+                                             proto::RouteKind::kOther};
+  push(131'000, ++seq, many);
+  view = at(131'000, "five links: three icons and +2");
+  result.Expect(Glyphs(view) == "wifi,ethernet,ethernet" && view.note == "+2 ch6",
+                "links beyond three are counted as +N");
+  auto wired_offline = Base(proto::RouteKind::kNone, 0, 0);
+  wired_offline.traffic_availability = proto::Availability::kAbsent;
+  wired_offline.links = std::vector<proto::RouteKind>{proto::RouteKind::kEthernet};
+  push(132'000, ++seq, wired_offline);
+  view = at(132'000, "a cable up but no route: offline beside its icon");
+  result.Expect(Glyphs(view) == "ethernet" && view.note == "Offline" && !view.has_value,
+                "a link with no route reads Offline beside its icon");
 
   return scenario.Finish();
 }

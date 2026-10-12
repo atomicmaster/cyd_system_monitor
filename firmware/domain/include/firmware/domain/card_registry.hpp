@@ -5,6 +5,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 #include "firmware/domain/host_state.hpp"
 
@@ -30,6 +31,12 @@ struct RatePair {
   uint16_t second_per_mille = 0;
 };
 
+// One link icon on the rates layout's link line.
+enum class LinkGlyph : uint8_t { kWifi, kEthernet, kOther };
+
+// At most this many link icons fit the link line; more read "+N" in the note.
+inline constexpr size_t kMaxLinkGlyphs = 3;
+
 // What one metric card shows, as plain text and flags, so the board and the
 // simulator render identically and tests need no LVGL. The status bar
 // (connection and clock) is not part of a card; see CpuView.
@@ -54,8 +61,8 @@ struct MetricCardView {
   std::string meter_value;    // "91%" or "--"
   bool show_meter = false;
   uint16_t meter_per_mille = 0;
-  // kRates: the note is a WiFi link, drawn after a WiFi glyph.
-  bool wifi = false;
+  // kRates: one icon per active physical link, drawn before the note.
+  std::vector<LinkGlyph> links;
 };
 
 // The wording under a `--` value for a metric that is not available ("" when

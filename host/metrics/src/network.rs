@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Network (TB05): primary-route traffic and Host WiFi coverage. Pure and
-//! fixture-tested; the macOS system view lives in `platform-macos`.
+//! Network (TB05): traffic totals over the active physical links and Host WiFi
+//! coverage. Pure and fixture-tested; the macOS system view lives in
+//! `platform-macos`.
 //!
 //! Rules (`docs/host-metrics.md`, `CONTEXT.md`):
-//! - Only the *primary route's* interface is reported. When that interface is
-//!   a tunnel, the tunnel's own rate is reported with `via_tunnel` set and is
-//!   never summed with the interface beneath it.
-//! - A rate is unavailable (never zero) on the first sample, a counter
+//! - The rates are the totals over every active physical link
+//!   ([`active_links`]): WiFi and Ethernet ports with a link, plus the primary
+//!   route's own interface when it is some other non-tunnel link. Tunnels are
+//!   never counted (their traffic crosses a physical link already); a tunnel
+//!   primary route only sets `via_tunnel`.
+//! - A total is unavailable (never zero) when any of its links has no
+//!   comparable previous sample: the first sample, a link joining, a counter
 //!   decrease, a non-monotonic clock, an over-long gap, or a change of
-//!   route, interface or WiFi Host Station Identity (each re-baselines).
+//!   interface or WiFi Host Station Identity (each re-baselines that link). A
+//!   link leaving simply stops counting.
 //! - Host Station Identity needs no permission; band/channel and SSID/BSSID
 //!   come only from a [`WifiContextProvider`](crate::wifi_context).
 
@@ -60,6 +65,10 @@ pub struct InterfaceInfo {
     pub kind: LinkKind,
     /// `IFF_UP` and `IFF_RUNNING`.
     pub up_running: bool,
+    /// A WiFi or Ethernet port with an active link (carrier or association):
+    /// a physical link whose traffic the totals count. macOS keeps unplugged
+    /// ports up and running, so `up_running` alone does not say this.
+    pub link_active: bool,
     /// The current `AF_LINK` address, for a WiFi interface (Host Station
     /// Identity, which may be a private randomized address).
     pub station: Option<[u8; 6]>,
@@ -236,8 +245,48 @@ pub fn coverage_for(band: Option<WifiBand>, channel: Option<u16>) -> (Coverage, 
     }
 }
 
+/// The physical links whose traffic the totals count, WiFi first, then
+/// Ethernet, then others, each in interface order: every WiFi or Ethernet port
+/// with an active link, plus the primary route's own interface when it is
+/// some other link that is not a tunnel (a Thunderbolt bridge), so the route
+/// is never left uncounted. At most [`MAX_LINKS`].
+pub fn active_links<'a>(
+    view: &'a SystemView,
+    primary: Option<&PrimaryRoute>,
+) -> Vec<&'a InterfaceInfo> {
+    let mut links: Vec<&InterfaceInfo> = view
+        .interfaces
+        .iter()
+        .filter(|i| {
+            (i.link_active && matches!(i.kind, LinkKind::Wifi | LinkKind::Ethernet))
+                || primary.is_some_and(|p| {
+                    !p.via_tunnel && p.interface == i.name && i.kind == LinkKind::Other
+                })
+        })
+        .collect();
+    let rank = |kind: LinkKind| match kind {
+        LinkKind::Wifi => 0,
+        LinkKind::Ethernet => 1,
+        _ => 2,
+    };
+    links.sort_by_key(|i| (rank(i.kind), i.index));
+    links.truncate(MAX_LINKS);
+    links
+}
+
+/// At most this many links are counted and reported (the wire bound).
+pub const MAX_LINKS: usize = 8;
+
+fn link_kind(kind: LinkKind) -> RouteKind {
+    match kind {
+        LinkKind::Wifi => RouteKind::Wifi,
+        LinkKind::Ethernet => RouteKind::Ethernet,
+        _ => RouteKind::Other,
+    }
+}
+
 /// The traffic half of one second's reading.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrafficHalf {
     /// Available when `rate` is set; TemporarilyUnavailable while a baseline
     /// is being (re)built; Absent when offline; Error when unreadable.
@@ -245,6 +294,8 @@ pub struct TrafficHalf {
     pub route_kind: RouteKind,
     pub via_tunnel: bool,
     pub rate: Option<NetworkRate>,
+    /// The kinds of the links the rate totals, one each ([`active_links`]).
+    pub links: Vec<RouteKind>,
 }
 
 /// The WiFi half: Host Station Identity from the daemon itself plus whatever
@@ -272,7 +323,8 @@ pub struct NetworkReading {
 pub struct NetworkCollector {
     system: Box<dyn NetworkSystem>,
     provider: Box<dyn WifiContextProvider>,
-    sampler: RateSampler,
+    /// One rate baseline per link, keyed by interface, index and WiFi identity.
+    samplers: std::collections::HashMap<String, RateSampler>,
 }
 
 impl NetworkCollector {
@@ -280,51 +332,89 @@ impl NetworkCollector {
         Self {
             system,
             provider,
-            sampler: RateSampler::default(),
+            samplers: std::collections::HashMap::new(),
         }
     }
 
     fn traffic(&mut self, view: Option<&SystemView>, now_ms: u64) -> TrafficHalf {
-        let half = |availability, route_kind, via_tunnel| TrafficHalf {
-            availability,
-            route_kind,
-            via_tunnel,
-            rate: None,
-        };
         let Some(view) = view else {
-            self.sampler.reset();
-            return half(MetricAvailability::Error, RouteKind::Unknown, false);
+            self.samplers.clear();
+            return TrafficHalf {
+                availability: MetricAvailability::Error,
+                route_kind: RouteKind::Unknown,
+                via_tunnel: false,
+                rate: None,
+                links: Vec::new(),
+            };
         };
-        let Some(route) = select_primary_route(view) else {
-            self.sampler.reset();
-            return half(MetricAvailability::Absent, RouteKind::None, false);
+        let route = select_primary_route(view);
+        let links = active_links(view, route.as_ref());
+        let kinds = links.iter().map(|i| link_kind(i.kind)).collect();
+        let Some(route) = route else {
+            self.samplers.clear();
+            return TrafficHalf {
+                availability: MetricAvailability::Absent,
+                route_kind: RouteKind::None,
+                via_tunnel: false,
+                rate: None,
+                links: kinds,
+            };
         };
-        let counters = view
-            .interfaces
-            .iter()
-            .find(|i| i.name == route.interface)
-            .and_then(|i| i.counters);
-        let Some(counters) = counters else {
-            self.sampler.reset();
-            return half(MetricAvailability::Error, route.kind, route.via_tunnel);
-        };
-        // Route, interface (name and index) and WiFi station identity all
-        // decide whether a previous counter is comparable to this one.
-        let key = format!(
-            "{}#{}#{}#{}",
-            route.interface,
-            route.index,
-            route.via_tunnel,
-            route
-                .station
-                .map_or(String::new(), |m| m.map(|b| format!("{b:02x}")).concat())
-        );
-        let sample = self.sampler.sample(&key, counters, now_ms);
+        // Every link is sampled each second, so each keeps its own baseline;
+        // links that left are forgotten.
+        let mut total = Some(NetworkRate {
+            rx_bytes_per_s: 0,
+            tx_bytes_per_s: 0,
+        });
+        let mut availability = MetricAvailability::Available;
+        let mut seen = std::collections::HashSet::new();
+        for link in &links {
+            let key = format!(
+                "{}#{}#{}",
+                link.name,
+                link.index,
+                link.station
+                    .map_or(String::new(), |m| m.map(|b| format!("{b:02x}")).concat())
+            );
+            seen.insert(link.name.clone());
+            let Some(counters) = link.counters else {
+                availability = MetricAvailability::Error;
+                total = None;
+                continue;
+            };
+            let sample = self
+                .samplers
+                .entry(link.name.clone())
+                .or_default()
+                .sample(&key, counters, now_ms);
+            match (sample.value, total) {
+                (Some(rate), Some(sum)) => {
+                    total = Some(NetworkRate {
+                        rx_bytes_per_s: sum.rx_bytes_per_s.saturating_add(rate.rx_bytes_per_s),
+                        tx_bytes_per_s: sum.tx_bytes_per_s.saturating_add(rate.tx_bytes_per_s),
+                    });
+                }
+                (None, _) => {
+                    if availability != MetricAvailability::Error {
+                        availability = sample.availability;
+                    }
+                    total = None;
+                }
+                (Some(_), None) => {}
+            }
+        }
+        self.samplers.retain(|name, _| seen.contains(name));
+        if links.is_empty() {
+            // A route with no link to count (cannot normally happen).
+            availability = MetricAvailability::Error;
+            total = None;
+        }
         TrafficHalf {
-            availability: sample.availability,
+            availability,
             route_kind: route.kind,
             via_tunnel: route.via_tunnel,
-            rate: sample.value,
+            rate: total,
+            links: kinds,
         }
     }
 
@@ -383,7 +473,7 @@ impl Collector for NetworkCollector {
     /// The provider's context needs nothing: it is aged by the same clock and
     /// dropped past 15 s.
     fn on_wake(&mut self) {
-        self.sampler.reset();
+        self.samplers.clear();
         self.system.invalidate();
     }
 }
@@ -407,6 +497,7 @@ mod tests {
             index,
             kind,
             up_running: true,
+            link_active: matches!(kind, LinkKind::Wifi | LinkKind::Ethernet),
             station: (kind == LinkKind::Wifi).then_some([2, 0, 0, 0, 0, index as u8]),
             counters: Some(counters(rx, tx)),
         }
@@ -707,7 +798,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tunnel_reports_its_own_rate_and_never_the_sum() {
+    fn a_tunnel_is_never_counted_on_top_of_the_link_under_it() {
         let view = |tun: u64, en0: u64| SystemView {
             interfaces: vec![
                 iface("utun4", 20, LinkKind::Tunnel, tun, tun),
@@ -723,7 +814,137 @@ mod tests {
         let t = c.collect(1000).value.unwrap().traffic;
         assert!(t.via_tunnel);
         assert_eq!(t.route_kind, RouteKind::Wifi);
-        assert_eq!(t.rate.unwrap().rx_bytes_per_s, 1_000); // not 2_400
+        // The physical link's total, which already carries the tunnel: not 2_400.
+        assert_eq!(t.rate.unwrap().rx_bytes_per_s, 1_400);
+        assert_eq!(t.links, vec![RouteKind::Wifi]);
+    }
+
+    #[test]
+    fn the_totals_cover_every_active_physical_link() {
+        let view = |wifi: u64, eth: u64| SystemView {
+            interfaces: vec![
+                iface("en0", 6, LinkKind::Wifi, wifi, wifi / 2),
+                iface("en5", 7, LinkKind::Ethernet, eth, eth / 4),
+            ],
+            default_routes: vec![route("en5", false), route("en0", true)],
+        };
+        let mut c = collector(
+            vec![Some(view(0, 0)), Some(view(1_000, 8_000))],
+            FixtureProvider::absent(),
+        );
+        assert_eq!(c.collect(0).value.unwrap().traffic.links.len(), 2);
+        let t = c.collect(1000).value.unwrap().traffic;
+        assert_eq!(t.route_kind, RouteKind::Ethernet);
+        assert_eq!(
+            t.rate.unwrap(),
+            NetworkRate {
+                rx_bytes_per_s: 9_000,
+                tx_bytes_per_s: 2_500
+            }
+        );
+        // One per link, WiFi first.
+        assert_eq!(t.links, vec![RouteKind::Wifi, RouteKind::Ethernet]);
+    }
+
+    #[test]
+    fn unplugged_ports_and_virtual_interfaces_are_not_links() {
+        let mut unplugged = iface("en1", 10, LinkKind::Ethernet, 0, 0);
+        unplugged.link_active = false;
+        let view = |n: u64| SystemView {
+            interfaces: vec![
+                iface("en0", 6, LinkKind::Wifi, n, n),
+                unplugged.clone(),
+                iface("awdl0", 16, LinkKind::Other, n * 7, n * 7),
+                iface("bridge0", 15, LinkKind::Other, n * 5, n * 5),
+                iface("utun0", 18, LinkKind::Tunnel, n * 3, n * 3),
+                iface("lo0", 1, LinkKind::Loopback, n * 9, n * 9),
+            ],
+            default_routes: vec![route("en0", false), route("utun0", true)],
+        };
+        let mut c = collector(
+            vec![Some(view(0)), Some(view(1_000))],
+            FixtureProvider::absent(),
+        );
+        c.collect(0);
+        let t = c.collect(1000).value.unwrap().traffic;
+        assert_eq!(t.links, vec![RouteKind::Wifi]);
+        assert_eq!(t.rate.unwrap().rx_bytes_per_s, 1_000);
+    }
+
+    #[test]
+    fn a_primary_route_over_another_kind_of_link_is_still_counted() {
+        let view = |n: u64| SystemView {
+            interfaces: vec![iface("bridge0", 15, LinkKind::Other, n, n)],
+            default_routes: vec![route("bridge0", false)],
+        };
+        let mut c = collector(
+            vec![Some(view(0)), Some(view(2_000))],
+            FixtureProvider::absent(),
+        );
+        c.collect(0);
+        let t = c.collect(1000).value.unwrap().traffic;
+        assert_eq!(t.links, vec![RouteKind::Other]);
+        assert_eq!(t.rate.unwrap().rx_bytes_per_s, 2_000);
+    }
+
+    #[test]
+    fn a_joining_link_makes_the_total_unavailable_once_and_a_leaving_one_does_not() {
+        let one = |n: u64| SystemView {
+            interfaces: vec![iface("en0", 6, LinkKind::Wifi, n, n)],
+            default_routes: vec![route("en0", false)],
+        };
+        let two = |n: u64, m: u64| SystemView {
+            interfaces: vec![
+                iface("en0", 6, LinkKind::Wifi, n, n),
+                iface("en5", 7, LinkKind::Ethernet, m, m),
+            ],
+            default_routes: vec![route("en0", false)],
+        };
+        let mut c = collector(
+            vec![
+                Some(one(0)),
+                Some(one(1_000)),
+                Some(two(2_000, 50_000)), // Ethernet plugged in
+                Some(two(3_000, 51_000)),
+                Some(one(4_000)), // and unplugged
+                Some(one(5_000)),
+            ],
+            FixtureProvider::absent(),
+        );
+        c.collect(0);
+        assert!(c.collect(1000).value.unwrap().traffic.rate.is_some());
+        let joined = c.collect(2000).value.unwrap().traffic;
+        assert_eq!(
+            (joined.availability, joined.rate),
+            (MetricAvailability::TemporarilyUnavailable, None)
+        );
+        assert_eq!(
+            c.collect(3000)
+                .value
+                .unwrap()
+                .traffic
+                .rate
+                .unwrap()
+                .rx_bytes_per_s,
+            2_000
+        );
+        // The remaining link's total is still a true total.
+        let left = c.collect(4000).value.unwrap().traffic;
+        assert_eq!(left.rate.unwrap().rx_bytes_per_s, 1_000);
+        assert_eq!(left.links, vec![RouteKind::Wifi]);
+    }
+
+    #[test]
+    fn with_no_route_the_active_links_are_still_reported() {
+        let view = SystemView {
+            interfaces: vec![iface("en0", 6, LinkKind::Wifi, 0, 0)],
+            default_routes: vec![],
+        };
+        let mut c = collector(vec![Some(view)], FixtureProvider::absent());
+        let t = c.collect(0).value.unwrap().traffic;
+        assert_eq!(t.availability, MetricAvailability::Absent);
+        assert_eq!(t.route_kind, RouteKind::None);
+        assert_eq!(t.links, vec![RouteKind::Wifi]);
     }
 
     #[test]

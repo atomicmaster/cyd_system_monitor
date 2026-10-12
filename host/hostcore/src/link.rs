@@ -513,6 +513,7 @@ mod tests {
                         index: 6,
                         kind: LinkKind::Wifi,
                         up_running: true,
+                        link_active: true,
                         station: Some([2, 0, 0, 0, 0, 6]),
                         counters: Some(InterfaceCounters {
                             rx_bytes: self.0,
@@ -546,13 +547,13 @@ mod tests {
                 }),
                 Box::new(move || {
                     disk += 4_096;
-                    Some((
+                    Some(vec![(
+                        "disk0".into(),
                         DiskCounters {
                             read_bytes: disk,
                             write_bytes: disk,
                         },
-                        "disk0".into(),
-                    ))
+                    )])
                 }),
             )),
             Box::new(BatteryCollector::with_sources(

@@ -584,6 +584,7 @@ fn a_network_group_reaches_the_firmware_state_and_context_is_independent_of_rate
         station: Some([2, 0, 0, 0, 0, 1]),
         ssid: Vec::new(),
         bssid: None,
+        links: Some(vec![RouteKind::Wifi, RouteKind::Ethernet]),
     };
     let frame = client
         .snapshot(

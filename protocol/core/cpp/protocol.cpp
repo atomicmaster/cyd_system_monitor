@@ -174,15 +174,16 @@ Error EncodeControlBody(const Envelope &e, std::vector<uint8_t> *cbor) {
 bool ValidNetwork(const NetworkSnapshot &n) {
   if (static_cast<uint8_t>(n.traffic_availability) >
           static_cast<uint8_t>(Availability::kError) ||
-      static_cast<uint8_t>(n.route_kind) > static_cast<uint8_t>(RouteKind::kNone) ||
+      static_cast<uint8_t>(n.route_kind) >
+          static_cast<uint8_t>(RouteKind::kNone) ||
       static_cast<uint8_t>(n.context_availability) >
           static_cast<uint8_t>(AssociationContext::kError) ||
       static_cast<uint8_t>(n.coverage) >
           static_cast<uint8_t>(WifiCoverage::kOutsideSupported))
     return false;
   // A tunnel needs a route to be under; no data means zero rates.
-  if (n.via_tunnel && (n.route_kind == RouteKind::kUnknown ||
-                       n.route_kind == RouteKind::kNone))
+  if (n.via_tunnel &&
+      (n.route_kind == RouteKind::kUnknown || n.route_kind == RouteKind::kNone))
     return false;
   if (n.traffic_availability != Availability::kAvailable &&
       (n.rx_bytes_per_s != 0 || n.tx_bytes_per_s != 0))
@@ -191,6 +192,15 @@ bool ValidNetwork(const NetworkSnapshot &n) {
     return false;
   if (n.ssid.size() > kMaxSsidBytes)
     return false;
+  if (n.links) {
+    if (n.links->size() > kMaxLinks)
+      return false;
+    for (const RouteKind kind : *n.links) {
+      if (kind != RouteKind::kWifi && kind != RouteKind::kEthernet &&
+          kind != RouteKind::kOther)
+        return false;
+    }
+  }
   // SSID and BSSID are only ever present when the context is available.
   if ((!n.ssid.empty() || n.bssid.has_value()) &&
       n.context_availability != AssociationContext::kAvailable)
@@ -201,9 +211,9 @@ bool ValidNetwork(const NetworkSnapshot &n) {
 Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
                  const SnapshotGroups *groups, std::vector<uint8_t> *cbor) {
   cbor->clear();
-  const uint8_t envelope_fields =
-      6 + e.utc_ms.has_value() + e.utc_uncertainty_ms.has_value() +
-      e.local_offset_minutes.has_value();
+  const uint8_t envelope_fields = 6 + e.utc_ms.has_value() +
+                                  e.utc_uncertainty_ms.has_value() +
+                                  e.local_offset_minutes.has_value();
   cbor->push_back(static_cast<uint8_t>(0xa0 | envelope_fields));
   UInt(cbor, 0, 0);
   UInt(cbor, 0, e.version.major);
@@ -223,7 +233,7 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
     const auto *agents = groups->agents ? &*groups->agents : nullptr;
     const auto *network = groups->network ? &*groups->network : nullptr;
     Map(cbor, 5 + (ram ? 1 : 0) + (storage ? 1 : 0) + (battery ? 1 : 0) +
-            (agents ? 1 : 0) + (network ? 1 : 0));
+                  (agents ? 1 : 0) + (network ? 1 : 0));
     UInt(cbor, 0, 0);
     UInt(cbor, 0, static_cast<uint8_t>(cpu->availability));
     UInt(cbor, 0, 1);
@@ -314,16 +324,17 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
       if (!ValidNetwork(*network))
         return Error::kMalformed;
       UInt(cbor, 0, 9);
-      Map(cbor, 13);
-      const uint64_t values[9] = {static_cast<uint8_t>(network->traffic_availability),
-                                  network->traffic_age_ms,
-                                  static_cast<uint8_t>(network->route_kind),
-                                  network->via_tunnel ? 1u : 0u,
-                                  network->rx_bytes_per_s,
-                                  network->tx_bytes_per_s,
-                                  static_cast<uint8_t>(network->context_availability),
-                                  network->context_age_ms,
-                                  static_cast<uint8_t>(network->coverage)};
+      Map(cbor, network->links ? 14 : 13);
+      const uint64_t values[9] = {
+          static_cast<uint8_t>(network->traffic_availability),
+          network->traffic_age_ms,
+          static_cast<uint8_t>(network->route_kind),
+          network->via_tunnel ? 1u : 0u,
+          network->rx_bytes_per_s,
+          network->tx_bytes_per_s,
+          static_cast<uint8_t>(network->context_availability),
+          network->context_age_ms,
+          static_cast<uint8_t>(network->coverage)};
       for (uint64_t key = 0; key < 9; ++key) {
         UInt(cbor, 0, key);
         UInt(cbor, 0, values[key]);
@@ -338,6 +349,13 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
       UInt(cbor, 0, 12);
       Bytes(cbor, network->bssid ? std::span<const uint8_t>(*network->bssid)
                                  : std::span<const uint8_t>());
+      if (network->links) {
+        std::vector<uint8_t> kinds;
+        for (const RouteKind kind : *network->links)
+          kinds.push_back(static_cast<uint8_t>(kind));
+        UInt(cbor, 0, 13);
+        Bytes(cbor, kinds);
+      }
     }
   } else {
     const Error error = EncodeControlBody(e, cbor);
@@ -495,7 +513,8 @@ Error EncodeCpuSnapshot(const Envelope &e, const CpuSnapshot &cpu,
 }
 // A metric group: five required fields, unknown extra keys skipped, values
 // range-checked. Returns false for anything malformed.
-bool ReadRamGroup(std::span<const uint8_t> c, std::size_t *p, RamSnapshot *ram) {
+bool ReadRamGroup(std::span<const uint8_t> c, std::size_t *p,
+                  RamSnapshot *ram) {
   uint64_t count;
   if (!ReadUInt(c, p, 5, &count) || count > 16)
     return false;
@@ -518,8 +537,9 @@ bool ReadRamGroup(std::span<const uint8_t> c, std::size_t *p, RamSnapshot *ram) 
     if (!present)
       return false;
   }
-  if (value[0] > static_cast<uint8_t>(Availability::kError) || value[1] > value[2] ||
-      value[3] > UINT32_MAX || value[4] > static_cast<uint8_t>(Freshness::kStale))
+  if (value[0] > static_cast<uint8_t>(Availability::kError) ||
+      value[1] > value[2] || value[3] > UINT32_MAX ||
+      value[4] > static_cast<uint8_t>(Freshness::kStale))
     return false;
   ram->availability = static_cast<Availability>(value[0]);
   ram->used_bytes = value[1];
@@ -650,21 +670,22 @@ bool ReadAgentsGroup(std::span<const uint8_t> c, std::size_t *p,
     agents->state[i] = static_cast<AgentState>(value[2 + i]);
   return true;
 }
-// The Network group: thirteen required fields (three of them byte strings),
-// unknown extra keys skipped; the shared ValidNetwork rules apply.
+// The Network group: thirteen required fields (three of them byte strings)
+// and the optional links (key 13, a byte string of link kinds), unknown extra
+// keys skipped; the shared ValidNetwork rules apply.
 bool ReadNetworkGroup(std::span<const uint8_t> c, std::size_t *p,
                       NetworkSnapshot *network) {
   uint64_t count;
   if (!ReadUInt(c, p, 5, &count) || count > 16)
     return false;
-  bool seen[13] = {};
+  bool seen[14] = {};
   uint64_t value[10] = {};
-  std::vector<uint8_t> bytes[3];
+  std::vector<uint8_t> bytes[4]; // station, SSID, BSSID, links
   for (uint64_t i = 0; i < count; ++i) {
     uint64_t key;
     if (!ReadUInt(c, p, 0, &key))
       return false;
-    if (key > 12) {
+    if (key > 13) {
       if (!Skip(c, p))
         return false;
       continue;
@@ -679,13 +700,14 @@ bool ReadNetworkGroup(std::span<const uint8_t> c, std::size_t *p,
     }
     seen[key] = true;
   }
-  for (bool present : seen) {
-    if (!present)
+  for (int key = 0; key < 13; ++key) { // key 13 (links) is optional
+    if (!seen[key])
       return false;
   }
   if (value[0] > static_cast<uint8_t>(Availability::kError) ||
-      value[1] > UINT32_MAX || value[2] > static_cast<uint8_t>(RouteKind::kNone) ||
-      value[3] > 1 || value[6] > static_cast<uint8_t>(AssociationContext::kError) ||
+      value[1] > UINT32_MAX ||
+      value[2] > static_cast<uint8_t>(RouteKind::kNone) || value[3] > 1 ||
+      value[6] > static_cast<uint8_t>(AssociationContext::kError) ||
       value[7] > UINT32_MAX ||
       value[8] > static_cast<uint8_t>(WifiCoverage::kOutsideSupported) ||
       value[9] > 0xff)
@@ -716,14 +738,24 @@ bool ReadNetworkGroup(std::span<const uint8_t> c, std::size_t *p,
     n.bssid.emplace();
     std::copy(bytes[2].begin(), bytes[2].end(), n.bssid->begin());
   }
+  if (seen[13]) {
+    n.links.emplace();
+    for (const uint8_t kind : bytes[3]) {
+      if (kind < 1 || kind > 3)
+        return false;
+      n.links->push_back(static_cast<RouteKind>(kind));
+    }
+  }
   if (!ValidNetwork(n))
     return false;
   *network = std::move(n);
   return true;
 }
-// Reads one optional group into `slot`; a group that appears twice is malformed.
+// Reads one optional group into `slot`; a group that appears twice is
+// malformed.
 template <typename Group>
-bool ReadGroup(std::span<const uint8_t> c, std::size_t *p, std::optional<Group> *slot,
+bool ReadGroup(std::span<const uint8_t> c, std::size_t *p,
+               std::optional<Group> *slot,
                bool (*read)(std::span<const uint8_t>, std::size_t *, Group *)) {
   if (slot->has_value())
     return false;
@@ -956,7 +988,8 @@ void FrameStream::Push(std::span<const uint8_t> bytes) {
 }
 
 void FrameStream::DropLeadingByte() {
-  if (buffer_.empty()) return;
+  if (buffer_.empty())
+    return;
   buffer_.erase(buffer_.begin());
   ++dropped_bytes_;
 }

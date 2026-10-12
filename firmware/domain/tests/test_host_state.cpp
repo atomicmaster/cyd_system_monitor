@@ -255,6 +255,7 @@ int main() {
       g.context_age_ms = context_age;
       g.coverage = proto::WifiCoverage::kObservable;
       g.channel = 6;
+      g.links = std::vector<proto::RouteKind>{proto::RouteKind::kWifi, proto::RouteKind::kEthernet};
       std::vector<uint8_t> frame;
       proto::EncodeSnapshot(env, c, {.network = g}, &frame);
       proto::Decoded decoded;
@@ -266,6 +267,8 @@ int main() {
     reducer.ApplySnapshot(snapshot(1, 500, 1000), 100'000, 0);
     const auto& n = reducer.state().network;
     if (!n.has_data || n.rx_bytes_per_s != 1000 || n.channel != 6) return 60;
+    if (!n.links || n.links->size() != 2 || (*n.links)[1] != proto::RouteKind::kEthernet)
+      return 59;               // one kind per active link reaches the state
     reducer.Advance(102'499);  // traffic sampled at 99,500; context at 99,000
     if (n.traffic_freshness != proto::Freshness::kFresh) return 61;
     reducer.Advance(102'500);

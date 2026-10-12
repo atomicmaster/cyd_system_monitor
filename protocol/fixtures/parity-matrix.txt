@@ -138,6 +138,7 @@ network-5ghz-outside|network-snapshot-v1-5ghz-outside.hex|cpu|none
 network-bad-bssid-length|network-snapshot-v1-bad-bssid-length.hex|cpu|malformed
 network-bad-context|network-snapshot-v1-bad-context.hex|cpu|malformed
 network-bad-coverage|network-snapshot-v1-bad-coverage.hex|cpu|malformed
+network-bad-link-kind|network-snapshot-v1-bad-link-kind.hex|cpu|malformed
 network-bad-route-kind|network-snapshot-v1-bad-route-kind.hex|cpu|malformed
 network-bad-station-length|network-snapshot-v1-bad-station-length.hex|cpu|malformed
 network-bad-traffic-availability|network-snapshot-v1-bad-traffic-availability.hex|cpu|malformed
@@ -158,6 +159,12 @@ network-ctx-unsupported|network-snapshot-v1-ctx-unsupported.hex|cpu|none
 network-duplicate-group|network-snapshot-v1-duplicate-group.hex|cpu|malformed
 network-duplicate-key|network-snapshot-v1-duplicate-key.hex|cpu|malformed
 network-ethernet|network-snapshot-v1-ethernet.hex|cpu|none
+network-link-kind-zero|network-snapshot-v1-link-kind-zero.hex|cpu|malformed
+network-links|network-snapshot-v1-links.hex|cpu|none
+network-links-as-uint|network-snapshot-v1-links-as-uint.hex|cpu|malformed
+network-links-duplicate|network-snapshot-v1-links-duplicate.hex|cpu|malformed
+network-links-empty|network-snapshot-v1-links-empty.hex|cpu|none
+network-links-oversize|network-snapshot-v1-links-oversize.hex|cpu|malformed
 network-max|network-snapshot-v1-max.hex|cpu|none
 network-missing-field|network-snapshot-v1-missing-field.hex|cpu|malformed
 network-noncanonical|network-snapshot-v1-noncanonical.hex|cpu|malformed
