@@ -15,13 +15,13 @@ WiFi on channel 149 (5 GHz)
 WiFi 5/6 GHz, channel unknown
   Network |  | 5/6G unseen | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
 context unknown (authorized but unavailable)
-  Network |  | band ? | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | wifi
+  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | wifi
 permission denied, channel still known
   Network |  | ch11 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | wifi
 permission denied, no channel
-  Network |  | band ? | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | wifi
+  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=50K@385 8.0K@271 | wifi
 provider absent, station identity present
-  Network |  | band ? | show_bar=0 | has_value=1 | dimmed=0 | rates=2.0K@185 1.0K@142 | wifi
+  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=2.0K@185 1.0K@142 | wifi
 offline: no primary route
   Network | -- | Offline | show_bar=0 | has_value=0 | dimmed=0
 traffic read error
@@ -31,15 +31,15 @@ traffic 2.999 s old, context 14.999 s old: both fresh
 traffic 3 s old while the WiFi context is live
   Network |  | Last ch6 2.4G | show_bar=0 | has_value=1 | dimmed=1 | rates=1.2M@0 340K@0
 traffic live while the WiFi context is 15 s old
-  Network |  | band ? | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
+  Network |  |  | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
 old samples re-sent in a new snapshot: both stale
-  Network |  | Last band ? | show_bar=0 | has_value=1 | dimmed=1 | rates=1.2M@0 340K@0
+  Network |  | Last | show_bar=0 | has_value=1 | dimmed=1 | rates=1.2M@0 340K@0 | wifi
 fresh samples again
   Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
 last frame 2.9 s ago: still live
   Network |  | ch6 2.4G | show_bar=0 | has_value=1 | dimmed=0 | rates=1.2M@582 340K@504 | wifi
 35 s without a frame: link lost
-  Network |  | Last band ? | show_bar=0 | has_value=1 | dimmed=1 | rates=1.2M@0 340K@0
+  Network |  | Last | show_bar=0 | has_value=1 | dimmed=1 | rates=1.2M@0 340K@0 | wifi
 offline again, fresh
   Network | -- | Offline | show_bar=0 | has_value=0 | dimmed=0
 offline sample 3 s old

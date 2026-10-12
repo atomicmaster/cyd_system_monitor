@@ -8,12 +8,13 @@ namespace firmware::domain {
 namespace {
 
 // The WiFi link after its glyph: only what the Host reported and only while
-// it is fresh. A stale, absent or denied context is "band ?" (never a
-// guess), and a 5/6 GHz association says the board cannot see it ("unseen").
+// it is fresh. A stale, absent or denied context adds nothing (the glyph
+// alone says WiFi, never a guessed band), and a 5/6 GHz association says the
+// board cannot see it ("unseen").
 // Observable is not a promise of continuous capture, so the wording claims
 // only the band/channel.
 std::string WifiText(const NetworkMetricState& network, bool context_retained) {
-  if (context_retained) return "band ?";
+  if (context_retained) return "";
   switch (network.coverage) {
     case protocol::WifiCoverage::kObservable: {
       if (network.channel == 0) return "2.4G";
@@ -26,7 +27,7 @@ std::string WifiText(const NetworkMetricState& network, bool context_retained) {
     case protocol::WifiCoverage::kUnknown:
       break;
   }
-  return "band ?";
+  return "";
 }
 
 std::string LinkText(const NetworkMetricState& network, bool context_retained) {
@@ -48,7 +49,8 @@ std::string LinkText(const NetworkMetricState& network, bool context_retained) {
       break;
   }
   // The tunnel's own rate, never summed with the link under it.
-  return network.via_tunnel ? "VPN " + link : link;
+  if (!network.via_tunnel) return link;
+  return link.empty() ? "VPN" : "VPN " + link;
 }
 
 }  // namespace
@@ -89,9 +91,12 @@ MetricCardView MakeNetworkCard(const HostState& state, uint64_t /*now_ms*/) {
       .second = CompactRate(network.tx_bytes_per_s),
       .first_per_mille = traffic_retained ? uint16_t{0} : LogRatePerMille(network.rx_bytes_per_s),
       .second_per_mille = traffic_retained ? uint16_t{0} : LogRatePerMille(network.tx_bytes_per_s)};
-  // A retained line leads with "Last" and gets the glyph's width back.
-  view.wifi = network.route_kind == protocol::RouteKind::kWifi && !traffic_retained;
-  view.note = std::string(traffic_retained ? "Last " : "") + LinkText(network, context_retained);
+  const std::string link = LinkText(network, context_retained);
+  // A retained line leads with "Last" and gives the glyph's width back to
+  // the words, unless there are none: then the glyph stays to say WiFi.
+  view.wifi =
+      network.route_kind == protocol::RouteKind::kWifi && (!traffic_retained || link.empty());
+  view.note = !traffic_retained ? link : link.empty() ? "Last" : "Last " + link;
   view.has_value = true;
   view.dimmed = traffic_retained;
   return view;

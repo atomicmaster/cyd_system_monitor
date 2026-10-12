@@ -112,7 +112,7 @@ int RunNetworkCards() {
   unknown.context_availability = proto::AssociationContext::kAuthorizedUnavailable;
   push(8000, ++seq, unknown);
   view = at(8000, "context unknown (authorized but unavailable)");
-  result.Expect(view.note == "band ?" && Rates(view) == "D50K U8.0K",
+  result.Expect(view.note.empty() && view.wifi && Rates(view) == "D50K U8.0K",
                 "unknown context is explicit and never a guess");
 
   // Permission denied still shows a channel the provider could read without
@@ -128,12 +128,12 @@ int RunNetworkCards() {
   denied.channel = 0;
   push(9500, ++seq, denied);
   view = at(9500, "permission denied, no channel");
-  result.Expect(view.note == "band ?", "denied with no band is unknown");
+  result.Expect(view.note.empty() && view.wifi, "denied with no band is unknown");
 
   // Provider absent: no context source at all; traffic still works.
   push(10'000, ++seq, Base(proto::RouteKind::kWifi, 2'000, 1'000));
   view = at(10'000, "provider absent, station identity present");
-  result.Expect(view.note == "band ?" && Rates(view) == "D2.0K U1.0K",
+  result.Expect(view.note.empty() && view.wifi && Rates(view) == "D2.0K U1.0K",
                 "an absent provider leaves traffic live and context unknown");
 
   // Offline and unreadable.
@@ -161,11 +161,11 @@ int RunNetworkCards() {
                 "stale traffic is retained, its meters drop, and the link line says Last");
   push(22'000, ++seq, Wifi(6, proto::WifiCoverage::kObservable, 0, 15'000));
   view = at(22'000, "traffic live while the WiFi context is 15 s old");
-  result.Expect(!view.dimmed && Rates(view) == "D1.2M U340K" && view.note == "band ?",
+  result.Expect(!view.dimmed && Rates(view) == "D1.2M U340K" && view.note.empty() && view.wifi,
                 "a stale context reads unknown while live rates continue");
   push(23'000, ++seq, Wifi(6, proto::WifiCoverage::kObservable, 4'000, 16'000));
   view = at(23'000, "old samples re-sent in a new snapshot: both stale");
-  result.Expect(view.dimmed && view.note == "Last band ?",
+  result.Expect(view.dimmed && view.note == "Last" && view.wifi,
                 "a re-sent old sample does not look fresh");
   push(24'000, ++seq, Wifi(6, proto::WifiCoverage::kObservable, 100, 200));
   view = at(24'000, "fresh samples again");
@@ -175,7 +175,7 @@ int RunNetworkCards() {
   push(50'000, ++seq, Wifi(6, proto::WifiCoverage::kObservable, 0, 0));
   at(52'900, "last frame 2.9 s ago: still live");
   view = at(85'000, "35 s without a frame: link lost");
-  result.Expect(view.dimmed && Rates(view) == "D1.2M U340K" && view.note == "Last band ?",
+  result.Expect(view.dimmed && Rates(view) == "D1.2M U340K" && view.note == "Last" && view.wifi,
                 "link loss retains rates (Last on the link line) and drops the context to unknown");
 
   // Offline goes stale like any reading: a stale route sample or a lost link
