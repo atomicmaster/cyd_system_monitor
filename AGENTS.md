@@ -13,6 +13,7 @@ CYD System Monitor is a desk display (LCDWiki E32R28T, ESP32) fed by a Rust Host
 ## Rules that are easy to miss
 
 - **ESP-IDF lives in one shell.** `source ~/esp/esp-idf/export.sh` and the `idf.py`/`./dev ... firmware` command it serves go in the same shell invocation; each agent tool call is a fresh shell.
+- **Host tests need `link_cli`.** The daemon and link-parity tests drive the real firmware link through `firmware/domain/tests/build/link_cli`, which `./dev check host` (or `./dev check firmware`) builds. In a fresh clone or worktree, run that before a bare `cargo test`; otherwise every one of those tests fails with `link_cli is missing`.
 - **Firmware build settings:** a local `firmware/sdkconfig` overrides `firmware/sdkconfig.defaults`. After pulling a change to the defaults, build fresh (see "Board sessions" in development.md).
 - **The board is exclusive and physical.** Building and the simulator overlap freely; flashing, opening the serial port, BOOT/RESET and RF measurements take the board for one session at a time. Physical checks (looking at the display, touching it, starting agents) are done with the owner: collect them in the ticket's physical check list and run them together.
 - **Protocol changes** go through the [protocol change gate](protocol/CORE_PROTOCOL.md#protocol-change-gate): schema, golden fixtures, both codecs, and a clean C++/Rust parity run.
