@@ -5,6 +5,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 _firmware_dir() { echo "$(dev_root)/firmware"; }
 
 doctor() {
+  python3 "$(dev_root)/tools/dev/sdkconfig_drift.py"
   report_tool idf.py "$(idf_missing_hint)"
   report_tool cmake "brew install cmake"
   report_tool ninja "brew install ninja"
@@ -30,7 +31,15 @@ _check_format() {
 
 build() {
   require_tool idf.py "$(idf_missing_hint)" || return 1
-  (cd "$(_firmware_dir)" && idf.py build && idf.py size)
+  python3 "$(dev_root)/tools/dev/sdkconfig_drift.py"
+  [[ "${1:-}" == "--" ]] && shift
+  if [[ "${1:-}" == "--fresh" ]]; then
+    local fresh="$(_firmware_dir)/build-fresh"
+    rm -f "$fresh/sdkconfig"
+    (cd "$(_firmware_dir)" && idf.py -B "$fresh" -D "SDKCONFIG=$fresh/sdkconfig" build && idf.py -B "$fresh" -D "SDKCONFIG=$fresh/sdkconfig" size)
+  else
+    (cd "$(_firmware_dir)" && idf.py build && idf.py size)
+  fi
 }
 
 # Builds and runs firmware/domain/tests with the host compiler (no ESP-IDF
@@ -39,6 +48,7 @@ check() {
   require_tool cmake "brew install cmake" || return 1
   require_tool ninja "brew install ninja" || return 1
   require_tool python3 "install Python 3" || return 1
+  python3 "$(dev_root)/tools/dev/tests/test_sdkconfig_drift.py"
   _check_format
   python3 "$(_firmware_dir)/tools/test_generate_profile_header.py"
   local test_dir="$(_firmware_dir)/domain/tests"
