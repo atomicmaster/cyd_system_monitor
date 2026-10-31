@@ -58,7 +58,7 @@ Busy and idle are never inferred from CPU use. An earlier CPU heuristic (busy at
 - **Read:** each 5 s scan reads at most 64 files of at most 16 bytes, and only a file whose pid is a running process of that same agent counts. Its age is the file's modification time.
 - **States:** busy while any running process of the agent last reported busy; idle when its processes have reported and none is busy; `running, activity unknown` before any report (hooks not installed, or a new session without a prompt yet). A busy report older than 15 minutes with nothing since counts as idle, for a session killed mid-turn.
 
-Each agent's adapter is the set of its hooks that call this command, listed below. Checking from the Host that each agent's hooks are present, and installing them with one command, is [TB19](tickets/TB19.md). Every supported agent now has one; an agent whose hooks are not installed stays `running, activity unknown` while it runs.
+Each agent's adapter is the set of its hooks that call this command, listed below. Checking from the Host that each agent's hooks are present, and installing them with one command, is [TB19](tickets/TB19.md): `cyd-host hooks status|install|remove [agent...]`. Every supported agent now has one; an agent whose hooks are not installed stays `running, activity unknown` while it runs.
 
 ## Busy and idle: Claude Code hooks
 
@@ -70,6 +70,8 @@ Claude Code runs a command on lifecycle events. With the hooks below installed i
 | `Stop`, `Notification` (a permission request or a wait for input), `SessionEnd` | idle |
 
 Each hook runs `cyd-host agent-event claude busy|idle` (the shared channel above). The hook JSON is never read.
+
+`cyd-host hooks install claude` does this: it merges the hooks into `~/.claude/settings.json`, keeping every other setting and hook.
 
 ## Busy and idle: Codex hooks
 
@@ -97,6 +99,8 @@ Merge the following into `~/.codex/hooks.json` (preserve existing hooks; inline 
   }
 }
 ```
+
+`cyd-host hooks install codex` does this, and `--trust` also records Codex's hook trust through its app server (`hooks status --trust` shows it).
 
 **Verified on this Mac (codex-cli 0.166.0, `codex exec`):** with `UserPromptSubmit` and `Stop` hooks given inline (`-c 'hooks.UserPromptSubmit=[...]'`, plus `--dangerously-bypass-hook-trust` for that one invocation, with a scratch `CYD_RUN_DIR`), both hooks ran as direct children of the `codex` process (the Homebrew cask binary on the allowlist), and `cyd-host agent-event` wrote `codex-<pid>` as `busy`, then `idle`. A `hooks.json` in an untrusted scratch project did not run: project hooks need a trusted project, and every non-managed hook needs trust (`/hooks`). Not verified: the interactive TUI, `codex app-server` (how T3 Code runs Codex), the daemon `--no-daemon` refers to, and the VS Code extension. If one of them runs hooks from a process that is not a Codex allowlist row within eight parents, nothing is recorded and the bar stays `running, activity unknown`; it never reads busy by mistake.
 
@@ -132,6 +136,8 @@ Create `~/.grok/hooks/cyd-system-monitor.json` (Grok merges every file in that d
 }
 ```
 
+`cyd-host hooks install grok` does this (it owns the whole `cyd-system-monitor.json`).
+
 **Verified on this Mac:** only the documentation and the CLI surface. `grok --help` lists no hook flag, and the shipped guide documents `$GROK_HOME` as the way to relocate the config directory, so an isolated test is possible in principle. A scratch `GROK_HOME` with a `config.toml` holding the hooks, a scratch `CYD_RUN_DIR` and `--leader-socket` in the scratch directory was tried with `grok -p`: grok 1.0.70 exits with "Not signed in" before starting a session, so no hook fired. A throwaway `XAI_API_KEY` did not change that. Copying credentials into the scratch home was not done. **Not verified:** that any hook runs, that its parent chain reaches a process on the Grok Build allowlist rows within eight parents (the rows match `~/.grok/downloads/grok-<semver>-macos-aarch64`, which is where `~/.grok/bin/grok` resolves), the interactive TUI, and the daemon route (`grok host-server`), which runs `Notification` and other observe hooks from a pool shared by sessions. If a hook is run by a process that is not on an allowlist row, or the hook is not run at all, nothing is recorded and the bar stays `running, activity unknown`; it never reads busy by mistake. A first run with a signed-in Grok, checking `<run dir>/agent-events/grok-<pid>`, would settle it; if the parent is an unlisted helper, add its exact resolved path as a new row.
 
 ## Busy and idle: Gemini (`agy`) hooks
@@ -158,6 +164,8 @@ Install as `~/.gemini/config/hooks.json`, or merge the `cyd-activity` group into
 }
 ```
 
+`cyd-host hooks install gemini` does this (it owns only the `cyd-activity` group).
+
 **Verified on this Mac (agy 1.4.12, `agy -p`):** with `PreInvocation` and `Stop` hooks in a scratch project's `.agents/hooks.json` and a scratch `CYD_RUN_DIR`, both hooks ran as `/bin/sh` children of the `~/.local/bin/agy` process (two levels up from `cyd-host`), and `cyd-host agent-event` wrote `gemini-<pid>` as `busy`, then `idle`. That run hit the account's quota, and `Stop` still fired on the error. Not verified: `PreToolUse` and `PostToolUse` in a real turn, the interactive TUI, and the Antigravity desktop app and IDE (which read the same global file, but run their own processes that are not on the allowlist, so their hooks record nothing).
 
 ## Busy and idle: OpenCode plugin
@@ -172,5 +180,7 @@ OpenCode has no command hooks; its extension point is a plugin, a JavaScript mod
 The tool hooks refresh busy on every tool call, which keeps the 15 minute timeout from expiring in a long turn. A single model or tool call lasting over 15 minutes without another event is shown idle. `permission.replied` returns to busy once a permission prompt is answered, so a reply that rejects the tool can leave the bar busy until the turn ends. A new session has no prompt yet and stays `running, activity unknown` until the first event. OpenCode runs every session of every client in one server process (by default the background service, `opencode serve --service`), so concurrent sessions, and subagents, share one state file and can overwrite each other's state: the bar shows whichever reported last.
 
 Install by copying the plugin to OpenCode's global plugin directory, `~/.config/opencode/plugins/cyd-system-monitor.js` (loaded at startup; `opencode reload` or restarting the background service picks up a change). Set the host binary's absolute path in the `CYD_HOST` line, replacing `/absolute/path/to/cyd-host`, or export `CYD_HOST_BIN` where the OpenCode server starts; a local debug build is `host/target/debug/cyd-host` under this checkout, after building it. Nothing else in OpenCode's configuration is edited. The plugin spawns the host with `spawnSync` (2 s limit, output discarded) so that the idle report is not lost when a one-shot `opencode run` exits right after its turn.
+
+`cyd-host hooks install opencode` does this: it writes the plugin with the host binary's path filled in.
 
 **Verified on this Mac (opencode 2.2.5):** with a scratch `OPENCODE_CONFIG_DIR`, scratch `XDG_*` directories and a scratch `CYD_RUN_DIR` (the real OpenCode configuration and background service were not touched; scratch files deleted afterwards), the plugin loaded. A one-line prompt to the free model `opencode/deepseek-v4.1-flash-free` that ran one shell command produced busy (turn start), busy (tool start), busy (tool end) and idle (turn end) in that order, both with `opencode run --standalone` and through a separate scratch `opencode serve` reached with `opencode run --server`. In both cases `cyd-host` was a direct child of the `opencode` server process, whose executable is `/opt/homebrew/Cellar/opencode-v2/2.2.5/bin/opencode`, an existing allowlist row, so the ancestor walk needs no new row, and `opencode-<pid>` was written with that pid. The real background service runs the same binary (`serve --service`), so it resolves the same way. **Not verified:** `permission.asked` and `permission.replied` (the default configuration asked for no permission in the test), `session.execution.failed` and `session.execution.interrupted`, the TUI, the desktop app, and `opencode mini`; they use the same server events, but none was run. If a hook ever runs outside an allowlisted process, nothing is recorded and the bar stays `running, activity unknown`; it never reads busy by mistake.
