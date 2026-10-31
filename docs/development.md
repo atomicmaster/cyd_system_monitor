@@ -165,27 +165,37 @@ cyd-host unpair|reset-calibration --port ...                       # recovery co
 
 First pairing needs a touch on the display within 60 s; see `docs/tickets/TB02.md` for the operator steps.
 
-## Agent activity: Claude Code hooks
+## Agent activity (TB19)
 
-The Agents bar shows Codex, Grok Build, Gemini and OpenCode busy or idle from their CPU use.
-Claude Code's comes from its hooks, which call `cyd-host agent-event claude
-busy|idle` (see [agent-integrations.md](agent-integrations.md#busy-and-idle-claude-code-hooks)).
-Build the CLI with `cd host && cargo build --release`, then add to
-`~/.claude/settings.json` under `"hooks"`, with the absolute path of that
-binary:
+The Agents bar shows an agent busy or idle only from the agent's own hooks, which
+call `cyd-host agent-event <agent> busy|idle`; an agent without them reads
+`running, activity unknown`. One command checks and installs them for every
+agent on this Mac (Codex, Claude Code, Grok Build, Gemini `agy`, OpenCode):
 
-```json
-"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "'<repo>/host/target/release/cyd-host' agent-event claude busy 2>/dev/null || true", "timeout": 5}]}],
-"PreToolUse":  [{"matcher": "*", "hooks": [{"type": "command", "command": "... agent-event claude busy 2>/dev/null || true", "timeout": 5}]}],
-"PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "... agent-event claude busy 2>/dev/null || true", "timeout": 5}]}],
-"Stop":         [{"hooks": [{"type": "command", "command": "... agent-event claude idle 2>/dev/null || true", "timeout": 5}]}],
-"Notification": [{"hooks": [{"type": "command", "command": "... agent-event claude idle 2>/dev/null || true", "timeout": 5}]}],
-"SessionEnd":   [{"hooks": [{"type": "command", "command": "... agent-event claude idle 2>/dev/null || true", "timeout": 5}]}]
+```sh
+cd host && cargo build --release
+target/release/cyd-host hooks install --trust    # write the hooks; --trust also trusts Codex's
+target/release/cyd-host hooks status             # one line per agent; --check exits 1 unless all are installed
 ```
 
-Merge these with any hooks already there. Without them Claude shows as
-running, never busy. `cargo clean` removes the binary; the `|| true` keeps
-Claude Code unaffected until it is rebuilt.
+`hooks install` points the hooks at the `cyd-host` you ran (override with
+`--cyd-host <absolute path>`), so run it from the binary that should stay in
+place: `cargo clean` removes it, and the `|| true` in each hook keeps the agent
+unaffected until it is rebuilt. It edits only each agent's hook config, keeps
+every other hook (herdr, tldraw), backs a changed file up as
+`<file>.bak-cyd-<timestamp>`, changes nothing on a second run, and skips an agent
+whose config directory does not exist. `--dry-run` prints what would change;
+`hooks remove [agent...]` takes our hooks out again. `hooks status` says why a
+mascot is still: `not installed`, `partial`, `outdated` (moved or rebuilt
+binary), `agent not installed` or `config unreadable` (a comment or other
+oddity: nothing is rewritten).
+
+Each agent picks the hooks up differently: Claude Code, Codex, Grok Build and
+Gemini read them in a **new session**. Codex also needs the hooks trusted
+(`install --trust`, or `/hooks` in Codex; `status --trust` shows it). OpenCode
+loads its plugin at startup, so restart the OpenCode server (`opencode reload` or
+restarting its background service). The events each agent reports and what is
+verified are in [agent-integrations.md](agent-integrations.md).
 
 ## Host service and setup status (TB08)
 

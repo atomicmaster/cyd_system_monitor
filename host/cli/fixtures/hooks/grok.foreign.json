@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/old/place/cyd-host agent-event grok idle"
+          }
+        ]
+      }
+    ]
+  }
+}

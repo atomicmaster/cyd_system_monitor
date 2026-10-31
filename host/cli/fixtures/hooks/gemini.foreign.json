@@ -1,0 +1,21 @@
+{
+  "team-notify": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "notify-send done"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "audit-log"
+          }
+        ]
+      }
+    ]
+  }
+}

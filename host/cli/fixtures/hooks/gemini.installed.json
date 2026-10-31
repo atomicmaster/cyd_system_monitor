@@ -1,0 +1,57 @@
+{
+  "team-notify": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "notify-send done"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "audit-log"
+          }
+        ]
+      }
+    ]
+  },
+  "cyd-activity": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "'/opt/cyd/cyd-host' agent-event gemini busy 2>/dev/null || true"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/opt/cyd/cyd-host' agent-event gemini busy 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/opt/cyd/cyd-host' agent-event gemini busy 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "'/opt/cyd/cyd-host' agent-event gemini idle 2>/dev/null || true"
+      }
+    ]
+  }
+}

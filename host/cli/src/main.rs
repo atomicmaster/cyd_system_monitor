@@ -5,6 +5,7 @@
 //! daemon (`cyd-hostd`) owns the serial port; while it runs, commands that
 //! need the display go through it and never open the port themselves.
 
+mod hooks;
 mod service;
 
 use std::io;
@@ -55,6 +56,20 @@ commands:
                      For an agent's hooks: record that the agent process
                      running the hook is busy or idle (shown on the Agents bar).
                      Reads nothing from the hook's input; always exits 0.
+  hooks <action> [agent...]
+                     Check, install or remove the agents' activity hooks (codex,
+                     claude, grok, gemini, opencode; default all) so the Agents
+                     bar shows busy and idle. Actions: status, install, remove.
+                     Options:
+                       --cyd-host <abs path>   binary the hooks run (default:
+                                               this program)
+                       --dry-run               (install, remove) print only
+                       --trust                 (status, install) Codex hook
+                                               trust: show it / grant it
+                       --check                 (status) exit 1 unless every
+                                               agent is installed or absent
+                     Edits only each agent's hook config, keeps other hooks and
+                     backs the file up first (<file>.bak-cyd-<timestamp>).
   help               Show this message.
 
 When the daemon runs, unpair, reset-calibration and forget are sent to it.
@@ -417,6 +432,7 @@ fn main() -> ExitCode {
         ("stop", _) => daemon_command("stop", None),
         ("service", _) => service_command(&args),
         ("agent-event", _) => agent_event(&args),
+        ("hooks", _) => hooks::command(&args),
         (other, _) => {
             eprintln!("error: unknown command '{other}'");
             eprint!("{USAGE}");
@@ -440,6 +456,11 @@ mod tests {
             "stop",
             "service",
             "agent-event",
+            "hooks",
+            "--cyd-host",
+            "--dry-run",
+            "--trust",
+            "--check",
             "help",
         ] {
             assert!(super::USAGE.contains(word), "{word}");
