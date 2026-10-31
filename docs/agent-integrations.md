@@ -35,7 +35,7 @@ Allowlist (`~` is the current user's `realpath`ed home; a version segment is `<s
 | Claude | `~/.vscode/extensions/anthropic.claude-code-<semver>-darwin-arm64/resources/native-binary/claude` | Verified: the CLI bundled with the Claude Code VS Code extension, running from there on the development Mac. Apple Silicon only. |
 | Claude | `/Applications/Claude.app/Contents/**` | Desktop app bundle root and helpers. Not installed on the development Mac. |
 | Grok Build | `~/.grok/bin/grok` | The documented install path; kept for an install that ships a real file there. |
-| Grok Build | `~/.grok/downloads/grok-<semver>-macos-aarch64`, `...-macos-x86_64` | Verified: `~/.grok/bin/grok` is a symlink to `../downloads/grok-1.0.30-macos-aarch64`, so a running process resolves to the versioned download. Only under `~/.grok`. |
+| Grok Build | `~/.grok/downloads/grok-<semver>-macos-aarch64`, `...-macos-x86_64` | Verified: `~/.grok/bin/grok` is a symlink to `../downloads/grok-<semver>-macos-aarch64` (`grok-1.0.70-macos-aarch64` on the development Mac), so a running process resolves to the versioned download. Only under `~/.grok`. |
 | Gemini (`agy`) | `~/.local/bin/agy` | Verified: a regular, standalone arm64 Mach-O file on the development Mac (not a symlink), so a running process resolves to this very path. Google's Antigravity CLI, which this project calls Gemini; matched only at this exact home-relative path, never by the bare name `agy`. |
 | OpenCode | `/opt/homebrew/Cellar/opencode-v2/<semver>/bin/opencode` | Verified: `/opt/homebrew/bin/opencode` is a symlink to `../Cellar/opencode-v2/2.2.5/bin/opencode`, a standalone arm64 Mach-O. A process launched through the link resolves (`proc_pidpath` and `realpath`) to the versioned Cellar path, the same way Codex resolves to its Caskroom path, so only the Cellar path is listed. Apple Silicon Homebrew. |
 | OpenCode | `/usr/local/Cellar/opencode-v2/<semver>/bin/opencode` | Intel Homebrew prefix. Unverified. |
@@ -58,7 +58,7 @@ Busy and idle are never inferred from CPU use. An earlier CPU heuristic (busy at
 - **Read:** each 5 s scan reads at most 64 files of at most 16 bytes, and only a file whose pid is a running process of that same agent counts. Its age is the file's modification time.
 - **States:** busy while any running process of the agent last reported busy; idle when its processes have reported and none is busy; `running, activity unknown` before any report (hooks not installed, or a new session without a prompt yet). A busy report older than 15 minutes with nothing since counts as idle, for a session killed mid-turn.
 
-Each agent's adapter is the set of its hooks that call this command, listed below. Checking from the Host that each agent's hooks are present, and installing them with one command, is [TB19](tickets/TB19.md). An agent with no adapter yet stays `running, activity unknown` while it runs: Grok Build, Gemini and OpenCode, until their sections are added.
+Each agent's adapter is the set of its hooks that call this command, listed below. Checking from the Host that each agent's hooks are present, and installing them with one command, is [TB19](tickets/TB19.md). An agent with no adapter yet stays `running, activity unknown` while it runs: Gemini and OpenCode, until their sections are added.
 
 ## Busy and idle: Claude Code hooks
 
@@ -99,3 +99,37 @@ Merge the following into `~/.codex/hooks.json` (preserve existing hooks; inline 
 ```
 
 **Verified on this Mac (codex-cli 0.166.0, `codex exec`):** with `UserPromptSubmit` and `Stop` hooks given inline (`-c 'hooks.UserPromptSubmit=[...]'`, plus `--dangerously-bypass-hook-trust` for that one invocation, with a scratch `CYD_RUN_DIR`), both hooks ran as direct children of the `codex` process (the Homebrew cask binary on the allowlist), and `cyd-host agent-event` wrote `codex-<pid>` as `busy`, then `idle`. A `hooks.json` in an untrusted scratch project did not run: project hooks need a trusted project, and every non-managed hook needs trust (`/hooks`). Not verified: the interactive TUI, `codex app-server` (how T3 Code runs Codex), the daemon `--no-daemon` refers to, and the VS Code extension. If one of them runs hooks from a process that is not a Codex allowlist row within eight parents, nothing is recorded and the bar stays `running, activity unknown`; it never reads busy by mistake.
+
+## Busy and idle: Grok Build hooks
+
+Grok Build runs a command on lifecycle events. With the hooks below installed in `~/.grok/hooks/`, Grok is **busy** from a submitted prompt until its turn ends, including while it waits on tools, and **idle** otherwise. This setup targets grok 1.0.70 (the stable build on the development Mac). The shipped user guide (`~/.grok/docs/user-guide/10-hooks.md`, installed with the CLI) and xAI's [hooks documentation](https://docs.x.ai/build/features/hooks) describe the events; the lowest version that supports every event below has not been established (a third-party [release note](https://techdevnotes.com/releases/grok-build/1.0.11) puts `UserPromptSubmit` in 1.0.11).
+
+| Event | Records |
+| --- | --- |
+| `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure` | busy |
+| `Stop`, `StopFailure` (an API error), `StopCancelled` (an interrupt, a declined permission prompt, the turn limit), `SessionEnd` | idle |
+| `Notification` of type `permission_prompt` or `idle_prompt` | idle |
+
+Each hook runs `cyd-host agent-event grok busy|idle` (the shared channel above). The hook JSON on stdin is never read. The `Notification` hook has a matcher so that other notification types, such as `task_complete`, cannot report idle in the middle of a turn. `SessionStart` is not used: a new session has no prompt yet and stays `running, activity unknown` until the first event.
+
+Tool hooks refresh busy on every tool call, which keeps the 15 minute timeout from expiring in a long turn. A single tool or model call lasting over 15 minutes without another event is shown idle. A permission prompt reports idle; after approval the bar stays idle until the tool finishes (`PostToolUse`) or the next tool starts. Subagents run hooks too: a subagent's `SessionEnd` can report idle while the main turn continues, until its next tool event. Concurrent sessions sharing one Grok process can overwrite each other's state. Grok also reads `~/.claude/settings.json` hooks; a `cyd-host agent-event claude ...` command there, run by Grok, records nothing because no Claude process is among its parents.
+
+Create `~/.grok/hooks/cyd-system-monitor.json` (Grok merges every file in that directory with its other hooks, so nothing existing is edited). Replace `/absolute/path/to/cyd-host` with the installed host binary's absolute path; a local debug build is `host/target/debug/cyd-host` under this checkout, after building it. Grok holds back your own hooks in a folder it has not trusted (`/hooks-trust`, or `--trust`); your home directory, filesystem roots, and headless runs such as `grok -p` count as trusted. `/hooks` lists the loaded hooks.
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event grok busy"}]}],
+    "PreToolUse": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event grok busy"}]}],
+    "PostToolUse": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event grok busy"}]}],
+    "PostToolUseFailure": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event grok busy"}]}],
+    "Notification": [{"matcher": "permission_prompt|idle_prompt", "hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event grok idle"}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event grok idle"}]}],
+    "StopFailure": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event grok idle"}]}],
+    "StopCancelled": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event grok idle"}]}],
+    "SessionEnd": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event grok idle"}]}]
+  }
+}
+```
+
+**Verified on this Mac:** only the documentation and the CLI surface. `grok --help` lists no hook flag, and the shipped guide documents `$GROK_HOME` as the way to relocate the config directory, so an isolated test is possible in principle. A scratch `GROK_HOME` with a `config.toml` holding the hooks, a scratch `CYD_RUN_DIR` and `--leader-socket` in the scratch directory was tried with `grok -p`: grok 1.0.70 exits with "Not signed in" before starting a session, so no hook fired. A throwaway `XAI_API_KEY` did not change that. Copying credentials into the scratch home was not done. **Not verified:** that any hook runs, that its parent chain reaches a process on the Grok Build allowlist rows within eight parents (the rows match `~/.grok/downloads/grok-<semver>-macos-aarch64`, which is where `~/.grok/bin/grok` resolves), the interactive TUI, and the daemon route (`grok host-server`), which runs `Notification` and other observe hooks from a pool shared by sessions. If a hook is run by a process that is not on an allowlist row, or the hook is not run at all, nothing is recorded and the bar stays `running, activity unknown`; it never reads busy by mistake. A first run with a signed-in Grok, checking `<run dir>/agent-events/grok-<pid>`, would settle it; if the parent is an unlisted helper, add its exact resolved path as a new row.
