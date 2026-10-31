@@ -27,6 +27,7 @@ See [docs/roadmap.md](docs/roadmap.md) for MVP, V1, and V2 scope and [docs/mvp-v
 | Area | Document |
 | --- | --- |
 | Product roadmap | [docs/roadmap.md](docs/roadmap.md) |
+| Working in the repo (people and coding agents) | [AGENTS.md](AGENTS.md), [docs/development.md](docs/development.md) |
 | Agent ticket backlog and dependencies | [docs/tickets/README.md](docs/tickets/README.md) |
 | Host metrics | [docs/host-metrics.md](docs/host-metrics.md) |
 | Radio evidence and Alerts | [docs/radio-model.md](docs/radio-model.md) |
