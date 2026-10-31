@@ -60,3 +60,7 @@ add_test(NAME firmware_domain_display_settings_tests COMMAND firmware_domain_dis
 add_test(NAME firmware_domain_coverage_tests COMMAND firmware_domain_coverage_tests)
 add_test(NAME firmware_domain_event_ring_tests COMMAND firmware_domain_event_ring_tests)
 add_test(NAME firmware_domain_radio_runner_tests COMMAND firmware_domain_radio_runner_tests)
+
+add_executable(firmware_domain_hci_tests test_hci.cpp)
+target_link_libraries(firmware_domain_hci_tests PRIVATE firmware_domain)
+add_test(NAME firmware_domain_hci_tests COMMAND firmware_domain_hci_tests)

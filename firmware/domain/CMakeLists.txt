@@ -58,6 +58,7 @@ set(_fd_sources
     "src/coverage.cpp"
     "src/radio_messages.cpp"
     "src/radio_runner.cpp"
+    "src/hci.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../../protocol/core/cpp/protocol.cpp"
     ${_fd_card_sources}
     "${FIRMWARE_DOMAIN_CALIBRATION_SOURCES}")
