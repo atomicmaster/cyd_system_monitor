@@ -17,11 +17,23 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 /// `sizeof(sockaddr_un.sun_path)` on Darwin; the path plus NUL must fit.
 pub const MAX_SOCKET_PATH: usize = 104;
 /// Bad lines in a row before a connection is dropped as a broken peer.
 pub const MAX_CONSECUTIVE_BAD: u32 = 16;
+
+/// Readies an accepted connection for a timed read loop. Darwin gives an
+/// accepted socket the listener's non-blocking mode, under which the read
+/// timeout never applies and every read returns at once, so a loop waiting on
+/// a quiet peer spins a core. It is made blocking first, then given its
+/// timeouts.
+pub fn prepare_accepted(stream: &UnixStream, read: Duration, write: Duration) -> io::Result<()> {
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(read))?;
+    stream.set_write_timeout(Some(write))
+}
 
 extern "C" {
     fn getpeereid(fd: c_int, euid: *mut u32, egid: *mut u32) -> c_int;
@@ -203,6 +215,43 @@ impl LineReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_accepted_connection_waits_out_its_read_timeout_instead_of_spinning() {
+        let dir = std::env::temp_dir().join(format!("cyd-ipc-accept-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let (path, listener) = bind_private(&dir, "t.sock").unwrap();
+        let _client = UnixStream::connect(&path).unwrap();
+        let accepted = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(1))
+                }
+                Err(e) => panic!("{e}"),
+            }
+        };
+        prepare_accepted(
+            &accepted,
+            Duration::from_millis(40),
+            Duration::from_millis(40),
+        )
+        .unwrap();
+        let started = std::time::Instant::now();
+        let mut buf = [0u8; 8];
+        let err = io::Read::read(&mut &accepted, &mut buf).unwrap_err();
+        assert!(matches!(
+            err.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ));
+        assert!(
+            started.elapsed() >= Duration::from_millis(30),
+            "returned after {:?}: still non-blocking",
+            started.elapsed()
+        );
+        drop(listener);
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     fn feed(reader: &mut LineReader, bytes: &[u8]) -> Vec<LineEvent> {
         bytes

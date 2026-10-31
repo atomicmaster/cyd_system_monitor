@@ -18,7 +18,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use metrics::flat_json::{parse_flat_object, FlatJsonError, Value, MAX_LINE_BYTES};
-use platform_macos::ipc::{peer_uid, LineEvent, LineReader, ServerThread, MAX_CONSECUTIVE_BAD};
+use platform_macos::ipc::{
+    peer_uid, prepare_accepted, LineEvent, LineReader, ServerThread, MAX_CONSECUTIVE_BAD,
+};
 
 pub const SOCKET_NAME: &str = "control.sock";
 pub const IPC_VERSION: i64 = 1;
@@ -369,11 +371,7 @@ fn serve_connection(
     stop: &AtomicBool,
     line_deadline: Duration,
 ) {
-    if stream.set_read_timeout(Some(POLL)).is_err()
-        || stream
-            .set_write_timeout(Some(Duration::from_secs(2)))
-            .is_err()
-    {
+    if prepare_accepted(&stream, POLL, Duration::from_secs(2)).is_err() {
         return;
     }
     let mut lines = LineReader::new(MAX_REQUEST_BYTES);

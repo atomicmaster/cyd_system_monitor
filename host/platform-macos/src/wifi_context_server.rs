@@ -20,7 +20,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::ipc::{peer_uid, LineEvent, LineReader, ServerThread, MAX_CONSECUTIVE_BAD};
+use crate::ipc::{
+    peer_uid, prepare_accepted, LineEvent, LineReader, ServerThread, MAX_CONSECUTIVE_BAD,
+};
 use crate::time::NowMs;
 use metrics::flat_json::MAX_LINE_BYTES;
 use metrics::wifi_context::{
@@ -164,11 +166,7 @@ fn serve(
                 if peer_uid(&stream) != Some(config.expected_uid) {
                     bump(&counters.wrong_uid);
                     drop(stream); // closed without a byte read or written
-                } else if stream.set_read_timeout(Some(POLL)).is_ok()
-                    && stream
-                        .set_write_timeout(Some(Duration::from_millis(200)))
-                        .is_ok()
-                {
+                } else if prepare_accepted(&stream, POLL, Duration::from_millis(200)).is_ok() {
                     bump(&counters.accepted);
                     if let Some(old) = current.take() {
                         bump(&counters.replaced);
