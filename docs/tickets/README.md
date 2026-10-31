@@ -13,7 +13,7 @@ The foundation sequence is complete: F01–F08 (M0, M1, M1a), then C01, TB01, TB
 1. Finish **TB09**'s ESP32 radio task (the first of its remaining slices). It can be written and compiled before the board is free, and TB10 onward waits on it.
 2. Schedule one board session for the recorded physical smokes of **TB03–TB07** and TB09's status-line readability check. TB08's signing, consent and launchd steps are listed at the end of its ticket.
 3. Promote **TB10 and TB11** from Outline to Executable so they are ready when TB09 is Done. They own separate parsers and views and can run in parallel; see [Parallel waves](#parallel-waves-after-the-first-path).
-4. **TB03** is code-complete but still an Outline: resolve its promotion questions and record them alongside its physical smoke.
+4. **TB03** is promoted to Executable; its physical check list joins the board session in step 2.
 
 Commands shown in tickets that have not started are proposed deliverables. `./dev` dispatches to per-target scripts in `tools/dev/`; runtime owners add their targets and scenario commands there.
 
@@ -79,7 +79,7 @@ The dependency column repeats each ticket's prerequisite links for navigation. E
 | [TB01](TB01.md) | Replay a CPU snapshot into the shared display model | Executable | [C01](C01.md) |
 | [TB02](TB02.md) | Pair a Mac and display live CPU over USB | Executable | [TB01](TB01.md) |
 | [C02](C02.md) | Publish the extension interfaces for parallel feature slices | Executable | [TB02](TB02.md) |
-| [TB03](TB03.md) | Display Physical RAM Occupied with truthful availability | Outline | [C02](C02.md) |
+| [TB03](TB03.md) | Display Physical RAM Occupied with truthful availability | Executable | [C02](C02.md) |
 | [TB04](TB04.md) | Display root storage capacity and disk activity | Executable | [C02](C02.md) |
 | [TB05](TB05.md) | Display network rates and Host WiFi coverage | Executable | [C02](C02.md) |
 | [TB06](TB06.md) | Display battery charge and condition without blocking collection | Executable | [C02](C02.md) |
