@@ -58,7 +58,7 @@ Busy and idle are never inferred from CPU use. An earlier CPU heuristic (busy at
 - **Read:** each 5 s scan reads at most 64 files of at most 16 bytes, and only a file whose pid is a running process of that same agent counts. Its age is the file's modification time.
 - **States:** busy while any running process of the agent last reported busy; idle when its processes have reported and none is busy; `running, activity unknown` before any report (hooks not installed, or a new session without a prompt yet). A busy report older than 15 minutes with nothing since counts as idle, for a session killed mid-turn.
 
-Each agent's adapter is the set of its hooks that call this command, listed below. An agent with no adapter yet stays `running, activity unknown` while it runs: Codex, Grok Build, Gemini and OpenCode, until their sections are added.
+Each agent's adapter is the set of its hooks that call this command, listed below. An agent with no adapter yet stays `running, activity unknown` while it runs: Codex, Grok Build and OpenCode, until their sections are added.
 
 ## Busy and idle: Claude Code hooks
 
@@ -70,3 +70,65 @@ Claude Code runs a command on lifecycle events. With the hooks below installed i
 | `Stop`, `Notification` (a permission request or a wait for input), `SessionEnd` | idle |
 
 Each hook runs `cyd-host agent-event claude busy|idle` (the shared channel above). The hook JSON is never read.
+
+## Busy and idle: Gemini (Google Antigravity CLI, agy) hooks
+
+Google Antigravity CLI (`agy`, which this project calls Gemini) runs shell commands on lifecycle events configured in `hooks.json`. With the hooks below installed in `~/.gemini/config/hooks.json` (or workspace-local `<workspace>/.agents/hooks.json`), Gemini is **busy** from prompt submission until the turn ends, including while executing tools, and **idle** when the turn completes.
+
+| Event | Records |
+| --- | --- |
+| `PreInvocation`, `PreToolUse`, `PostToolUse` | busy |
+| `Stop` | idle |
+
+Configuration file `~/.gemini/config/hooks.json`:
+
+```json
+{
+  "cyd-activity": {
+    "PreInvocation": [
+      {
+        "command": "/absolute/path/to/cyd-host agent-event gemini busy"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "command": "/absolute/path/to/cyd-host agent-event gemini busy"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "command": "/absolute/path/to/cyd-host agent-event gemini busy"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "command": "/absolute/path/to/cyd-host agent-event gemini idle"
+      }
+    ]
+  }
+}
+```
+
+The command must specify the absolute path to `cyd-host` (for example, `/opt/homebrew/bin/cyd-host`, `~/.local/bin/cyd-host`, or the built binary `<repo>/host/target/release/cyd-host`). `agy` expands `~` to the home directory. Hook commands receive JSON on stdin, which `cyd-host agent-event` drains unread.
+
+`PreInvocation` marks the session busy as soon as the prompt is submitted before the model is called. `PreToolUse` and `PostToolUse` match all tools via regex matcher `.*` and refresh the busy state around each tool execution, keeping the 15-minute busy timeout from expiring during lengthy turns. `Stop` marks the session idle when the execution loop terminates.
+
+What is verified on this Mac:
+- `agy` 1.4.12 is installed at `~/.local/bin/agy` as a standalone arm64 Mach-O binary matching the allowlist table.
+- Command-mode hook execution was inspected in the binary (`jsonhook.executeCommandModeHook`), which directly invokes `/bin/sh -c "<command>"` via `jexec.CommandContext` without intermediate daemon processes. When `cyd-host` runs, its parent is `/bin/sh` and its grandparent is `agy` (2 levels up), well within the 8-ancestor walk of `cyd-host agent-event`.
+
+What is not verified on this Mac:
+- Live hook execution with active turns was not run because `agy` does not provide an isolated configuration home directory override to avoid modifying `~/.gemini`.
+- `agy` does not provide a lifecycle hook for interactive tool permission prompts. If `agy` pauses for user approval on a tool call, the agent remains reported as **busy** on the Agents bar until permission is resolved or the 15-minute busy timeout elapses. If `agy` is killed mid-turn without firing `Stop`, it counts as idle after 15 minutes (or not running once the process exits).
+
+Version needed: `agy` 1.1.10 or later (introduced `PreInvocation` and `PostInvocation` ordering before termination checks; tool and stop hooks were introduced in 1.0.16/1.1.0).
