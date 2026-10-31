@@ -2,14 +2,14 @@
 
 # CYD System Monitor
 
-CYD System Monitor is a local desk appliance for a verified LCDWiki E32R28T touch display. It presents live metrics from one paired Apple Silicon Mac and independently observes nearby 2.4 GHz WiFi and Bluetooth Low Energy activity using the display's ESP32 radio.
+CYD System Monitor is a local desk appliance for a verified LCDWiki E32R28T touch display. It presents live metrics from one paired computer (the Host) and independently observes nearby 2.4 GHz WiFi and Bluetooth Low Energy activity using the display's ESP32 radio. The Host side is built to be cross-platform: the MVP supports macOS on Apple Silicon, and Linux and then Windows Hosts follow in V2 ([roadmap](docs/roadmap.md)), on the same platform-neutral metric contract ([ADR 0005](docs/adr/0005-use-a-portable-host-metric-contract.md)).
 
 The product scope is ready for feasibility validation. An early combined hardware milestone will establish radio/display performance and safe memory and storage capacities before the full Host application and UI work. The accepted product brief is in [BRAINSTORM.md](BRAINSTORM.md), the implementation sequence is in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md), and the domain glossary is in [CONTEXT.md](CONTEXT.md).
 
 ## MVP boundary
 
 - LCDWiki E32R28T touch display in 320×240 landscape orientation
-- Apple Silicon Host running macOS 26 or newer
+- Apple Silicon Host running macOS 26 or newer (the first Host platform; Linux and Windows come later)
 - Rust Host daemon and CLI plus SwiftUI setup/status application
 - ESP-IDF C++ firmware with LVGL
 - complete one-second Host Metric snapshots over versioned CBOR on physical USB
