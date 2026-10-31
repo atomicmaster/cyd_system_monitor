@@ -84,6 +84,8 @@ restriction ([ADR 0024](adr/0024-limit-outbound-traffic-to-explicit-github-relea
 that restriction applies to the shipped Host daemon and firmware at runtime,
 not to building them.
 
+If an OS Python upgrade leaves ESP-IDF looking for a missing Python environment, set `IDF_PYTHON_ENV_PATH` to an existing `~/.espressif/python_env/idf5.3_py3.*_env` before sourcing `export.sh`, or run ESP-IDF's `install.sh esp32` to create a new environment.
+
 ## Target-script exit codes
 
 Every `tools/dev/*.sh` function (`doctor`, `build`, `check`, `run`) returns a
@@ -164,6 +166,12 @@ cyd-host unpair|reset-calibration --port ...                       # recovery co
 ```
 
 First pairing needs a touch on the display within 60 s; see `docs/tickets/TB02.md` for the operator steps.
+
+## Board sessions
+
+Use `./dev run hardware -- flash --port /dev/cu.usbserial-110 --fresh` to build from defaults and flash without a monitor. Start a timed transcript with `./dev run hardware -- session --port /dev/cu.usbserial-110 --seconds 60 '5:DEV:RADIO_STATUS' --log session.log`. Add `--no-reset` to leave EN untouched.
+
+Build and doctor warn when the existing `firmware/sdkconfig` differs from defaults. Use `--fresh`, or move that sdkconfig aside and rebuild. See the [hardware profile README](../hardware/profiles/lcdwiki-esp32-32e-2.8/development/README.md) for board setup and recovery.
 
 ## Agent activity: Claude Code hooks
 

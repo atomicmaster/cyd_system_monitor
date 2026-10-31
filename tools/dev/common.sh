@@ -49,6 +49,17 @@ idf_export_candidate() {
 idf_missing_hint() {
   local export_sh
   if export_sh=$(idf_export_candidate); then
+    local version expected candidate
+    version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    expected="$HOME/.espressif/python_env/idf5.3_py${version}_env"
+    if [[ ! -d "$expected" ]]; then
+      for candidate in "$HOME"/.espressif/python_env/idf5.3_py3.*_env; do
+        if [[ -d "$candidate" ]]; then
+          echo "ESP-IDF Python env missing for Python $version. Run: export IDF_PYTHON_ENV_PATH=$candidate before sourcing export.sh; alternatively run $(dirname "$export_sh")/install.sh esp32."
+          break
+        fi
+      done
+    fi
     echo "ESP-IDF looks installed at $(dirname "$export_sh") but is not sourced in this shell. Run: source $export_sh && ./dev <command> firmware ... -- in the SAME shell invocation, since sourcing export.sh and running idf.py in separate commands loses the exported PATH/IDF_PATH."
   else
     echo "install ESP-IDF and 'source \$IDF_PATH/export.sh' (https://docs.espressif.com/projects/esp-idf)"

@@ -31,7 +31,8 @@ check() {
 
 # Runs a diagnostic case on a connected board:
 #   ./dev run hardware -- <case> --port <path>
-#     case: display-smoke | calibration | peripherals | capacity | cpu-replay | paired-cpu
+#     case: flash [--fresh] | session --seconds N [T:CMD ...] [--no-reset] [--log F]
+#           | display-smoke | calibration | peripherals | capacity | cpu-replay | paired-cpu
 #
 # Unlike the simulator (which builds a separate scenario binary per case
 # because it has no operator to drive it interactively), the real board
@@ -52,6 +53,43 @@ check() {
 # port -- it is not attempted or simulated here.
 run() {
   if [[ "${1:-}" == "--" ]]; then shift; fi
+
+  if [[ "${1:-}" == "session" ]]; then
+    shift
+    local port="" seconds="" python="${IDF_PYTHON_ENV_PATH:+$IDF_PYTHON_ENV_PATH/bin/python}"
+    local args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --port) port="${2:?missing port}"; shift 2 ;;
+        --seconds) seconds="${2:?missing seconds}"; shift 2 ;;
+        *) args+=("$1"); shift ;;
+      esac
+    done
+    [[ -n "$port" && -n "$seconds" ]] || { echo "error: session requires --port and --seconds" >&2; return 1; }
+    "${python:-python}" -I "$(dev_root)/tools/hardware/serial_session.py" "$port" "$seconds" "${args[@]}"
+    return
+  fi
+  if [[ "${1:-}" == "flash" ]]; then
+    shift
+    local port="" fresh=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --port) port="${2:?missing port}"; shift 2 ;;
+        --fresh) fresh=1; shift ;;
+        *) echo "error: unknown flash option $1" >&2; return 1 ;;
+      esac
+    done
+    [[ -n "$port" && -e "$port" ]] || { echo "error: specify an existing --port" >&2; return 1; }
+    require_tool idf.py "$(idf_missing_hint)" || return 1
+    if [[ $fresh == 1 ]]; then
+      (source "$(_firmware_script)"; build --fresh) || return 1
+      local dir="$(dev_root)/firmware/build-fresh"
+      (cd "$(dev_root)/firmware" && idf.py -B "$dir" -D "SDKCONFIG=$dir/sdkconfig" -p "$port" flash)
+    else
+      (cd "$(dev_root)/firmware" && idf.py -p "$port" flash)
+    fi
+    return
+  fi
 
   local case_name=""
   local port=""
