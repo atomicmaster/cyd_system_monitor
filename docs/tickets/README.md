@@ -86,8 +86,8 @@ The dependency column repeats each ticket's prerequisite links for navigation. E
 | [TB07](TB07.md) | Show supported agent process presence | Executable | [C02](C02.md) |
 | [TB08](TB08.md) | Run the Host as a per-user service with setup status | Executable | [C02](C02.md) |
 | [TB09](TB09.md) | Show the real radio schedule and coverage | Executable | [C02](C02.md) |
-| [TB10](TB10.md) | Observe WiFi traffic through to an inspectable view | Outline | [TB09](TB09.md) |
-| [TB11](TB11.md) | Observe BLE advertisements through to an inspectable view | Outline | [TB09](TB09.md) |
+| [TB10](TB10.md) | Observe WiFi traffic through to an inspectable view | Executable | [TB09](TB09.md) |
+| [TB11](TB11.md) | Observe BLE advertisements through to an inspectable view | Executable | [TB09](TB09.md) |
 | [TB12](TB12.md) | Carry one deauthentication anomaly through an Alert episode | Outline | [TB10](TB10.md), [TB05](TB05.md) |
 | [TB13](TB13.md) | Recover durable Alerts and baselines after power loss | Outline | [TB12](TB12.md), [TB11](TB11.md) |
 | [TB14](TB14.md) | Add BLE advertisement flooding episodes | Outline | [TB13](TB13.md) |
