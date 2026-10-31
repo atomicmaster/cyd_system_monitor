@@ -31,13 +31,15 @@ _check_format() {
 
 build() {
   require_tool idf.py "$(idf_missing_hint)" || return 1
-  python3 "$(dev_root)/tools/dev/sdkconfig_drift.py"
-  [[ "${1:-}" == "--" ]] && shift
+  if [[ "${1:-}" == "--" ]]; then shift; fi
   if [[ "${1:-}" == "--fresh" ]]; then
+    # A fresh build regenerates its own sdkconfig from the defaults, so the
+    # local firmware/sdkconfig (and any drift in it) does not apply.
     local fresh="$(_firmware_dir)/build-fresh"
     rm -f "$fresh/sdkconfig"
     (cd "$(_firmware_dir)" && idf.py -B "$fresh" -D "SDKCONFIG=$fresh/sdkconfig" build && idf.py -B "$fresh" -D "SDKCONFIG=$fresh/sdkconfig" size)
   else
+    python3 "$(dev_root)/tools/dev/sdkconfig_drift.py"
     (cd "$(_firmware_dir)" && idf.py build && idf.py size)
   fi
 }
