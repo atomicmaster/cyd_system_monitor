@@ -58,7 +58,7 @@ Busy and idle are never inferred from CPU use. An earlier CPU heuristic (busy at
 - **Read:** each 5 s scan reads at most 64 files of at most 16 bytes, and only a file whose pid is a running process of that same agent counts. Its age is the file's modification time.
 - **States:** busy while any running process of the agent last reported busy; idle when its processes have reported and none is busy; `running, activity unknown` before any report (hooks not installed, or a new session without a prompt yet). A busy report older than 15 minutes with nothing since counts as idle, for a session killed mid-turn.
 
-Each agent's adapter is the set of its hooks that call this command, listed below. An agent with no adapter yet stays `running, activity unknown` while it runs: Codex, Grok Build, Gemini and OpenCode, until their sections are added.
+Each agent's adapter is the set of its hooks that call this command, listed below. An agent with no adapter yet stays `running, activity unknown` while it runs: Grok Build, Gemini and OpenCode, until their sections are added.
 
 ## Busy and idle: Claude Code hooks
 
@@ -70,3 +70,33 @@ Claude Code runs a command on lifecycle events. With the hooks below installed i
 | `Stop`, `Notification` (a permission request or a wait for input), `SessionEnd` | idle |
 
 Each hook runs `cyd-host agent-event claude busy|idle` (the shared channel above). The hook JSON is never read.
+
+
+## Busy and idle: Codex hooks
+
+Codex supports command hooks in `~/.codex/hooks.json`. This setup targets codex-cli 0.166.0; [0.124.0 made hooks stable](https://github.com/openai/codex/releases/tag/rust-v0.124.0), but the minimum version supporting every event below has not been established. The installed CLI reports hooks as stable and enabled in `codex features list`; `codex --help` describes hook trust and `--no-daemon`. See OpenAI's [hooks documentation](https://developers.openai.com/codex/hooks) and [hook implementation](https://github.com/openai/codex/tree/rust-v0.166.0/codex-rs/hooks).
+
+| Event | Records |
+| --- | --- |
+| `UserPromptSubmit`, `PreToolUse`, `PostToolUse` | busy |
+| `PermissionRequest`, `Stop`, `SessionEnd`, `Interrupt` | idle |
+
+Tool hooks refresh busy when supported tools start or finish. PermissionRequest occurs before approval; automatic approval can therefore briefly report idle. There is no verified event for every wait for user input or for resuming immediately after approval, so idle can persist until the next tool or prompt event. A tool or turn lasting over 15 minutes without another event is shown idle. Before the first event the bar shows activity unknown. Concurrent turns sharing one process can overwrite each other's state.
+
+Merge the following into `~/.codex/hooks.json` (preserve existing hooks). Replace `/absolute/path/to/cyd-host` with the installed host binary's absolute path; a local debug build is `host/target/debug/cyd-host` under this checkout, after building it. Review and trust the hooks in Codex using `/hooks`.
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event codex busy"}]}],
+    "PreToolUse": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event codex busy"}]}],
+    "PostToolUse": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event codex busy"}]}],
+    "PermissionRequest": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event codex idle"}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event codex idle"}]}],
+    "SessionEnd": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event codex idle"}]}],
+    "Interrupt": [{"hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event codex idle"}]}]
+  }
+}
+```
+
+The channel drains hook input without reading its contents. The installed version and feature flag were checked on this Mac; hook dispatch, trust, the VS Code extension and the hook command's ancestor chain have not been verified here. In particular, a shared daemon or remote app server may not descend from an allowlisted process within eight levels, in which case no event is recorded. No new allowlist row is justified without a resolved path and process-tree evidence.
