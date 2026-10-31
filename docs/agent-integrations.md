@@ -58,7 +58,7 @@ Busy and idle are never inferred from CPU use. An earlier CPU heuristic (busy at
 - **Read:** each 5 s scan reads at most 64 files of at most 16 bytes, and only a file whose pid is a running process of that same agent counts. Its age is the file's modification time.
 - **States:** busy while any running process of the agent last reported busy; idle when its processes have reported and none is busy; `running, activity unknown` before any report (hooks not installed, or a new session without a prompt yet). A busy report older than 15 minutes with nothing since counts as idle, for a session killed mid-turn.
 
-Each agent's adapter is the set of its hooks that call this command, listed below. An agent with no adapter yet stays `running, activity unknown` while it runs: Grok Build, Gemini and OpenCode, until their sections are added.
+Each agent's adapter is the set of its hooks that call this command, listed below. Checking from the Host that each agent's hooks are present, and installing them with one command, is [TB19](tickets/TB19.md). An agent with no adapter yet stays `running, activity unknown` while it runs: Grok Build, Gemini and OpenCode, until their sections are added.
 
 ## Busy and idle: Claude Code hooks
 

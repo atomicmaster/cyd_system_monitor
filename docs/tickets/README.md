@@ -95,6 +95,7 @@ The dependency column repeats each ticket's prerequisite links for navigation. E
 | [TB16](TB16.md) | Change settings consistently from touch and Host commands | Outline | [TB13](TB13.md), [TB08](TB08.md) |
 | [TB17](TB17.md) | Complete and verify the appliance interface | Outline | [TB03](TB03.md), [TB04](TB04.md), [TB05](TB05.md), [TB06](TB06.md), [TB07](TB07.md), [TB08](TB08.md), [TB10](TB10.md), [TB11](TB11.md), [TB14](TB14.md), [TB15](TB15.md), [TB16](TB16.md) |
 | [TB18](TB18.md) | Export diagnostics and erase only explicitly selected data | Outline | [TB13](TB13.md), [TB16](TB16.md) |
+| [TB19](TB19.md) | Check and install agent activity hooks from the Host | Outline | [TB07](TB07.md), [TB08](TB08.md) |
 | [R01](R01.md) | Install and remove a signed macOS appliance package | Outline | [TB08](TB08.md), [TB17](TB17.md), [TB18](TB18.md) |
 | [R02](R02.md) | Fetch a verified release and recover USB firmware updates | Outline | [TB08](TB08.md), [TB16](TB16.md) |
 | [R03](R03.md) | Qualify the integrated MVP and publish release evidence | Outline | [R01](R01.md), [R02](R02.md) |
@@ -110,7 +111,7 @@ Tickets can cross several milestones; completing a tracer bullet does not close 
 | M1 | F05–F07 |
 | M1a | F08 |
 | M2 | C01, TB01, TB02, C02, TB09, TB12, TB13, TB16 |
-| M3 | TB02–TB08 |
+| M3 | TB02–TB08, TB19 |
 | M4 | Feature slices plus TB12/TB16, integrated by TB17 |
 | M5 | TB09–TB11 and radio configuration in TB16 |
 | M6 | TB12–TB16 and Radio History export/erase in TB18 |
