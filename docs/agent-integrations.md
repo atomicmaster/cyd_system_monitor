@@ -58,7 +58,7 @@ Busy and idle are never inferred from CPU use. An earlier CPU heuristic (busy at
 - **Read:** each 5 s scan reads at most 64 files of at most 16 bytes, and only a file whose pid is a running process of that same agent counts. Its age is the file's modification time.
 - **States:** busy while any running process of the agent last reported busy; idle when its processes have reported and none is busy; `running, activity unknown` before any report (hooks not installed, or a new session without a prompt yet). A busy report older than 15 minutes with nothing since counts as idle, for a session killed mid-turn.
 
-Each agent's adapter is the set of its hooks that call this command, listed below. Checking from the Host that each agent's hooks are present, and installing them with one command, is [TB19](tickets/TB19.md). An agent with no adapter yet stays `running, activity unknown` while it runs: Gemini and OpenCode, until their sections are added.
+Each agent's adapter is the set of its hooks that call this command, listed below. Checking from the Host that each agent's hooks are present, and installing them with one command, is [TB19](tickets/TB19.md). An agent with no adapter yet stays `running, activity unknown` while it runs: OpenCode, until its section is added.
 
 ## Busy and idle: Claude Code hooks
 
@@ -133,3 +133,29 @@ Create `~/.grok/hooks/cyd-system-monitor.json` (Grok merges every file in that d
 ```
 
 **Verified on this Mac:** only the documentation and the CLI surface. `grok --help` lists no hook flag, and the shipped guide documents `$GROK_HOME` as the way to relocate the config directory, so an isolated test is possible in principle. A scratch `GROK_HOME` with a `config.toml` holding the hooks, a scratch `CYD_RUN_DIR` and `--leader-socket` in the scratch directory was tried with `grok -p`: grok 1.0.70 exits with "Not signed in" before starting a session, so no hook fired. A throwaway `XAI_API_KEY` did not change that. Copying credentials into the scratch home was not done. **Not verified:** that any hook runs, that its parent chain reaches a process on the Grok Build allowlist rows within eight parents (the rows match `~/.grok/downloads/grok-<semver>-macos-aarch64`, which is where `~/.grok/bin/grok` resolves), the interactive TUI, and the daemon route (`grok host-server`), which runs `Notification` and other observe hooks from a pool shared by sessions. If a hook is run by a process that is not on an allowlist row, or the hook is not run at all, nothing is recorded and the bar stays `running, activity unknown`; it never reads busy by mistake. A first run with a signed-in Grok, checking `<run dir>/agent-events/grok-<pid>`, would settle it; if the parent is an unlisted helper, add its exact resolved path as a new row.
+
+## Busy and idle: Gemini (`agy`) hooks
+
+Google's Antigravity CLI (`agy`, which this project calls Gemini) runs commands on lifecycle events listed in a `hooks.json`: the global `~/.gemini/config/hooks.json`, a workspace `<project>/.agents/hooks.json`, and one inside each installed plugin ([hooks documentation](https://antigravity.google/docs/hooks), [changelog](https://antigravity.google/changelog)). Each top-level key is a named group, so this adapter's hooks sit under their own `cyd-activity` group and can be disabled with `"enabled": false` without touching other groups. Unlike Codex and Grok Build, no trust step is documented. With the hooks below, Gemini is **busy** from a submitted prompt until the turn ends, including while it runs tools, and **idle** otherwise. This setup targets agy 1.4.12; `PreInvocation` ordering was settled in 1.1.10 according to the changelog.
+
+| Event | Records |
+| --- | --- |
+| `PreInvocation` (before each model call), `PreToolUse`, `PostToolUse` (matcher `.*`, every tool) | busy |
+| `Stop` (the turn ended: no more tool calls, cancelled, the invocation limit, or an error) | idle |
+
+Each hook runs `cyd-host agent-event gemini busy|idle` (the shared channel above) through `/bin/sh -c`; the hook JSON on stdin is never read. `agy` has no event for a permission prompt, a wait for input, or the session ending: while it waits for a tool approval the bar stays busy (until the approval or the 15 minute timeout), and a session closed without a `Stop` reads idle after 15 minutes, or not running once the process exits. `SessionStart` is not used: a new session has no prompt yet and stays `running, activity unknown`.
+
+Install as `~/.gemini/config/hooks.json`, or merge the `cyd-activity` group into an existing one. Replace `/absolute/path/to/cyd-host` with the installed host binary's absolute path.
+
+```json
+{
+  "cyd-activity": {
+    "PreInvocation": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event gemini busy"}],
+    "PreToolUse": [{"matcher": ".*", "hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event gemini busy"}]}],
+    "PostToolUse": [{"matcher": ".*", "hooks": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event gemini busy"}]}],
+    "Stop": [{"type": "command", "command": "/absolute/path/to/cyd-host agent-event gemini idle"}]
+  }
+}
+```
+
+**Verified on this Mac (agy 1.4.12, `agy -p`):** with `PreInvocation` and `Stop` hooks in a scratch project's `.agents/hooks.json` and a scratch `CYD_RUN_DIR`, both hooks ran as `/bin/sh` children of the `~/.local/bin/agy` process (two levels up from `cyd-host`), and `cyd-host agent-event` wrote `gemini-<pid>` as `busy`, then `idle`. That run hit the account's quota, and `Stop` still fired on the error. Not verified: `PreToolUse` and `PostToolUse` in a real turn, the interactive TUI, and the Antigravity desktop app and IDE (which read the same global file, but run their own processes that are not on the allowlist, so their hooks record nothing).
