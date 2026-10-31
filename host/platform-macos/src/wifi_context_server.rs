@@ -161,8 +161,11 @@ fn serve(
     let mut current: Option<Connection> = None;
     let mut buf = [0u8; 1024];
     while !stop.load(Ordering::Relaxed) {
+        // Whether a connection was taken off the queue this pass, kept or not.
+        let mut dequeued = false;
         match listener.accept() {
             Ok((stream, _)) => {
+                dequeued = true;
                 if peer_uid(&stream) != Some(config.expected_uid) {
                     bump(&counters.wrong_uid);
                     drop(stream); // closed without a byte read or written
@@ -187,7 +190,12 @@ fn serve(
             Err(_) => thread::sleep(POLL),
         }
         let Some(conn) = current.as_mut() else {
-            thread::sleep(POLL);
+            // A dropped connection (another uid, or a peer already gone, which
+            // Darwin will not even set timeouts on) leaves nothing to read:
+            // take the next one at once rather than one per poll.
+            if !dequeued {
+                thread::sleep(POLL);
+            }
             continue;
         };
         match conn.stream.read(&mut buf) {
@@ -662,7 +670,13 @@ mod tests {
                 .collect();
             let _ = noisy.write_all(&junk);
         }
+        // The 40 are gone by now; Darwin will not set timeouts on them, so
+        // the server drops each. Draining them must not cost a poll apiece
+        // (that took over 2 s on a slow CI runner).
+        let started = Instant::now();
         let mut client = Client::connect(&server).hello();
+        let waited = started.elapsed();
+        assert!(waited < Duration::from_millis(500), "acked after {waited:?}");
         client.send(&context(1, 1, "unsupported", "null", "null"));
         wait_until("good provider served", || server.stats().applied >= 1);
         assert_eq!(availability_now(&server), ContextAvailability::Unsupported);
