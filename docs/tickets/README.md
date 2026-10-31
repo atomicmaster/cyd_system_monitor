@@ -8,14 +8,14 @@ This is the repository-local MVP backlog. The [implementation plan](../../IMPLEM
 
 ## Start here
 
-1. Assign **F01**. It is the only immediately eligible ticket in this initial backlog.
-2. Once F01 is integrated, **F02 and F03** can run independently. **F04** integrates their toolchains and closes M0.
-3. Complete **F05**, then develop **F06 and F07** in separate owned modules. Schedule their physical checks and shared diagnostic registration serially.
-4. **F08** is the hard hardware feasibility gate. Production schema/domain/Host/UI work waits for its measured result.
-5. Execute **C01, TB01, and TB02** in order under coordinated contract ownership. Each contributes a runnable intermediate result, and TB02 closes the first real Host-data path.
-6. Refine **C02** against that evidence. After its interfaces are integrated, promote and assign independent feature tickets from the table below.
+The foundation sequence is complete: F01–F08 (M0, M1, M1a), then C01, TB01, TB02 and C02 in order. From here:
 
-Implementation commands shown in tickets are proposed deliverables. F01 creates the dispatcher; runtime owners add their targets and scenario commands. This backlog does not claim those commands or modules exist today.
+1. Finish **TB09**'s ESP32 radio task (the first of its remaining slices). It can be written and compiled before the board is free, and TB10 onward waits on it.
+2. Schedule one board session for the recorded physical smokes of **TB03–TB07** and TB09's status-line readability check. TB08's signing, consent and launchd steps are listed at the end of its ticket.
+3. Promote **TB10 and TB11** from Outline to Executable so they are ready when TB09 is Done. They own separate parsers and views and can run in parallel; see [Parallel waves](#parallel-waves-after-the-first-path).
+4. **TB03** is code-complete but still an Outline: resolve its promotion questions and record them alongside its physical smoke.
+
+Commands shown in tickets that have not started are proposed deliverables. `./dev` dispatches to per-target scripts in `tools/dev/`; runtime owners add their targets and scenario commands there.
 
 ## Dispatch and completion
 
