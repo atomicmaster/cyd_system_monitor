@@ -58,7 +58,7 @@ class RadioDriver {
   }
   // The measured interval is over; events from now on are outside-window.
   virtual void EndWindow() {}
-  // Sets the channel while receive is off, then enables promiscuous receive.
+  // Selects the channel and enables promiscuous receive.
   // A failed Start may have left receive enabled; the runner stops it.
   virtual DriverResult StartWifi(uint8_t channel) = 0;
   virtual DriverResult StopWifi() = 0;
@@ -174,6 +174,8 @@ class RadioRunner {
   // Consecutive clean windows since the radio's last fault; WiFi's fault clears
   // after one clean pass over the channel plan, BLE's after one window.
   std::array<uint32_t, 2> clean_windows_{};
+  // Drops a stop retry took after the window that caused them was reported.
+  uint32_t carried_drops_ = 0;
   std::optional<Radio> stuck_;  // a receiver whose stop failed
   uint64_t stop_retry_at_us_ = 0;
 };

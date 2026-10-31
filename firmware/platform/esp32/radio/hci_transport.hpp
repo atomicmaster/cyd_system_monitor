@@ -16,8 +16,9 @@ namespace firmware::platform::esp32::radio {
 // Counters for DEV:RADIO_STATUS. Written by one task each and read by the
 // console, so relaxed 32-bit atomics are enough.
 struct HciStats {
-  uint32_t rx_overflow = 0;  // packets the VHCI callback could not buffer
-  uint32_t malformed = 0;    // received packets hci::Parse rejected
+  uint32_t rx_overflow = 0;    // packets the VHCI callback could not buffer
+  uint32_t malformed = 0;      // received packets hci::Parse rejected
+  uint32_t stale_dropped = 0;  // command events queued before a controller reset, dropped
   uint32_t commands_sent = 0;
   uint32_t timeouts = 0;
   uint32_t rejections = 0;  // Command Complete/Status with a nonzero status
@@ -40,6 +41,8 @@ struct CommandResult {
   };
   Code code = Code::kUnavailable;
   uint8_t detail = 0;
+  // esp_vhci_host_send_packet was called for this command (whatever followed).
+  bool sent = false;
   bool ok() const { return code == Code::kCompleted; }
 };
 
@@ -79,8 +82,12 @@ class HciTransport {
   // Initialises the controller (first call only), then boots it. Bounded:
   // kMaxBootAttempts, resetting the controller between attempts.
   esp_err_t BringUp();
-  // Disables and re-enables the controller, clears the Tracker and boots again.
-  bool Recover();
+  // How far a controller recovery got. A cycled controller scans nothing even if
+  // its boot then failed.
+  enum class Recovery : uint8_t { kRecovered, kCycledNotBooted, kNotCycled };
+  // Disables and re-enables the controller, clears the Tracker and boots again;
+  // bounded by kMaxBootAttempts.
+  Recovery Recover();
 
   CommandResult Execute(domain::hci::Command command, const domain::hci::Options& options,
                         uint64_t timeout_us);
@@ -99,7 +106,7 @@ class HciTransport {
   class Guard;
   static void WorkerMain(void* self);
   void RunWorker();
-  void HandlePacket(const uint8_t* bytes, size_t length, void* context);
+  void HandlePacket(const uint8_t* bytes, size_t length, uint64_t arrival_us, void* context);
   bool RunBoot();
   bool BootWithRetries(bool cycle_first);
   bool CycleController();
@@ -117,10 +124,12 @@ class HciTransport {
   bool controller_initialised_ = false;
   // Guarded by mutex_.
   bool result_ready_ = false;
+  uint64_t reset_us_ = 0;  // when the controller was last disabled; 0: never
   domain::hci::Result result_;
 
   std::atomic<uint32_t> rx_overflow_{0};
   std::atomic<uint32_t> malformed_{0};
+  std::atomic<uint32_t> stale_dropped_{0};
   std::atomic<uint32_t> commands_sent_{0};
   std::atomic<uint32_t> timeouts_{0};
   std::atomic<uint32_t> rejections_{0};

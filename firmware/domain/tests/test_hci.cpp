@@ -58,16 +58,19 @@ int main() {
   e = parse({4, 15, 4, 7, 2, 11, 32}, reports);
   check(e.kind == Kind::kStatus && e.status == 7 && e.credit == 2 && e.opcode == 0x200b);
   std::vector<uint8_t> packet = {4, 0x3e, 14, 2, 1, 0, 1, 1, 2, 3, 4, 5, 6, 2, 9, 8, 0xd0};
-  check(parse(packet, reports).kind == Kind::kAdvertising && reports.size() == 1 &&
-        reports[0].rssi == -48 && reports[0].data_length == 2);
+  e = parse(packet, reports);
+  check(e.kind == Kind::kAdvertising && reports.size() == 1 && reports[0].rssi == -48 &&
+        reports[0].data_length == 2);
   packet[4] = 2;
   packet.insert(packet.end(), {1, 0, 6, 5, 4, 3, 2, 1, 0, 0xc0});
   packet[2] += 10;
   reports.clear();
-  check(parse(packet, reports).kind == Kind::kAdvertising && reports.size() == 2);
+  e = parse(packet, reports);
+  check(e.kind == Kind::kAdvertising && reports.size() == 2);
   auto malformed = [&](std::vector<uint8_t> p) {
     reports.clear();
-    check(parse(p, reports).kind == Kind::kMalformed && reports.empty());
+    const Event event = parse(p, reports);
+    check(event.kind == Kind::kMalformed && reports.empty());
   };
   malformed({4, 14});
   malformed({4, 14, 4, 1});
@@ -83,32 +86,48 @@ int main() {
   bad.push_back(0);
   ++bad[2];
   malformed(bad);
-  check(parse({4, 1, 0}, reports).kind == Kind::kIgnored);
+  e = parse({4, 1, 0}, reports);
+  check(e.kind == Kind::kIgnored);
   Tracker t;
-  check(t.Issue(Command::kReset, 0, 10) == IssueResult::kIssued);
-  check(t.TryBeginSend(1));
+  auto first = t.Issue(Command::kReset, 0, 10);
+  check(first == IssueResult::kIssued);
+  auto began = t.TryBeginSend(1);
+  check(began);
   e = {Kind::kComplete, 14, 4, 1, 0xc03};
-  check(t.OnEvent(e, 2).outcome == Outcome::kRejected);
-  check(t.Issue(Command::kReset, 3, 10) == IssueResult::kIssued);
-  check(t.TryBeginSend(3));
-  check(t.Poll(14).outcome == Outcome::kTimedOut);
-  check(t.Issue(Command::kReset, 15, 10) == IssueResult::kQuarantined);
+  auto step = t.OnEvent(e, 2);
+  check(step.outcome == Outcome::kRejected);
+  first = t.Issue(Command::kReset, 3, 10);
+  check(first == IssueResult::kIssued);
+  began = t.TryBeginSend(3);
+  check(began);
+  step = t.Poll(14);
+  check(step.outcome == Outcome::kTimedOut);
+  first = t.Issue(Command::kReset, 15, 10);
+  check(first == IssueResult::kQuarantined);
   e = {Kind::kComplete, 14, 0, 1, 0};
   t.OnEvent(e, 15);
   check(t.unexpected() == 0);
-  check(t.Issue(Command::kLeSetEventMask, 15, 10) == IssueResult::kIssued);
-  check(t.TryBeginSend(15));
+  first = t.Issue(Command::kLeSetEventMask, 15, 10);
+  check(first == IssueResult::kIssued);
+  began = t.TryBeginSend(15);
+  check(began);
   e.opcode = 0xc03;
-  check(t.OnEvent(e, 16).outcome == Outcome::kNone && t.late() == 1);
+  step = t.OnEvent(e, 16);
+  check(step.outcome == Outcome::kNone && t.late() == 1);
   e.opcode = 0x2001;
   e.credit = 0;
-  check(t.OnEvent(e, 17).outcome == Outcome::kCompleted);
-  check(t.Issue(Command::kReset, 18, 10) == IssueResult::kNeedsControllerReset);
+  step = t.OnEvent(e, 17);
+  check(step.outcome == Outcome::kCompleted);
+  first = t.Issue(Command::kReset, 18, 10);
+  check(first == IssueResult::kNeedsControllerReset);
   e.credit = 1;
   t.OnEvent(e, 18);
-  check(t.Issue(Command::kReset, 19, 10) == IssueResult::kIssued);
-  check(t.Poll(30).outcome == Outcome::kTimedOut);
-  check(t.Issue(Command::kReset, 30, 10) == IssueResult::kIssued);
+  first = t.Issue(Command::kReset, 19, 10);
+  check(first == IssueResult::kIssued);
+  step = t.Poll(30);
+  check(step.outcome == Outcome::kTimedOut);
+  first = t.Issue(Command::kReset, 30, 10);
+  check(first == IssueResult::kIssued);
   BootSequencer boot;
   auto steps = BootSequence();
   check(steps[1].options.mask ==
@@ -213,6 +232,56 @@ int main() {
   e = {Kind::kStatus, 15, 0x0c, 1, 0xc03};
   result = reset.OnEvent(e, 17);
   check(result.outcome == Outcome::kRejected && result.status == 0x0c);
+  // H1: a Status(0) for an opcode that is no longer pending must not clear its
+  // quarantine, or the original command's Complete could satisfy the next one.
+  Tracker status;
+  issue = status.Issue(Command::kLeSetScanEnable, 0, 10);
+  check(issue == IssueResult::kIssued);
+  sent = status.TryBeginSend(0);
+  check(sent);
+  result = status.Poll(11);
+  check(result.outcome == Outcome::kTimedOut);
+  e = {Kind::kStatus, 15, 0, 1, 0x200c};
+  result = status.OnEvent(e, 12);
+  check(result.outcome == Outcome::kNone && status.late() == 0 && status.unexpected() == 0 &&
+        status.credit() == 1);
+  issue = status.Issue(Command::kLeSetScanEnable, 13, 10);
+  check(issue == IssueResult::kQuarantined);
+  e = {Kind::kComplete, 14, 0, 1, 0x200c};
+  result = status.OnEvent(e, 14);
+  check(result.outcome == Outcome::kNone && status.late() == 1);
+  issue = status.Issue(Command::kLeSetScanEnable, 15, 10);
+  check(issue == IssueResult::kIssued);
+  sent = status.TryBeginSend(15);
+  check(sent);
+  e = {Kind::kComplete, 14, 0, 1, 0x200c};
+  result = status.OnEvent(e, 16);
+  check(result.outcome == Outcome::kCompleted);  // only the disable's own Complete does
+  // A Status(0) for a different opcode while a command is pending leaves it pending.
+  Tracker other;
+  issue = other.Issue(Command::kLeSetScanEnable, 0, 10);
+  sent = other.TryBeginSend(0);
+  e = {Kind::kStatus, 15, 0, 1, 0xc03};
+  result = other.OnEvent(e, 1);
+  check(result.outcome == Outcome::kNone && other.unexpected() == 0);
+  // A nonzero Status for a pending command still rejects it.
+  e = {Kind::kStatus, 15, 0x0c, 1, 0x200c};
+  result = other.OnEvent(e, 2);
+  check(result.outcome == Outcome::kRejected && result.status == 0x0c);
+
+  // H2: command events queued before a controller reset are dropped, not delivered.
+  e = {Kind::kComplete, 14, 0, 1, 0xc03};
+  check(IsStaleAfterReset(e, 99, 100));
+  e.kind = Kind::kStatus;
+  check(IsStaleAfterReset(e, 0, 100));
+  check(!IsStaleAfterReset(e, 100, 100));
+  check(!IsStaleAfterReset(e, 101, 100));
+  e.kind = Kind::kAdvertising;
+  check(!IsStaleAfterReset(e, 1, 100));
+  e.kind = Kind::kHardwareError;
+  check(!IsStaleAfterReset(e, 1, 100));
+  e.kind = Kind::kComplete;
+  check(!IsStaleAfterReset(e, 1, 0));  // before any reset nothing is stale
   BootSequencer invalid(3, 4);
   check(invalid.failed() && invalid.step_index() == 3 &&
         invalid.failure().outcome == Outcome::kInvalid);

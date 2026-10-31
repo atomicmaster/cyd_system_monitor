@@ -153,6 +153,10 @@ Result Tracker::OnEvent(const Event& e, uint64_t now) {
   bool terminates = e.opcode != 0 && pending_ && sent_ && opcode_ == e.opcode &&
                     (e.kind == Kind::kComplete || e.status != 0);
   credit_ = pending_ && sent_ && !terminates && e.credit ? e.credit - 1 : e.credit;
+  // A Status with status 0 only says "accepted": the Complete follows. It never
+  // ends a command, and for an opcode that is no longer pending it must not
+  // touch the quarantine or the late/unexpected counts.
+  if (e.kind == Kind::kStatus && e.status == 0) return timeout;
   if (e.opcode == 0) return timeout;
   int i = Index(e.opcode);
   if (i >= 0 && quarantined_[i]) {

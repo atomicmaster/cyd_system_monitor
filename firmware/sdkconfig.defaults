@@ -82,3 +82,8 @@ CONFIG_ESP_WIFI_ENABLE_WPA3_OWE_STA=n
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
 CONFIG_ESP_WIFI_MBEDTLS_TLS_CLIENT=n
+
+# No Bluetooth modem sleep. In v5.3.2's ORIG mode esp_vhci_host_send_packet and
+# esp_bt_controller_disable can block forever waiting for the controller to wake
+# (bt.c async_wakeup_request with portMAX_DELAY, plus a busy loop in disable).
+CONFIG_BTDM_CTRL_MODEM_SLEEP=n

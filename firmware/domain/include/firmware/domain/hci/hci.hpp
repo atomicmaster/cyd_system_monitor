@@ -36,6 +36,13 @@ struct Event {
 using ReportCallback = void (*)(const Report&, void*);
 Event Parse(const uint8_t* packet, size_t length, ReportCallback callback = nullptr,
             void* context = nullptr);
+// A command event (Complete or Status) that arrived before the controller was
+// last reset answers a command the reset abandoned: it must not reach the
+// Tracker, or it could satisfy the next command of the same opcode. Times are
+// the transport's monotonic microseconds; reset_us 0 means no reset yet.
+inline bool IsStaleAfterReset(const Event& event, uint64_t arrival_us, uint64_t reset_us) {
+  return (event.kind == Kind::kComplete || event.kind == Kind::kStatus) && arrival_us < reset_us;
+}
 enum class Outcome { kNone, kCompleted, kRejected, kTimedOut, kInvalid };
 struct Result {
   Outcome outcome = Outcome::kNone;

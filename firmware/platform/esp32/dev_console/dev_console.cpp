@@ -347,13 +347,15 @@ void RunRadioStatus() {
   ESP_LOGI(kTag,
            "DEV:RADIO_STATUS: hci vhci_rx_overflow=%lu malformed=%lu commands_sent=%lu "
            "timeouts=%lu rejections=%lu late=%llu unexpected=%llu credit=%u hardware_errors=%lu "
-           "controller_resets=%lu",
+           "controller_resets=%lu stale_dropped=%lu scan_stop_already_off=%lu",
            static_cast<unsigned long>(hci.rx_overflow), static_cast<unsigned long>(hci.malformed),
            static_cast<unsigned long>(hci.commands_sent), static_cast<unsigned long>(hci.timeouts),
            static_cast<unsigned long>(hci.rejections), static_cast<unsigned long long>(hci.late),
            static_cast<unsigned long long>(hci.unexpected), static_cast<unsigned>(hci.credit),
            static_cast<unsigned long>(hci.hardware_errors),
-           static_cast<unsigned long>(hci.controller_resets));
+           static_cast<unsigned long>(hci.controller_resets),
+           static_cast<unsigned long>(hci.stale_dropped),
+           static_cast<unsigned long>(status.scan_stop_already_off));
   ESP_LOGI(kTag, "DEV:RADIO_STATUS: stack_free_bytes radio=%lu hci_worker=%lu",
            static_cast<unsigned long>(status.radio_stack_free_bytes),
            static_cast<unsigned long>(hci.worker_stack_free_bytes));

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 
 #include "firmware/domain/radio_runner.hpp"
@@ -19,8 +20,6 @@ class BleScanner {
   // Fault codes for FaultOp::kStart / kStop / kHciTimeout when no HCI status applies.
   static constexpr int32_t kCodeNotIssuedBase = 100;  // + hci::IssueResult
   static constexpr int32_t kCodeControllerReset = 200;
-  // A Hardware Error event: 0x100 | its HCI status, reported as kHciRejected.
-  static constexpr int32_t kCodeHardwareErrorBase = 0x100;
 
   BleScanner(HciTransport& transport, ObservationGate& gate) : transport_(transport), gate_(gate) {}
 
@@ -34,6 +33,10 @@ class BleScanner {
   domain::DriverResult Start();
   domain::DriverResult Stop();
 
+  // Scan disables the controller refused with Command Disallowed (0x0C): the scan
+  // was already off, which counts as stopped. Read by the console.
+  uint32_t stop_already_off() const { return stop_already_off_.load(std::memory_order_relaxed); }
+
   // Worker-side advertising handler (HciTransport::Start).
   static void OnReport(const domain::hci::Report& report, uint64_t arrival_us, void* context);
 
@@ -41,7 +44,9 @@ class BleScanner {
   domain::DriverResult Failed(domain::FaultOp op, int32_t code);
   domain::DriverResult Map(const CommandResult& result, domain::FaultOp op);
   // A controller that stopped answering or raised a Hardware Error: reset it.
-  // Returns whether it is usable again; if not, the radio stays faulted.
+  // Returns whether it is usable again; if not, the radio stays faulted. A
+  // controller that was cycled scans nothing, so this clears scanning_ even when
+  // the boot afterwards fails.
   bool RecoverController();
   domain::DriverResult SetScan(bool enable);
 
@@ -49,7 +54,10 @@ class BleScanner {
   ObservationGate& gate_;
   domain::DriverResult init_result_{false, domain::FaultOp::kInit, 0};
   bool transport_started_ = false;
-  bool scanning_ = false;  // a scan enable was sent and no disable has completed since
+  // A scan enable reached the controller and neither a completed disable nor a
+  // controller cycle has happened since.
+  bool scanning_ = false;
+  std::atomic<uint32_t> stop_already_off_{0};
 };
 
 }  // namespace firmware::platform::esp32::radio

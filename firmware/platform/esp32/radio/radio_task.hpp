@@ -33,13 +33,14 @@ struct RadioStatus {
   bool ble_init_ok = false;
   int32_t wifi_init_code = 0;
   int32_t ble_init_code = 0;
-  uint32_t events_drained[2] = {};  // indexed by domain::EventProtocol
-  uint32_t outside_window[2] = {};  // arrivals with no matching open window
-  uint32_t wrong_radio[2] = {};     // subset: a window of the other radio was open
-  uint64_t ring_drops = 0;          // events evicted from the rings, attributed or not
-  uint32_t unattributed_drops = 0;  // of those, drops that no window could claim
-  uint32_t message_overflows = 0;   // RadioMessages the app loop had no room for
-  uint32_t control_overflows = 0;   // ControlRequests refused for lack of room
+  uint32_t events_drained[2] = {};     // indexed by domain::EventProtocol
+  uint32_t outside_window[2] = {};     // arrivals with no matching open window
+  uint32_t wrong_radio[2] = {};        // subset: a window of the other radio was open
+  uint32_t scan_stop_already_off = 0;  // scan disables answered 0x0C (already off)
+  uint64_t ring_drops = 0;             // events evicted from the rings, attributed or not
+  uint32_t unattributed_drops = 0;     // of those, drops that no window could claim
+  uint32_t message_overflows = 0;      // RadioMessages the app loop had no room for
+  uint32_t control_overflows = 0;      // ControlRequests refused for lack of room
   HciStats hci;
   uint32_t radio_stack_free_bytes = 0;
 };

@@ -23,6 +23,8 @@ const char* OpName(FaultOp op) {
       return "hci rejected";
     case FaultOp::kReportQueueOverflow:
       return "report overflow";
+    case FaultOp::kHardwareError:
+      return "hardware error";
   }
   return "fault";
 }

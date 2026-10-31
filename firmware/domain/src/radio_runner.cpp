@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 
 namespace firmware::domain {
 
@@ -13,6 +14,9 @@ constexpr uint64_t kForeverUs = std::numeric_limits<uint64_t>::max();
 // A bound on one drain of the control source, so a flooding source cannot
 // hold a step forever.
 constexpr int kMaxControlsPerStep = 16;
+// Consecutive wakes that leave the clock where it was before a wait gives up
+// and lets the step return (so the next step polls the controls afresh).
+constexpr int kMaxStalledWakes = 64;
 
 uint64_t SaturatingAdd(uint64_t a, uint64_t b) { return b > kForeverUs - a ? kForeverUs : a + b; }
 
@@ -50,6 +54,12 @@ void RadioRunner::EmitConfig() {
 bool RadioRunner::ApplyControl(const ControlRequest& request) {
   ObservationConfig merged = Merged(scheduler_.config(), request);
   if (SameConfig(merged, scheduler_.config())) return false;
+  const ObservationConfig& before = scheduler_.config();
+  // A new plan or an enable change restarts the radio's clean pass.
+  if (merged.wifi_enabled != before.wifi_enabled || merged.wifi_channels != before.wifi_channels) {
+    clean_windows_[Index(Radio::kWifi)] = 0;
+  }
+  if (merged.ble_enabled != before.ble_enabled) clean_windows_[Index(Radio::kBle)] = 0;
   scheduler_.Configure(std::move(merged));
   ++config_generation_;
   next_start_us_.reset();
@@ -62,11 +72,21 @@ bool RadioRunner::ApplyControl(const ControlRequest& request) {
 }
 
 std::optional<ControlRequest> RadioRunner::WaitUntil(uint64_t deadline_us) {
-  while (driver_.NowUs() < deadline_us) {
-    if (driver_.WaitUntilUs(deadline_us) != WakeReason::kControl) continue;  // re-check the clock
-    const std::optional<ControlRequest> request = control_.Poll();
-    if (request && !SameConfig(Merged(scheduler_.config(), *request), scheduler_.config())) {
-      return request;
+  uint64_t last_now_us = driver_.NowUs();
+  int stalled_wakes = 0;
+  while (last_now_us < deadline_us) {
+    if (driver_.WaitUntilUs(deadline_us) == WakeReason::kControl) {
+      const std::optional<ControlRequest> request = control_.Poll();
+      if (request && !SameConfig(Merged(scheduler_.config(), *request), scheduler_.config())) {
+        return request;
+      }
+    }
+    const uint64_t now_us = driver_.NowUs();
+    if (now_us > last_now_us) {
+      last_now_us = now_us;
+      stalled_wakes = 0;
+    } else if (++stalled_wakes > kMaxStalledWakes) {
+      return std::nullopt;  // the clock is not moving: return, the caller re-checks it
     }
   }
   return std::nullopt;
@@ -134,12 +154,15 @@ void RadioRunner::RetryStop() {
     ApplyControl(*request);  // the radio stays stuck; the next step comes back here
     return;
   }
+  if (driver_.NowUs() < stop_retry_at_us_) return;  // the wait gave up early: not yet
   if (!StopReceiver(radio).ok) {
     stop_retry_at_us_ = SaturatingAdd(driver_.NowUs(), kStopRetryBackoffUs);
     return;
   }
   stuck_.reset();
   driver_.DrainEvents();
+  // Anything pushed after EndWindow was charged to no report: carry it forward.
+  carried_drops_ = SaturatingAdd32(carried_drops_, driver_.TakeUnattributed());
   next_start_us_.reset();
   ClearFault(radio);
 }
@@ -152,6 +175,7 @@ void RadioRunner::RunWindow() {
     ApplyControl(*request);  // the plan changed under us; replan next step
     return;
   }
+  if (driver_.NowUs() < start_us) return;  // the wait gave up early: try again next step
   const Window window = *scheduler_.NextWindow(start_us / kUsPerMs);
   const uint64_t deadline_us = SaturatingAdd(start_us, uint64_t{window.planned_ms} * kUsPerMs);
   const size_t self = Index(window.radio);
@@ -213,8 +237,9 @@ void RadioRunner::RunWindow() {
       faulted = true;
     }
   }
-  report.dropped_events =
-      SaturatingAdd32(driver_.TakeDrops(report.window_id), driver_.TakeUnattributed());
+  report.dropped_events = SaturatingAdd32(
+      SaturatingAdd32(driver_.TakeDrops(report.window_id), driver_.TakeUnattributed()),
+      std::exchange(carried_drops_, 0));
 
   if (started) {
     const uint64_t begin = std::max(rx_start_us, start_us);
@@ -233,7 +258,7 @@ void RadioRunner::RunWindow() {
   // over its whole channel plan, so one bad channel keeps it faulted.
   if (faulted) {
     clean_windows_[self] = 0;
-  } else {
+  } else if (report.end == WindowEnd::kCompleted && report.observed_ms > 0) {
     ++clean_windows_[self];
     const size_t needed = window.radio == Radio::kWifi ? scheduler_.channels().size() : 1;
     if (fault_active_[self] && clean_windows_[self] >= needed) ClearFault(window.radio);

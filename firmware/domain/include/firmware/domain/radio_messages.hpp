@@ -25,6 +25,7 @@ enum class FaultOp : uint8_t {
   kHciTimeout,
   kHciRejected,
   kReportQueueOverflow,
+  kHardwareError,  // an HCI Hardware Error event; code is its HCI status
 };
 
 // Short reason for CoverageLedger::SetFault, e.g. "start (-258)"; the code is

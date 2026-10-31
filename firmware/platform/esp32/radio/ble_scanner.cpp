@@ -8,6 +8,9 @@ namespace {
 using domain::DriverResult;
 using domain::FaultOp;
 
+// HCI status Command Disallowed.
+constexpr uint8_t kHciCommandDisallowed = 0x0c;
+
 }  // namespace
 
 bool BleScanner::StartTransport() {
@@ -44,12 +47,20 @@ DriverResult BleScanner::Map(const CommandResult& result, FaultOp op) {
 }
 
 bool BleScanner::RecoverController() {
-  if (!transport_.Recover()) {
-    init_result_ = {false, FaultOp::kInit, kCodeControllerReset};
-    return false;
+  switch (transport_.Recover()) {
+    case HciTransport::Recovery::kRecovered:
+      scanning_ = false;
+      init_result_ = {};
+      return true;
+    case HciTransport::Recovery::kCycledNotBooted:
+      scanning_ = false;
+      init_result_ = {false, FaultOp::kInit, kCodeControllerReset};
+      return false;
+    case HciTransport::Recovery::kNotCycled:
+      init_result_ = {false, FaultOp::kInit, kCodeControllerReset};
+      return false;
   }
-  scanning_ = false;  // a reset controller scans nothing
-  return true;
+  return false;
 }
 
 DriverResult BleScanner::SetScan(bool enable) {
@@ -57,6 +68,20 @@ DriverResult BleScanner::SetScan(bool enable) {
   options.enable = enable;
   const CommandResult result = transport_.Execute(domain::hci::Command::kLeSetScanEnable, options,
                                                   HciTransport::kCommandTimeoutUs);
+  // Whether a scan is running is only known to have changed once the packet was
+  // actually sent: a command that never left leaves the state as it was.
+  if (enable && result.sent) scanning_ = true;
+  if (!enable) {
+    if (result.code == CommandResult::Code::kCompleted) {
+      scanning_ = false;
+    } else if (result.code == CommandResult::Code::kRejected &&
+               result.detail == kHciCommandDisallowed) {
+      // Disabling a scan that is not running: it is off, which is what was asked.
+      stop_already_off_.fetch_add(1, std::memory_order_relaxed);
+      scanning_ = false;
+      return {};
+    }
+  }
   if (result.code == CommandResult::Code::kNeedsReset) {
     // The window is lost either way; recovering now leaves the next one clean.
     RecoverController();
@@ -70,23 +95,23 @@ DriverResult BleScanner::Start() {
   if (transport_.TakeHardwareError(&hardware_error)) {
     // The controller said it is broken: reset it and lose this window.
     if (!RecoverController()) return init_result_;
-    return Failed(FaultOp::kHciRejected, kCodeHardwareErrorBase | hardware_error);
+    return Failed(FaultOp::kHardwareError, hardware_error);
   }
-  // Sent or not, a timed-out enable may have started the scan: Stop must disable it.
-  scanning_ = true;
   const DriverResult result = SetScan(true);
   if (!init_result_.ok) return init_result_;  // the controller could not be recovered
   return result;
 }
 
 DriverResult BleScanner::Stop() {
-  if (!init_result_.ok) return {};  // nothing was ever started
   if (!scanning_) return {};
-  const DriverResult result = SetScan(false);
-  if (result.ok) scanning_ = false;
-  // A controller reset during SetScan left scanning_ false, which also closes the window.
-  if (!result.ok && !scanning_) return {};
-  return result;
+  // While a scan may be running Stop keeps failing, so the runner stays closed
+  // and keeps retrying: first the disable command, then a controller cycle.
+  // This holds even when the radio is latched failed.
+  const DriverResult disabled = SetScan(false);
+  if (!scanning_) return {};
+  RecoverController();
+  if (!scanning_) return {};
+  return disabled.ok ? Failed(FaultOp::kStop, kCodeControllerReset) : disabled;
 }
 
 void BleScanner::OnReport(const domain::hci::Report& report, uint64_t arrival_us, void* context) {

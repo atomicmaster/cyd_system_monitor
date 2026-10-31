@@ -15,13 +15,18 @@ namespace firmware::platform::esp32::radio {
 // offers it to the gate; no frame payload is kept.
 class WifiMonitor {
  public:
+  static constexpr int32_t kCodeChannelMismatchBase = 1000;
+
   explicit WifiMonitor(ObservationGate& gate) : gate_(gate) {}
 
   // Brings the WiFi stack up in promiscuous-capable NULL mode, receive off. The
   // result is kept: a failed init is reported by Start() as FaultOp::kInit.
   domain::DriverResult Init();
 
-  // Sets the channel while promiscuous mode is off, then enables it.
+  // Enables promiscuous mode, selects the channel and reads it back. A channel
+  // that differs from the request is a kSetChannel fault (code kCodeChannelMismatchBase +
+  // the channel read). Frames are only kept once the gate's window is open, which
+  // is after this returns.
   domain::DriverResult Start(uint8_t channel);
   domain::DriverResult Stop();
 

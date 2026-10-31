@@ -279,6 +279,13 @@ int main() {
     Expect(MakeCoverageView(config, ledger, 620, ActiveWindow{Radio::kWifi, 9, 5, 410, 205})
                    .wifi.last_channel == 3,
            "a report that completed after the window started hides it");
+    // Strictly inside the window (now < rx_start + planned), so only the
+    // superseded-by-a-report branch can hide it.
+    CoverageLedger inside;
+    inside.Record(CompletedReport({Radio::kWifi, 3, 45, 205}, 205));  // completed at 250
+    Expect(MakeCoverageView(config, inside, 300, ActiveWindow{Radio::kWifi, 9, 5, 200, 205})
+                   .wifi.last_channel == 3,
+           "a report completed inside the active window's span hides it");
   }
 
   // Only a completed, at-least-half-observed, drop-free window may feed quiet recovery.

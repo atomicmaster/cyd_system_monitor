@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 
 #include "ble_scanner.hpp"
@@ -44,8 +45,10 @@ class Esp32RadioDriver final : public domain::RadioDriver {
 
   const ObservationGate& gate() const { return gate_; }
   const HciTransport& hci() const { return hci_; }
-  domain::DriverResult wifi_init() const { return wifi_init_; }
-  domain::DriverResult ble_init() const { return ble_init_; }
+  // The bring-up results, readable from other tasks (the console).
+  domain::DriverResult wifi_init() const { return Load(wifi_init_ok_, wifi_init_code_); }
+  domain::DriverResult ble_init() const { return Load(ble_init_ok_, ble_init_code_); }
+  uint32_t scan_stop_already_off() const { return ble_.stop_already_off(); }
 
  private:
   ObservationGate gate_;
@@ -53,8 +56,22 @@ class Esp32RadioDriver final : public domain::RadioDriver {
   WifiMonitor wifi_;
   BleScanner ble_;
   domain::Radio window_radio_ = domain::Radio::kWifi;  // the receiver Start* last turned on
-  domain::DriverResult wifi_init_{false, domain::FaultOp::kInit, 0};
-  domain::DriverResult ble_init_{false, domain::FaultOp::kInit, 0};
+  static domain::DriverResult Load(const std::atomic<bool>& ok, const std::atomic<int32_t>& code) {
+    return ok.load(std::memory_order_acquire)
+               ? domain::DriverResult{}
+               : domain::DriverResult{false, domain::FaultOp::kInit,
+                                      code.load(std::memory_order_relaxed)};
+  }
+  static void Store(std::atomic<bool>& ok, std::atomic<int32_t>& code,
+                    const domain::DriverResult& result) {
+    code.store(result.code, std::memory_order_relaxed);
+    ok.store(result.ok, std::memory_order_release);
+  }
+
+  std::atomic<bool> wifi_init_ok_{false};
+  std::atomic<int32_t> wifi_init_code_{0};
+  std::atomic<bool> ble_init_ok_{false};
+  std::atomic<int32_t> ble_init_code_{0};
 };
 
 }  // namespace firmware::platform::esp32::radio

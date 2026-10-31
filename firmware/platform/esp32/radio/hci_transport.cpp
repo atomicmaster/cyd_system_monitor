@@ -137,12 +137,13 @@ void HciTransport::RunWorker() {
         continue;
       }
       ParseContext context{handler_, handler_context_, frame.arrival_us};
-      HandlePacket(frame.bytes, size - sizeof(frame.arrival_us), &context);
+      HandlePacket(frame.bytes, size - sizeof(frame.arrival_us), frame.arrival_us, &context);
     }
   }
 }
 
-void HciTransport::HandlePacket(const uint8_t* bytes, size_t length, void* context) {
+void HciTransport::HandlePacket(const uint8_t* bytes, size_t length, uint64_t arrival_us,
+                                void* context) {
   const domain::hci::Event event = domain::hci::Parse(
       bytes, length,
       [](const domain::hci::Report& report, void* raw) {
@@ -159,6 +160,11 @@ void HciTransport::HandlePacket(const uint8_t* bytes, size_t length, void* conte
     case domain::hci::Kind::kStatus: {
       {
         Guard guard(mutex_);
+        if (domain::hci::IsStaleAfterReset(event, arrival_us, reset_us_)) {
+          // Queued before the last controller reset: it answers an abandoned command.
+          stale_dropped_.fetch_add(1, std::memory_order_relaxed);
+          break;
+        }
         const domain::hci::Result result = tracker_.OnEvent(event, NowUs());
         if (result.outcome != Outcome::kNone) {
           result_ = result;
@@ -182,50 +188,79 @@ void HciTransport::HandlePacket(const uint8_t* bytes, size_t length, void* conte
 CommandResult HciTransport::Execute(Command command, const domain::hci::Options& options,
                                     uint64_t timeout_us) {
   using Code = CommandResult::Code;
-  Guard guard(mutex_);
-  const size_t length = domain::hci::Build(command, options, send_packet_, sizeof(send_packet_));
-  if (length == 0) return {Code::kUnavailable, static_cast<uint8_t>(IssueResult::kInvalid)};
+  size_t length = 0;
+  uint64_t deadline_us = 0;
+  xSemaphoreTake(mutex_, portMAX_DELAY);
+  length = domain::hci::Build(command, options, send_packet_, sizeof(send_packet_));
+  if (length == 0) {
+    xSemaphoreGive(mutex_);
+    return {Code::kUnavailable, static_cast<uint8_t>(IssueResult::kInvalid)};
+  }
 
   // The deadline starts here and covers send availability as well as completion.
   const uint64_t issued_us = NowUs();
   const IssueResult issue = tracker_.Issue(command, issued_us, timeout_us);
-  if (issue == IssueResult::kNeedsControllerReset) return {Code::kNeedsReset, 0};
-  if (issue != IssueResult::kIssued) return {Code::kUnavailable, static_cast<uint8_t>(issue)};
+  if (issue != IssueResult::kIssued) {
+    xSemaphoreGive(mutex_);
+    if (issue == IssueResult::kNeedsControllerReset) return {Code::kNeedsReset, 0};
+    return {Code::kUnavailable, static_cast<uint8_t>(issue)};
+  }
 
   result_ready_ = false;
   xSemaphoreTake(wake_, 0);  // a wake from before this command carries no news
-  const uint64_t deadline_us = issued_us + timeout_us;
+  deadline_us = issued_us + timeout_us;
   bool sent = false;
+  // The mutex is held at the top of each pass and never across the send or a
+  // wait: esp_vhci_host_send_packet may block until the controller wakes, and
+  // the worker needs the mutex to record completions.
   for (;;) {
     const uint64_t now_us = NowUs();
+    CommandResult done;
+    done.sent = sent;
+    bool finished = true;
     if (result_ready_) {
       result_ready_ = false;
       switch (result_.outcome) {
         case Outcome::kCompleted:
-          return {Code::kCompleted, 0};
+          done.code = Code::kCompleted;
+          break;
         case Outcome::kRejected:
           rejections_.fetch_add(1, std::memory_order_relaxed);
-          return {Code::kRejected, result_.status};
+          done.code = Code::kRejected;
+          done.detail = result_.status;
+          break;
         case Outcome::kTimedOut:
           timeouts_.fetch_add(1, std::memory_order_relaxed);
-          return {Code::kTimedOut, 0};
+          done.code = Code::kTimedOut;
+          break;
         default:
-          return {Code::kUnavailable, static_cast<uint8_t>(IssueResult::kInvalid)};
+          done.code = Code::kUnavailable;
+          done.detail = static_cast<uint8_t>(IssueResult::kInvalid);
+          break;
       }
-    }
-    if (tracker_.Poll(now_us).outcome == Outcome::kTimedOut) {
+    } else if (tracker_.Poll(now_us).outcome == Outcome::kTimedOut) {
       timeouts_.fetch_add(1, std::memory_order_relaxed);
-      return {Code::kTimedOut, 0};
+      done.code = Code::kTimedOut;
+    } else {
+      finished = false;
     }
-    if (!sent && esp_vhci_host_check_send_available() && tracker_.TryBeginSend(now_us)) {
+    if (finished) {
+      xSemaphoreGive(mutex_);
+      return done;
+    }
+
+    const bool send_now =
+        !sent && esp_vhci_host_check_send_available() && tracker_.TryBeginSend(now_us);
+    xSemaphoreGive(mutex_);
+    if (send_now) {
       esp_vhci_host_send_packet(send_packet_, static_cast<uint16_t>(length));
       commands_sent_.fetch_add(1, std::memory_order_relaxed);
       sent = true;
+    } else {
+      // Poll fires only strictly after the deadline, hence the +1.
+      const uint64_t remaining_us = deadline_us >= now_us ? deadline_us - now_us + 1 : 1;
+      xSemaphoreTake(wake_, TicksFor(remaining_us));
     }
-    // Poll fires only strictly after the deadline, hence the +1.
-    const uint64_t remaining_us = deadline_us >= now_us ? deadline_us - now_us + 1 : 1;
-    xSemaphoreGive(mutex_);
-    xSemaphoreTake(wake_, TicksFor(remaining_us));
     xSemaphoreTake(mutex_, portMAX_DELAY);
   }
 }
@@ -261,6 +296,12 @@ bool HciTransport::RunBoot() {
 
 bool HciTransport::CycleController() {
   const esp_err_t disabled = esp_bt_controller_disable();
+  {
+    // Command events already queued by the old controller answer abandoned
+    // commands: HandlePacket drops anything that arrived before this instant.
+    Guard guard(mutex_);
+    reset_us_ = NowUs();
+  }
   if (disabled != ESP_OK && disabled != ESP_ERR_INVALID_STATE) return false;
   if (esp_bt_controller_enable(ESP_BT_MODE_BLE) != ESP_OK) return false;
   if (esp_vhci_host_register_callback(&kVhciCallbacks) != ESP_OK) return false;
@@ -283,6 +324,11 @@ bool HciTransport::BootWithRetries(bool cycle_first) {
 
 esp_err_t HciTransport::BringUp() {
   if (!controller_initialised_) {
+    // CAUTION: in ESP-IDF v5.3.2 this call can abort() inside the library (it
+    // wraps its work in ESP_ERROR_CHECK) instead of returning an error, e.g. if
+    // the controller memory was already released or is not idle. It cannot be
+    // made recoverable from here; it runs once, first, before any other
+    // Bluetooth call (see the TB09 physical check list).
     esp_err_t err = esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
     if (err != ESP_OK) return err;
     esp_bt_controller_config_t config = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
@@ -297,12 +343,21 @@ esp_err_t HciTransport::BringUp() {
   return BootWithRetries(false) ? ESP_OK : ESP_FAIL;
 }
 
-bool HciTransport::Recover() { return BootWithRetries(true); }
+HciTransport::Recovery HciTransport::Recover() {
+  bool cycled = false;
+  for (int attempt = 0; attempt < kMaxBootAttempts; ++attempt) {
+    if (!CycleController()) continue;
+    cycled = true;
+    if (RunBoot()) return Recovery::kRecovered;
+  }
+  return cycled ? Recovery::kCycledNotBooted : Recovery::kNotCycled;
+}
 
 HciStats HciTransport::stats() const {
   HciStats stats;
   stats.rx_overflow = rx_overflow_.load(std::memory_order_relaxed);
   stats.malformed = malformed_.load(std::memory_order_relaxed);
+  stats.stale_dropped = stale_dropped_.load(std::memory_order_relaxed);
   stats.commands_sent = commands_sent_.load(std::memory_order_relaxed);
   stats.timeouts = timeouts_.load(std::memory_order_relaxed);
   stats.rejections = rejections_.load(std::memory_order_relaxed);

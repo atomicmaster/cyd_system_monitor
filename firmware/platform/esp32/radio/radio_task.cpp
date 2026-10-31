@@ -21,10 +21,10 @@ namespace {
 
 constexpr const char* kTag = "fw.radio";
 
-// About 4 KiB of loop; the extra kilobyte covers the one-off WiFi/BLE bring-up
-// on this stack, whose depth is not measured yet (DEV:RADIO_STATUS reports the
-// high-water mark).
-constexpr uint32_t kRadioTaskStackBytes = 5120;
+// The loop alone needs about 4 KiB; the rest covers the one-off WiFi/BLE
+// bring-up on this stack, whose depth is not measured yet. The init log line and
+// DEV:RADIO_STATUS report the free stack so it can be trimmed.
+constexpr uint32_t kRadioTaskStackBytes = 8192;
 constexpr UBaseType_t kRadioTaskPriority = 4;  // below the HCI worker (5)
 constexpr BaseType_t kRadioTaskCore = 1;
 
@@ -181,8 +181,9 @@ void RadioTaskMain(void* /*arg*/) {
   g_driver->InitReceivers();
   const domain::DriverResult wifi = g_driver->wifi_init();
   const domain::DriverResult ble = g_driver->ble_init();
-  ESP_LOGI(kTag, "init: wifi=%s (%ld) ble=%s (%ld)", wifi.ok ? "ok" : "FAILED",
-           static_cast<long>(wifi.code), ble.ok ? "ok" : "FAILED", static_cast<long>(ble.code));
+  ESP_LOGI(kTag, "init: wifi=%s (%ld) ble=%s (%ld) stack_free=%lu", wifi.ok ? "ok" : "FAILED",
+           static_cast<long>(wifi.code), ble.ok ? "ok" : "FAILED", static_cast<long>(ble.code),
+           static_cast<unsigned long>(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));
 
   static QueueControlSource control;
   static QueueRadioSink sink;
@@ -250,6 +251,7 @@ RadioStatus ReadStatus() {
   status.ring_drops = g_driver->gate().ring_drops_total();
   status.unattributed_drops = counts.unattributed_drops;
   status.hci = g_driver->hci().stats();
+  status.scan_stop_already_off = g_driver->scan_stop_already_off();
   status.wifi_init_ok = g_driver->wifi_init().ok;
   status.wifi_init_code = g_driver->wifi_init().code;
   status.ble_init_ok = g_driver->ble_init().ok;

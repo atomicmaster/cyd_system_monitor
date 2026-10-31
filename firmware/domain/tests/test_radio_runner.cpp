@@ -314,7 +314,9 @@ int main() {
   // Messages: the fault text and the configuration round trip.
   {
     Expect(FaultText(FaultOp::kStart, -258) == "start (-258)" &&
-               FaultText(FaultOp::kHciTimeout, 0) == "hci timeout",
+               FaultText(FaultOp::kHciTimeout, 0) == "hci timeout" &&
+               FaultText(FaultOp::kHardwareError, 0) == "hardware error" &&
+               FaultText(FaultOp::kHardwareError, 7) == "hardware error (7)",
            "fault text names the step and the code when there is one");
     ObservationConfig config{.ble_enabled = false,
                              .wifi_channels = {6, 99, 1, 6},
@@ -844,6 +846,125 @@ int main() {
     rig.Steps(1);  // the retry works
     Expect(rig.sink.Count(RadioMessageKind::kFaultCleared) == 1,
            "the stuck radio's fault clears once its stop succeeds");
+  }
+
+  // A step cannot spin forever on wakes that do not move the clock.
+  {
+    // Frozen clock, and a wait that returns at once with nothing to report.
+    class FrozenDriver : public FakeDriver {
+     public:
+      using FakeDriver::FakeDriver;
+      WakeReason WaitUntilUs(uint64_t) override {
+        if (++wakes > 100'000) throw std::runtime_error("runaway wait");
+        return WakeReason::kDeadline;
+      }
+      int wakes = 0;
+    };
+    FakeControl control;
+    FrozenDriver driver(control);
+    driver.start_wifi_cost_us = 0;
+    driver.stop_cost_us = 0;
+    FakeSink sink;
+    RadioRunner runner(driver, control, sink, ObservationConfig{.ble_enabled = false});
+    runner.Step();
+    Expect(driver.wakes > 0 && driver.wakes <= 200,
+           "a frozen clock with immediate waits ends the step after a bounded number of wakes");
+  }
+  {
+    // Every wake is a control wake, and every request equals the current config.
+    class ConstantControl : public FakeControl {
+     public:
+      std::optional<ControlRequest> Poll() override { return ControlRequest{.wifi_enabled = true}; }
+    };
+    class ControlWakeDriver : public FakeDriver {
+     public:
+      using FakeDriver::FakeDriver;
+      WakeReason WaitUntilUs(uint64_t) override {
+        if (++wakes > 100'000) throw std::runtime_error("runaway wait");
+        return WakeReason::kControl;
+      }
+      int wakes = 0;
+    };
+    ConstantControl control;
+    ControlWakeDriver driver(control);
+    driver.start_wifi_cost_us = 0;
+    driver.stop_cost_us = 0;
+    FakeSink sink;
+    RadioRunner runner(driver, control, sink, ObservationConfig{.ble_enabled = false});
+    runner.Step();
+    Expect(driver.wakes > 0 && driver.wakes <= 200 && runner.config_generation() == 1,
+           "constant equal-config control wakes cannot hold a step forever");
+  }
+  {
+    // A wake that moves the clock resets the count: 5 x 60 stalled wakes is fine.
+    Rig rig({.ble_enabled = false});
+    rig.driver.immediate_returns = 60;
+    rig.Steps(1);
+    Expect(rig.sink.Reports().at(0).end == WindowEnd::kCompleted &&
+               rig.sink.Reports()[0].observed_ms == 204,
+           "a few stalled wakes before the clock moves do not end the window early");
+  }
+
+  // WiFi fault clearing counts only completed windows that observed something.
+  {
+    Rig rig({.ble_enabled = false});
+    rig.driver.start_results[0] = {Fail(FaultOp::kSetChannel, -7)};
+    rig.Steps(1);
+    rig.Steps(10);  // 10 clean windows of an 11-channel plan
+    Expect(rig.sink.Count(RadioMessageKind::kFaultCleared) == 0,
+           "10 clean windows do not clear an 11-channel plan");
+    ControlRequest plan;
+    plan.SetChannels({1, 2, 3});
+    rig.control.pending.push_back(plan);
+    rig.Steps(2);  // the first of these applies the new plan and runs its first window
+    Expect(rig.sink.Count(RadioMessageKind::kFaultCleared) == 0,
+           "a plan change restarts the clean pass");
+    rig.Steps(1);
+    Expect(rig.sink.Count(RadioMessageKind::kFaultCleared) == 1,
+           "three clean completed windows of the new plan clear the fault");
+  }
+  {
+    Rig rig({.ble_enabled = false, .wifi_channels = {1, 2, 3}});
+    rig.driver.start_results[0] = {Fail(FaultOp::kStart, -5)};
+    rig.Steps(1);
+    rig.Steps(2);  // two clean windows
+    rig.driver.ScheduleControl(rig.driver.now_us + 100'000, {.wifi_dwell_ms = 150});
+    rig.Steps(1);  // cut short by a configuration change
+    Expect(rig.sink.Reports().back().end == WindowEnd::kConfigurationChanged &&
+               rig.sink.Count(RadioMessageKind::kFaultCleared) == 0,
+           "a window cut short by a configuration change does not count as clean");
+    rig.Steps(1);
+    Expect(rig.sink.Count(RadioMessageKind::kFaultCleared) == 1,
+           "the next completed window finishes the clean pass");
+  }
+  {
+    Rig rig({.ble_enabled = false, .wifi_channels = {1, 2, 3}});
+    rig.driver.start_results[0] = {Fail(FaultOp::kStart, -5)};
+    rig.Steps(1);
+    rig.driver.start_wifi_cost_us = 210'000;  // receive starts after the window is over
+    rig.Steps(3);
+    Expect(rig.sink.Reports().back().observed_ms == 0 &&
+               rig.sink.Count(RadioMessageKind::kFaultCleared) == 0,
+           "windows that observed nothing do not clear a fault");
+    rig.driver.start_wifi_cost_us = 800;
+    rig.Steps(3);
+    Expect(rig.sink.Count(RadioMessageKind::kFaultCleared) == 1,
+           "three windows that observed something do");
+  }
+
+  // Drops taken by a successful stop retry reach the next report.
+  {
+    Rig rig({.ble_enabled = false});
+    rig.driver.stop_results[0] = {{false, FaultOp::kStop, -3}};
+    rig.Steps(1);
+    rig.driver.unattributed = 3;  // the platform pushed after EndWindow
+    rig.Steps(1);                 // the retry works and drains
+    Expect(rig.driver.unattributed == 0, "the stop retry takes the unattributed drops");
+    rig.Steps(1);
+    Expect(rig.sink.Reports().back().dropped_events == 3,
+           "they are carried into the next window's dropped_events");
+    rig.Steps(1);
+    Expect(rig.sink.Reports().back().dropped_events == 0, "and only once");
   }
 
   // Item 8: controls.

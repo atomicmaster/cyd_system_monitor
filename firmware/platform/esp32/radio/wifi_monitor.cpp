@@ -89,12 +89,17 @@ DriverResult WifiMonitor::Init() {
 
 DriverResult WifiMonitor::Start(uint8_t channel) {
   if (!init_result_.ok) return init_result_;
-  // Promiscuous mode is off here (Init and Stop leave it off), so the channel
-  // changes while nothing is being received.
-  esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
-  if (err != ESP_OK) return {false, FaultOp::kSetChannel, err};
-  err = esp_wifi_set_promiscuous(true);
+  // Receive is gated by the observation window, which opens after this returns,
+  // so frames heard while the channel settles are counted outside-window.
+  esp_err_t err = esp_wifi_set_promiscuous(true);
   if (err != ESP_OK) return {false, FaultOp::kStart, err};
+  err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+  if (err != ESP_OK) return {false, FaultOp::kSetChannel, err};
+  uint8_t primary = 0;
+  wifi_second_chan_t secondary = WIFI_SECOND_CHAN_NONE;
+  err = esp_wifi_get_channel(&primary, &secondary);
+  if (err != ESP_OK) return {false, FaultOp::kSetChannel, err};
+  if (primary != channel) return {false, FaultOp::kSetChannel, kCodeChannelMismatchBase + primary};
   return {};
 }
 

@@ -17,8 +17,8 @@ constexpr uint64_t kTickUs = 1'000'000ULL / configTICK_RATE_HZ;
 }  // namespace
 
 void Esp32RadioDriver::InitReceivers() {
-  wifi_init_ = wifi_.Init();
-  ble_init_ = ble_.Init();
+  Store(wifi_init_ok_, wifi_init_code_, wifi_.Init());
+  Store(ble_init_ok_, ble_init_code_, ble_.Init());
 }
 
 uint64_t Esp32RadioDriver::NowUs() { return static_cast<uint64_t>(esp_timer_get_time()); }
