@@ -297,12 +297,12 @@ int RunSystemScreen() {
                 "both radios read unknown (muted, ?), not quiet, before the radio reports");
   run_windows(8000, 2, false);
   render(8500);
-  result.Expect(wifi_is(theme::kMuted, "", "ch1", false) && ble_is(theme::kBlue, "", false),
-                "the BLE window lights BLE blue; idle WiFi is muted and keeps its channel");
+  result.Expect(wifi_is(theme::kCyan, "", "ch1", false) && ble_is(theme::kBlue, "", false),
+                "in a BLE window both radios keep their steady colours; WiFi keeps its channel");
   run_windows(8500, 1, false);
   render(8750);
-  result.Expect(wifi_is(theme::kCyan, "", "ch2", false) && ble_is(theme::kMuted, "", false),
-                "a WiFi window lights WiFi cyan and names its channel");
+  result.Expect(wifi_is(theme::kCyan, "", "ch2", false) && ble_is(theme::kBlue, "", false),
+                "a WiFi window names its channel; neither colour follows the window");
   // A window whose receiver is on but has not reported yet is already current.
   overview.Render(8800, domain::MakeCoverageStatus(domain::MakeCoverageView(
                             scheduler.config(), ledger, 8800,
@@ -339,7 +339,7 @@ int RunSystemScreen() {
     };
     const Expected expected[] = {
         {RadioSlotState::kScanning, theme::kCyan, theme::kBlue, "", false},
-        {RadioSlotState::kIdle, theme::kMuted, theme::kMuted, "", false},
+        {RadioSlotState::kIdle, theme::kCyan, theme::kBlue, "", false},
         {RadioSlotState::kOff, theme::kDim, theme::kDim, "", true},
         {RadioSlotState::kGap, theme::kMuted, theme::kMuted, "~", false},
         {RadioSlotState::kNoData, theme::kMuted, theme::kMuted, "?", false},

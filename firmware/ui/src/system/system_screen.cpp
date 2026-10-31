@@ -52,16 +52,19 @@ lv_obj_t* TrayLabel(lv_obj_t* parent, int32_t width, lv_text_align_t align) {
   return label;
 }
 
+// A working radio is one steady colour whether or not its window is open:
+// windows alternate about five times a second, and following them read as
+// pulsing on the board.
 uint32_t SlotColor(firmware::domain::RadioSlotState state, uint32_t accent) {
   using firmware::domain::RadioSlotState;
   switch (state) {
     case RadioSlotState::kScanning:
+    case RadioSlotState::kIdle:
       return accent;
     case RadioSlotState::kOff:
       return theme::kDim;
     case RadioSlotState::kFault:
       return theme::kText;
-    case RadioSlotState::kIdle:
     case RadioSlotState::kGap:
     case RadioSlotState::kNoData:
       return theme::kMuted;

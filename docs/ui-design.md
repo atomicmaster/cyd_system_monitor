@@ -25,14 +25,13 @@ The radio tray sits beside the clock, phone-style. Each radio has its own slot t
 
 | State | Colour | Mark |
 | --- | --- | --- |
-| Scanning (its window is the current one) | WiFi cyan, BLE blue | none |
-| Idle (enabled, not its window now) | muted | none |
+| Working (scanning or waiting its turn) | WiFi cyan, BLE blue, icon and channel alike | none |
 | Off (operator-disabled) | dim `0x3A4266` | a slash across the icon |
 | Gap (the latest window was lost) | muted | `~` |
 | No data (unknown, never idle or quiet) | muted | `?` |
 | Fault | text | `!` |
 
-Fault, gap, no data and off win over scanning and idle. The WiFi channel is the active window's while scanning, the last observed one while idle, gap or fault, and blank when off or unknown. Both radios off (Host only) is both slots off. Red, orange, amber and yellow stay reserved for Alerts.
+The colour does not follow the Observation Window: windows alternate about five times a second, and lighting the open one read as pulsing on the board. Fault, gap, no data and off win over scanning and idle. The WiFi channel is the active window's while scanning, the last observed one while idle, gap or fault, and blank when off or unknown. Both radios off (Host only) is both slots off. Red, orange, amber and yellow stay reserved for Alerts.
 
 This replaces a single coverage label that swapped between "WiFi chN" and "BLE scan" in one spot. Observation Windows alternate about five times a second, so it read as blinking (owner feedback from the first board run). With fixed slots only a colour changes, and only in that radio's own place.
 
