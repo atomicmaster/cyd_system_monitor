@@ -50,7 +50,12 @@ struct Result {
 };
 enum class IssueResult { kIssued, kBusy, kNoCredit, kNeedsControllerReset, kQuarantined, kInvalid };
 // Issue starts the deadline before waiting for VHCI availability. Call
-// TryBeginSend immediately before transmission; transmit only if it returns true.
+// TryBeginSend immediately before transmission; transmit only if it returns true,
+// then call MarkSent with the time just BEFORE the packet was handed to the
+// controller. A command event for the outstanding opcode that arrived before the
+// reservation (or, once marked, before send_us) was buffered for an earlier
+// command: it is ignored and counted as stale. A reply that arrives after the
+// reservation but before MarkSent is genuine (the worker may run in between).
 // Serialize tracker operations with sending and event delivery. Poll while waiting.
 // A sent command that times out quarantines its opcode for twice its timeout
 // after the deadline, or until its late event arrives. HCI has no transaction
@@ -60,15 +65,19 @@ class Tracker {
  public:
   IssueResult Issue(Command command, uint64_t now_us, uint64_t timeout_us);
   bool TryBeginSend(uint64_t now_us);
+  void MarkSent(uint64_t send_us);
   void ResetController();
-  Result OnEvent(const Event& event, uint64_t now_us);
+  // `arrival_us` is when the transport received the packet; `now_us` is when it is processed.
+  Result OnEvent(const Event& event, uint64_t now_us, uint64_t arrival_us);
   Result Poll(uint64_t now_us);
   uint8_t credit() const { return credit_; }
   uint64_t unexpected() const { return unexpected_; }
   uint64_t late() const { return late_; }
+  uint64_t stale() const { return stale_; }
 
  private:
-  bool pending_ = false, sent_ = false;
+  bool pending_ = false, sent_ = false, reserved_ = false;
+  uint64_t floor_us_ = 0, stale_ = 0;
   uint16_t opcode_ = 0;
   uint64_t deadline_ = 0, timeout_ = 0;
   uint8_t credit_ = 1;

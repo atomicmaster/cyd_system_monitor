@@ -92,36 +92,39 @@ int main() {
   auto first = t.Issue(Command::kReset, 0, 10);
   check(first == IssueResult::kIssued);
   auto began = t.TryBeginSend(1);
+  t.MarkSent(1);
   check(began);
   e = {Kind::kComplete, 14, 4, 1, 0xc03};
-  auto step = t.OnEvent(e, 2);
+  auto step = t.OnEvent(e, 2, 2);
   check(step.outcome == Outcome::kRejected);
   first = t.Issue(Command::kReset, 3, 10);
   check(first == IssueResult::kIssued);
   began = t.TryBeginSend(3);
+  t.MarkSent(3);
   check(began);
   step = t.Poll(14);
   check(step.outcome == Outcome::kTimedOut);
   first = t.Issue(Command::kReset, 15, 10);
   check(first == IssueResult::kQuarantined);
   e = {Kind::kComplete, 14, 0, 1, 0};
-  t.OnEvent(e, 15);
+  t.OnEvent(e, 15, 15);
   check(t.unexpected() == 0);
   first = t.Issue(Command::kLeSetEventMask, 15, 10);
   check(first == IssueResult::kIssued);
   began = t.TryBeginSend(15);
+  t.MarkSent(15);
   check(began);
   e.opcode = 0xc03;
-  step = t.OnEvent(e, 16);
+  step = t.OnEvent(e, 16, 16);
   check(step.outcome == Outcome::kNone && t.late() == 1);
   e.opcode = 0x2001;
   e.credit = 0;
-  step = t.OnEvent(e, 17);
+  step = t.OnEvent(e, 17, 17);
   check(step.outcome == Outcome::kCompleted);
   first = t.Issue(Command::kReset, 18, 10);
   check(first == IssueResult::kNeedsControllerReset);
   e.credit = 1;
-  t.OnEvent(e, 18);
+  t.OnEvent(e, 18, 18);
   first = t.Issue(Command::kReset, 19, 10);
   check(first == IssueResult::kIssued);
   step = t.Poll(30);
@@ -169,22 +172,24 @@ int main() {
   auto issue = flow.Issue(Command::kReset, 0, 10);
   check(issue == IssueResult::kIssued);
   auto sent = flow.TryBeginSend(0);
+  flow.MarkSent(0);
   check(sent);
   e = {Kind::kStatus, 15, 0, 1, 0xc03};
-  auto result = flow.OnEvent(e, 1);
+  auto result = flow.OnEvent(e, 1, 1);
   check(result.outcome == Outcome::kNone);
   e = {Kind::kComplete, 14, 0, 1, 0};
-  result = flow.OnEvent(e, 2);
+  result = flow.OnEvent(e, 2, 2);
   check(result.outcome == Outcome::kNone && flow.unexpected() == 0 && flow.credit() == 0);
   e = {Kind::kStatus, 15, 0, 1, 0};
-  result = flow.OnEvent(e, 3);
+  result = flow.OnEvent(e, 3, 3);
   check(result.outcome == Outcome::kNone && flow.unexpected() == 0);
   e = {Kind::kComplete, 14, 0, 1, 0xc03};
-  result = flow.OnEvent(e, 4);
+  result = flow.OnEvent(e, 4, 4);
   check(result.outcome == Outcome::kCompleted);
   Tracker wedge;
   issue = wedge.Issue(Command::kReset, 0, 10);
   sent = wedge.TryBeginSend(0);
+  wedge.MarkSent(0);
   result = wedge.Poll(11);
   issue = wedge.Issue(Command::kSetEventMask, 31, 10);
   check(issue == IssueResult::kNeedsControllerReset);
@@ -194,43 +199,49 @@ int main() {
   Tracker late;
   issue = late.Issue(Command::kReset, 0, 10);
   sent = late.TryBeginSend(0);
+  late.MarkSent(0);
   e = {Kind::kComplete, 14, 0, 1, 0xc03};
-  result = late.OnEvent(e, 100);
+  result = late.OnEvent(e, 100, 100);
   check(result.outcome == Outcome::kTimedOut && late.late() == 1);
   Tracker stale;
   issue = stale.Issue(Command::kReset, 0, 10);
   sent = stale.TryBeginSend(0);
+  stale.MarkSent(0);
   result = stale.Poll(11);
   e = {Kind::kComplete, 14, 0, 2, 0};
-  result = stale.OnEvent(e, 12);
+  result = stale.OnEvent(e, 12, 12);
   issue = stale.Issue(Command::kSetEventMask, 12, 10);
   sent = stale.TryBeginSend(12);
+  stale.MarkSent(12);
   e = {Kind::kComplete, 14, 0, 1, 0xc03};
-  result = stale.OnEvent(e, 13);
+  result = stale.OnEvent(e, 13, 13);
   check(stale.late() == 1 && stale.credit() == 0);
   e = {Kind::kComplete, 14, 0, 1, 0xc01};
-  result = stale.OnEvent(e, 14);
+  result = stale.OnEvent(e, 14, 14);
   check(result.outcome == Outcome::kCompleted);
   Tracker reset;
   issue = reset.Issue(Command::kLeSetEventMask, 0, 10);
   sent = reset.TryBeginSend(0);
+  reset.MarkSent(0);
   result = reset.Poll(11);
   e = {Kind::kComplete, 14, 0, 1, 0};
-  result = reset.OnEvent(e, 12);
+  result = reset.OnEvent(e, 12, 12);
   issue = reset.Issue(Command::kReset, 12, 10);
   sent = reset.TryBeginSend(12);
+  reset.MarkSent(12);
   e = {Kind::kComplete, 14, 0, 1, 0xc03};
-  result = reset.OnEvent(e, 13);
+  result = reset.OnEvent(e, 13, 13);
   issue = reset.Issue(Command::kLeSetEventMask, 14, 10);
   check(issue == IssueResult::kIssued);
   reset.ResetController();
   e = {Kind::kComplete, 14, 0, 1, 0x200b};
-  result = reset.OnEvent(e, 15);
+  result = reset.OnEvent(e, 15, 15);
   check(reset.unexpected() == 1);
   issue = reset.Issue(Command::kReset, 16, 10);
   sent = reset.TryBeginSend(16);
+  reset.MarkSent(16);
   e = {Kind::kStatus, 15, 0x0c, 1, 0xc03};
-  result = reset.OnEvent(e, 17);
+  result = reset.OnEvent(e, 17, 17);
   check(result.outcome == Outcome::kRejected && result.status == 0x0c);
   // H1: a Status(0) for an opcode that is no longer pending must not clear its
   // quarantine, or the original command's Complete could satisfy the next one.
@@ -238,35 +249,38 @@ int main() {
   issue = status.Issue(Command::kLeSetScanEnable, 0, 10);
   check(issue == IssueResult::kIssued);
   sent = status.TryBeginSend(0);
+  status.MarkSent(0);
   check(sent);
   result = status.Poll(11);
   check(result.outcome == Outcome::kTimedOut);
   e = {Kind::kStatus, 15, 0, 1, 0x200c};
-  result = status.OnEvent(e, 12);
+  result = status.OnEvent(e, 12, 12);
   check(result.outcome == Outcome::kNone && status.late() == 0 && status.unexpected() == 0 &&
         status.credit() == 1);
   issue = status.Issue(Command::kLeSetScanEnable, 13, 10);
   check(issue == IssueResult::kQuarantined);
   e = {Kind::kComplete, 14, 0, 1, 0x200c};
-  result = status.OnEvent(e, 14);
+  result = status.OnEvent(e, 14, 14);
   check(result.outcome == Outcome::kNone && status.late() == 1);
   issue = status.Issue(Command::kLeSetScanEnable, 15, 10);
   check(issue == IssueResult::kIssued);
   sent = status.TryBeginSend(15);
+  status.MarkSent(15);
   check(sent);
   e = {Kind::kComplete, 14, 0, 1, 0x200c};
-  result = status.OnEvent(e, 16);
+  result = status.OnEvent(e, 16, 16);
   check(result.outcome == Outcome::kCompleted);  // only the disable's own Complete does
   // A Status(0) for a different opcode while a command is pending leaves it pending.
   Tracker other;
   issue = other.Issue(Command::kLeSetScanEnable, 0, 10);
   sent = other.TryBeginSend(0);
+  other.MarkSent(0);
   e = {Kind::kStatus, 15, 0, 1, 0xc03};
-  result = other.OnEvent(e, 1);
+  result = other.OnEvent(e, 1, 1);
   check(result.outcome == Outcome::kNone && other.unexpected() == 0);
   // A nonzero Status for a pending command still rejects it.
   e = {Kind::kStatus, 15, 0x0c, 1, 0x200c};
-  result = other.OnEvent(e, 2);
+  result = other.OnEvent(e, 2, 2);
   check(result.outcome == Outcome::kRejected && result.status == 0x0c);
 
   // H2: command events queued before a controller reset are dropped, not delivered.
@@ -282,6 +296,55 @@ int main() {
   check(!IsStaleAfterReset(e, 1, 100));
   e.kind = Kind::kComplete;
   check(!IsStaleAfterReset(e, 1, 0));  // before any reset nothing is stale
+  // Ordering: a command event buffered before the command left must not satisfy it.
+  Tracker order;
+  issue = order.Issue(Command::kLeSetScanEnable, 0, 100);
+  check(issue == IssueResult::kIssued);
+  sent = order.TryBeginSend(1);
+  const bool again = order.TryBeginSend(1);
+  check(sent && !again);  // reserved: no second send
+  e = {Kind::kComplete, 14, 0, 1, 0x200c};
+  result = order.OnEvent(e, 2, 0);  // arrived at 0, before the send was reserved
+  check(result.outcome == Outcome::kNone && order.stale() == 1 && order.unexpected() == 0);
+  order.MarkSent(3);
+  result = order.OnEvent(e, 4, 2);  // arrived after reserve but before the send_us
+  check(result.outcome == Outcome::kNone && order.stale() == 2);
+  result = order.OnEvent(e, 5, 3);  // arrived at the send instant or later: genuine
+  check(result.outcome == Outcome::kCompleted && order.stale() == 2);
+
+  // A fast reply processed before MarkSent is genuine when it arrived after the reservation.
+  Tracker fast;
+  issue = fast.Issue(Command::kLeSetScanEnable, 0, 100);
+  sent = fast.TryBeginSend(10);
+  check(sent);
+  result = fast.OnEvent(e, 12, 11);
+  check(result.outcome == Outcome::kCompleted && fast.stale() == 0);
+  fast.MarkSent(11);  // too late to matter: the command is done
+  issue = fast.Issue(Command::kLeSetScanEnable, 13, 100);
+  check(issue == IssueResult::kIssued);
+
+  // Reserved but not marked: a timeout still quarantines (the send may be in flight).
+  Tracker inflight;
+  issue = inflight.Issue(Command::kLeSetScanEnable, 0, 10);
+  sent = inflight.TryBeginSend(1);
+  result = inflight.Poll(12);
+  check(result.outcome == Outcome::kTimedOut);
+  issue = inflight.Issue(Command::kLeSetScanEnable, 13, 10);
+  check(issue == IssueResult::kQuarantined);
+  inflight.MarkSent(5);  // no pending command: ignored
+  // Reservation is refused once the deadline has passed or without credit.
+  Tracker expired;
+  issue = expired.Issue(Command::kReset, 0, 10);
+  sent = expired.TryBeginSend(11);
+  check(!sent);
+  // A Complete that predates the send does not complete a different opcode either.
+  Tracker unrelated;
+  issue = unrelated.Issue(Command::kLeSetScanEnable, 0, 100);
+  sent = unrelated.TryBeginSend(1);
+  unrelated.MarkSent(2);
+  e = {Kind::kComplete, 14, 0, 1, 0xc03};
+  result = unrelated.OnEvent(e, 3, 3);
+  check(result.outcome == Outcome::kNone && unrelated.unexpected() == 1 && unrelated.stale() == 0);
   BootSequencer invalid(3, 4);
   check(invalid.failed() && invalid.step_index() == 3 &&
         invalid.failure().outcome == Outcome::kInvalid);

@@ -92,6 +92,7 @@ class FakeDriver : public RadioDriver {
   explicit FakeDriver(FakeControl& control) : control_(control) {}
 
   uint64_t NowUs() override { return now_us; }
+  void Yield() override { ++yields; }
   void BeginWindow(uint32_t window_id, uint32_t generation, uint64_t start_us,
                    uint64_t deadline_us) override {
     begun.push_back({window_id, generation, start_us, deadline_us, now_us});
@@ -175,6 +176,7 @@ class FakeDriver : public RadioDriver {
   std::vector<uint64_t> stop_times_us;
   std::vector<std::string> log;
   int drains = 0;
+  int yields = 0;
   int ends = 0;
   int starts[2] = {0, 0};
   int stops[2] = {0, 0};
@@ -850,14 +852,16 @@ int main() {
 
   // A step cannot spin forever on wakes that do not move the clock.
   {
-    // Frozen clock, and a wait that returns at once with nothing to report.
+    // Frozen clock mid-dwell, and a wait that returns at once with nothing to report.
     class FrozenDriver : public FakeDriver {
      public:
       using FakeDriver::FakeDriver;
-      WakeReason WaitUntilUs(uint64_t) override {
+      WakeReason WaitUntilUs(uint64_t deadline_us) override {
+        if (!frozen) return FakeDriver::WaitUntilUs(deadline_us);
         if (++wakes > 100'000) throw std::runtime_error("runaway wait");
         return WakeReason::kDeadline;
       }
+      bool frozen = true;
       int wakes = 0;
     };
     FakeControl control;
@@ -869,6 +873,50 @@ int main() {
     runner.Step();
     Expect(driver.wakes > 0 && driver.wakes <= 200,
            "a frozen clock with immediate waits ends the step after a bounded number of wakes");
+    Expect(sink.Reports().empty() && sink.Count(RadioMessageKind::kWindowStarted) == 1 &&
+               driver.stops[0] == 0 && driver.ends == 0 && driver.drains == 0,
+           "a stalled dwell is neither stopped nor reported");
+    Expect(driver.yields == 1, "the bailout yields once");
+    runner.Step();
+    Expect(sink.Reports().empty() && driver.starts[0] == 1 && driver.yields == 2,
+           "the next step resumes the same window instead of starting another");
+    driver.frozen = false;
+    driver.now_us = 150'000;  // the clock moves again, mid-dwell
+    runner.Step();
+    const auto reports = sink.Reports();
+    Expect(reports.size() == 1 && reports[0].end == WindowEnd::kCompleted &&
+               reports[0].window_id == 1 && reports[0].observed_ms == 205 && driver.stops[0] == 1 &&
+               driver.ends == 1 && driver.begun.size() == 1,
+           "the resumed window completes once, with the full dwell observed");
+  }
+  {
+    // A stalled window does not clear a fault; the completed one does.
+    class StallDriver : public FakeDriver {
+     public:
+      using FakeDriver::FakeDriver;
+      WakeReason WaitUntilUs(uint64_t deadline_us) override {
+        if (!frozen) return FakeDriver::WaitUntilUs(deadline_us);
+        return WakeReason::kDeadline;
+      }
+      bool frozen = false;
+    };
+    FakeControl control;
+    StallDriver driver(control);
+    FakeSink sink;
+    RadioRunner runner(driver, control, sink,
+                       ObservationConfig{.ble_enabled = false, .wifi_channels = {1}});
+    driver.start_results[0] = {Fail(FaultOp::kStart, -5)};
+    runner.Step();  // faulted window
+    driver.frozen = true;
+    runner.Step();  // opens a good window, then stalls
+    runner.Step();
+    Expect(sink.Count(RadioMessageKind::kFaultCleared) == 0 && sink.Reports().size() == 1,
+           "a stalled window cannot clear a fault");
+    driver.frozen = false;
+    runner.Step();
+    Expect(sink.Count(RadioMessageKind::kFaultCleared) == 1 && sink.Reports().size() == 2 &&
+               sink.Reports()[1].end == WindowEnd::kCompleted,
+           "the same window clears it once it really completes");
   }
   {
     // Every wake is a control wake, and every request equals the current config.

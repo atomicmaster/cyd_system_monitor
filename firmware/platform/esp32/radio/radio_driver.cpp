@@ -62,6 +62,9 @@ domain::WakeReason Esp32RadioDriver::WaitUntilUs(uint64_t deadline_us) {
   return domain::WakeReason::kDeadline;
 }
 
+// The runner bailed out of a wait whose clock did not move: let other tasks run.
+void Esp32RadioDriver::Yield() { vTaskDelay(1); }
+
 void Esp32RadioDriver::DrainEvents() { gate_.Drain(); }
 
 uint32_t Esp32RadioDriver::TakeDrops(uint32_t window_id) { return gate_.TakeDrops(window_id); }

@@ -86,6 +86,7 @@ std::optional<ControlRequest> RadioRunner::WaitUntil(uint64_t deadline_us) {
       last_now_us = now_us;
       stalled_wakes = 0;
     } else if (++stalled_wakes > kMaxStalledWakes) {
+      driver_.Yield();
       return std::nullopt;  // the clock is not moving: return, the caller re-checks it
     }
   }
@@ -128,6 +129,11 @@ void RadioRunner::Step() {
     announced_ = true;
     ++config_generation_;
     EmitConfig();
+  }
+  if (open_) {
+    // A dwell is in progress: its wait polls the controls itself.
+    ResumeWindow();
+    return;
   }
   for (int i = 0; i < kMaxControlsPerStep; ++i) {
     const std::optional<ControlRequest> request = control_.Poll();
@@ -180,7 +186,11 @@ void RadioRunner::RunWindow() {
   const uint64_t deadline_us = SaturatingAdd(start_us, uint64_t{window.planned_ms} * kUsPerMs);
   const size_t self = Index(window.radio);
 
-  WindowReport report;
+  OpenWindow open;
+  open.window = window;
+  open.start_us = start_us;
+  open.deadline_us = deadline_us;
+  WindowReport& report = open.report;
   report.window = window;
   report.window_id = ++window_id_;
   report.config_generation = config_generation_;
@@ -188,7 +198,6 @@ void RadioRunner::RunWindow() {
   bool faulted = false;
   bool started = false;
   uint64_t rx_start_us = 0;
-  std::optional<ControlRequest> pending;
 
   // The other receiver must be off before this one starts.
   const Radio other = Other(window.radio);
@@ -221,10 +230,38 @@ void RadioRunner::RunWindow() {
     }
   }
 
+  open.started = started;
+  open.faulted = faulted;
+  open.rx_start_us = rx_start_us;
+  open_ = open;
+  ResumeWindow();
+}
+
+void RadioRunner::ResumeWindow() {
+  OpenWindow& open = *open_;
   // Hold the window for its full time even when it failed, so a persistent
   // fault cannot spin; a control request ends it early. A receiver that will
   // not stop gets no wait: the runner goes straight to retrying the stop.
-  if (!stuck_) pending = WaitUntil(deadline_us);
+  std::optional<ControlRequest> pending;
+  if (!stuck_) {
+    pending = WaitUntil(open.deadline_us);
+    // The wait gave up on a stalled clock: the dwell is not over, so neither stop
+    // the receiver nor report. The next step resumes this window.
+    if (!pending && driver_.NowUs() < open.deadline_us) return;
+  }
+  FinishWindow(open, pending);
+  open_.reset();
+}
+
+void RadioRunner::FinishWindow(OpenWindow& open, std::optional<ControlRequest> pending) {
+  const Window& window = open.window;
+  WindowReport& report = open.report;
+  const uint64_t start_us = open.start_us;
+  const uint64_t deadline_us = open.deadline_us;
+  const uint64_t rx_start_us = open.rx_start_us;
+  const bool started = open.started;
+  bool faulted = open.faulted;
+  const size_t self = Index(window.radio);
   // The measured interval closes before the stop is issued.
   const uint64_t rx_end_us = driver_.NowUs();
 

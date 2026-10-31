@@ -119,20 +119,27 @@ IssueResult Tracker::Issue(Command command, uint64_t now, uint64_t timeout) {
   }
   pending_ = true;
   sent_ = false;
+  reserved_ = false;
   opcode_ = static_cast<uint16_t>(command);
   deadline_ = now + timeout;
   timeout_ = timeout;
   return IssueResult::kIssued;
 }
 bool Tracker::TryBeginSend(uint64_t now) {
-  if (!pending_ || sent_ || now > deadline_ || !credit_) return false;
-  sent_ = true;
+  if (!pending_ || sent_ || reserved_ || now > deadline_ || !credit_) return false;
+  reserved_ = true;
+  floor_us_ = now;
   --credit_;
   return true;
 }
+void Tracker::MarkSent(uint64_t send_us) {
+  if (!pending_ || !reserved_ || sent_) return;
+  sent_ = true;
+  if (send_us > floor_us_) floor_us_ = send_us;
+}
 Result Tracker::Poll(uint64_t now) {
   if (!pending_ || now <= deadline_) return {};
-  if (sent_) {
+  if (sent_ || reserved_) {
     int i = Index(opcode_);
     quarantined_[i] = true;
     uint64_t remaining = UINT64_MAX - now;
@@ -144,15 +151,21 @@ Result Tracker::Poll(uint64_t now) {
 void Tracker::ResetController() {
   pending_ = false;
   sent_ = false;
+  reserved_ = false;
   credit_ = 1;
   quarantined_.fill(false);
 }
-Result Tracker::OnEvent(const Event& e, uint64_t now) {
+Result Tracker::OnEvent(const Event& e, uint64_t now, uint64_t arrival) {
   Result timeout = Poll(now);
   if (e.kind != Kind::kComplete && e.kind != Kind::kStatus) return timeout;
-  bool terminates = e.opcode != 0 && pending_ && sent_ && opcode_ == e.opcode &&
+  const bool engaged = pending_ && (sent_ || reserved_);  // the packet is, or is about to be, out
+  bool terminates = e.opcode != 0 && engaged && opcode_ == e.opcode &&
                     (e.kind == Kind::kComplete || e.status != 0);
-  credit_ = pending_ && sent_ && !terminates && e.credit ? e.credit - 1 : e.credit;
+  if (terminates && arrival < floor_us_) {
+    ++stale_;  // buffered before this command left: it answers an earlier one
+    return timeout;
+  }
+  credit_ = engaged && !terminates && e.credit ? e.credit - 1 : e.credit;
   // A Status with status 0 only says "accepted": the Complete follows. It never
   // ends a command, and for an opcode that is no longer pending it must not
   // touch the quarantine or the late/unexpected counts.
@@ -167,7 +180,7 @@ Result Tracker::OnEvent(const Event& e, uint64_t now) {
     }
     quarantined_[i] = false;
   }
-  if (!pending_ || !sent_ || opcode_ != e.opcode) {
+  if (!engaged || opcode_ != e.opcode) {
     ++unexpected_;
     return timeout;
   }

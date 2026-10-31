@@ -71,6 +71,11 @@ class RadioDriver {
   // kControl wake it polls the control source and keeps waiting if it is empty,
   // so the platform must clear its wake trigger when Poll consumes a request.
   virtual WakeReason WaitUntilUs(uint64_t deadline_us) = 0;
+  // Called once whenever a wait gives up because the clock did not advance over
+  // many wakes (the step then returns and is called again). A driver whose
+  // WaitUntilUs does not block uses it to give other tasks time, so the radio
+  // task cannot busy-loop.
+  virtual void Yield() {}
   // Moves EVERY event of the window that just closed out of the ring before it
   // returns, so no event of that window can be evicted after its drops are
   // taken. Called after Stop, and after a successful stop retry.
@@ -146,7 +151,22 @@ class RadioRunner {
   // would change the configuration (not yet applied). Early kDeadline wakes
   // and empty or no-op control wakes keep waiting.
   std::optional<ControlRequest> WaitUntil(uint64_t deadline_us);
+  // A window whose receiver is on and whose dwell has not finished. It survives
+  // a Step that returned because the clock stalled.
+  struct OpenWindow {
+    Window window;
+    WindowReport report;  // id and generation set; the rest is filled when it closes
+    uint64_t start_us = 0;
+    uint64_t deadline_us = 0;
+    uint64_t rx_start_us = 0;
+    bool started = false;
+    bool faulted = false;
+  };
   void RunWindow();
+  // Waits out the open window; closes and reports it only once its deadline has
+  // really been reached (or a control ends it), otherwise leaves it open.
+  void ResumeWindow();
+  void FinishWindow(OpenWindow& open, std::optional<ControlRequest> pending);
   void RetryStop();
   DriverResult StopReceiver(Radio radio);
   // Records a fault, and tells the app loop when it first appears or its
@@ -176,6 +196,7 @@ class RadioRunner {
   std::array<uint32_t, 2> clean_windows_{};
   // Drops a stop retry took after the window that caused them was reported.
   uint32_t carried_drops_ = 0;
+  std::optional<OpenWindow> open_;
   std::optional<Radio> stuck_;  // a receiver whose stop failed
   uint64_t stop_retry_at_us_ = 0;
 };

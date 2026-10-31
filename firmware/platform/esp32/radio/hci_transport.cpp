@@ -165,7 +165,7 @@ void HciTransport::HandlePacket(const uint8_t* bytes, size_t length, uint64_t ar
           stale_dropped_.fetch_add(1, std::memory_order_relaxed);
           break;
         }
-        const domain::hci::Result result = tracker_.OnEvent(event, NowUs());
+        const domain::hci::Result result = tracker_.OnEvent(event, NowUs(), arrival_us);
         if (result.outcome != Outcome::kNone) {
           result_ = result;
           result_ready_ = true;
@@ -249,18 +249,23 @@ CommandResult HciTransport::Execute(Command command, const domain::hci::Options&
       return done;
     }
 
-    const bool send_now =
-        !sent && esp_vhci_host_check_send_available() && tracker_.TryBeginSend(now_us);
+    const bool send_now = !sent && esp_vhci_host_check_send_available() &&
+                          tracker_.TryBeginSend(NowUs());  // reserves; not yet "sent"
     xSemaphoreGive(mutex_);
     if (send_now) {
+      // Stamped before the hand-over so a reply can never predate it; events the
+      // worker buffered earlier are older than this and are ignored as stale.
+      const uint64_t send_us = NowUs();
       esp_vhci_host_send_packet(send_packet_, static_cast<uint16_t>(length));
       commands_sent_.fetch_add(1, std::memory_order_relaxed);
       sent = true;
-    } else {
-      // Poll fires only strictly after the deadline, hence the +1.
-      const uint64_t remaining_us = deadline_us >= now_us ? deadline_us - now_us + 1 : 1;
-      xSemaphoreTake(wake_, TicksFor(remaining_us));
+      xSemaphoreTake(mutex_, portMAX_DELAY);
+      tracker_.MarkSent(send_us);
+      continue;  // the mutex is held at the top of the pass
     }
+    // Poll fires only strictly after the deadline, hence the +1.
+    const uint64_t remaining_us = deadline_us >= now_us ? deadline_us - now_us + 1 : 1;
+    xSemaphoreTake(wake_, TicksFor(remaining_us));
     xSemaphoreTake(mutex_, portMAX_DELAY);
   }
 }
@@ -365,6 +370,7 @@ HciStats HciTransport::stats() const {
   stats.controller_resets = controller_resets_.load(std::memory_order_relaxed);
   if (mutex_ != nullptr && xSemaphoreTake(mutex_, pdMS_TO_TICKS(20)) == pdTRUE) {
     stats.late = tracker_.late();
+    stats.stale_dropped += static_cast<uint32_t>(tracker_.stale());
     stats.unexpected = tracker_.unexpected();
     stats.credit = tracker_.credit();
     xSemaphoreGive(mutex_);

@@ -39,6 +39,7 @@ class Esp32RadioDriver final : public domain::RadioDriver {
   domain::DriverResult StartBle() override;
   domain::DriverResult StopBle() override;
   domain::WakeReason WaitUntilUs(uint64_t deadline_us) override;
+  void Yield() override;
   void DrainEvents() override;
   uint32_t TakeDrops(uint32_t window_id) override;
   uint32_t TakeUnattributed() override;
