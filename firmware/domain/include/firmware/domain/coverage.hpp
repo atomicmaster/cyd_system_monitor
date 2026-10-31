@@ -257,13 +257,36 @@ CoverageView MakeCoverageView(const ObservationScheduler& scheduler, const Cover
 // for replay checkpoints, e.g. "wifi=fault(init failed) 928/1000 drop=2 ch=3".
 std::string FormatCoverage(const CoverageView& view);
 
-// Compact persistent-status text: the current Observation Window plus each
-// radio's problem state, e.g. "WiFi ch6", "BLE scan", "WiFi ch6 BLE gap",
-// "WiFi ? BLE off", "Host only". A radio observing normally is named only while
-// its window is the current one; `gap` (a lost window), `?` (unknown, never
-// quiet), `off` and `err` (a faulted radio; "fault" does not fit the bar) are
-// always shown. No percentage: an observed share
-// of window time is not capture coverage of any channel.
-std::string CoverageStatusText(const CoverageView& view);
+// What one radio's slot in the persistent status bar shows. The bar gives each
+// radio its own fixed place, so a radio's state is colour and a mark there, not
+// words that swap in and out as the windows alternate.
+enum class RadioSlotState : uint8_t {
+  kScanning,  // enabled and observing, and its window is the current one
+  kIdle,      // enabled and observing normally, but not its window now
+  kOff,       // operator-disabled (an explicit state, never "quiet")
+  kGap,       // the latest window was lost
+  kNoData,    // unknown: never reads as idle or quiet
+  kFault,     // initialisation or driver failure
+};
+
+struct RadioSlotView {
+  // Unknown reads as no data, so a default-constructed view is never idle.
+  RadioSlotState state = RadioSlotState::kNoData;
+  // WiFi only: the active window's channel while scanning, the last observed
+  // channel while idle, gap or fault; 0 (blank) when off, no data or unknown.
+  // Always 0 for BLE, whose controller cycles its advertising channels itself.
+  uint8_t channel = 0;
+};
+
+struct CoverageStatus {
+  RadioSlotView wifi;
+  RadioSlotView ble;
+};
+
+// Per-radio slot state for the status bar. Fault, gap, no data and off win over
+// scanning and idle. Both radios off (Host-only monitoring) is both slots off.
+// No percentage: an observed share of window time is not capture coverage of
+// any channel.
+CoverageStatus MakeCoverageStatus(const CoverageView& view);
 
 }  // namespace firmware::domain

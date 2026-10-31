@@ -112,53 +112,97 @@ int main() {
            "clearing the fault restores the coverage state");
   }
 
-  // The persistent status text distinguishes observed, gap, unknown, off, fault, and Host only.
-  // The status line names the current (or most recent) Observation Window and
-  // each radio's problem state. It never shows a percentage: observed share of
-  // the requested window time is not capture coverage of a channel.
+  // The status bar gives each radio its own slot. A slot's state distinguishes
+  // scanning, idle, gap, unknown, off and fault; it never carries a percentage
+  // (observed share of window time is not capture coverage of a channel).
   {
     ObservationScheduler scheduler;
     CoverageLedger ledger;
-    const auto text = [&](uint64_t now_ms) {
-      return CoverageStatusText(MakeCoverageView(scheduler, ledger, now_ms));
+    const auto status = [&](uint64_t now_ms) {
+      return MakeCoverageStatus(MakeCoverageView(scheduler, ledger, now_ms));
     };
-    Expect(text(0) == "WiFi ? BLE ?", "no report reads unknown, never quiet");
+    const auto is = [](const RadioSlotView& slot, RadioSlotState state, uint8_t channel) {
+      return slot.state == state && slot.channel == channel;
+    };
+    static_assert(RadioSlotView{}.state == RadioSlotState::kNoData,
+                  "a default slot is unknown, never idle");
+    auto s = status(0);
+    Expect(is(s.wifi, RadioSlotState::kNoData, 0) && is(s.ble, RadioSlotState::kNoData, 0),
+           "no report reads unknown, never quiet, with no channel");
     ledger.Record(CompletedReport(*scheduler.NextWindow(0), 205, 0));  // WiFi ch1, observed
-    Expect(text(205) == "WiFi ch1 BLE ?",
-           "the WiFi window names its channel; BLE is still unknown");
+    s = status(205);
+    Expect(is(s.wifi, RadioSlotState::kScanning, 1) && is(s.ble, RadioSlotState::kNoData, 0),
+           "the WiFi window scans on its channel; BLE is still unknown");
     ledger.Record(CompletedReport(*scheduler.NextWindow(205), 205, 0));  // BLE, observed
-    Expect(text(410) == "BLE scan",
-           "the BLE window is current; healthy WiFi between windows is not listed");
+    s = status(410);
+    Expect(is(s.wifi, RadioSlotState::kIdle, 1) && is(s.ble, RadioSlotState::kScanning, 0),
+           "the BLE window scans; healthy WiFi is idle and keeps its last channel");
     ledger.Record(CompletedReport(*scheduler.NextWindow(410), 205, 0));  // WiFi ch2, observed
-    Expect(text(615) == "WiFi ch2", "the next WiFi window names its own channel");
-    Expect(text(615).find('%') == std::string::npos, "no percentage in the status line");
+    s = status(615);
+    Expect(is(s.wifi, RadioSlotState::kScanning, 2) && is(s.ble, RadioSlotState::kIdle, 0),
+           "the next WiFi window scans on its own channel");
     ledger.Record(CompletedReport(*scheduler.NextWindow(615), 0, 0));  // BLE, lost
-    Expect(text(820) == "BLE gap", "a lost window reads gap");
+    s = status(820);
+    Expect(is(s.wifi, RadioSlotState::kIdle, 2) && is(s.ble, RadioSlotState::kGap, 0),
+           "a lost window reads gap, not scanning");
     ledger.Record(CompletedReport(*scheduler.NextWindow(820), 205, 0));  // WiFi ch3, observed
-    Expect(text(1025) == "WiFi ch3 BLE gap",
+    s = status(1025);
+    Expect(is(s.wifi, RadioSlotState::kScanning, 3) && is(s.ble, RadioSlotState::kGap, 0),
            "the gap stays visible while the other radio observes");
     Expect(FormatCoverage(MakeCoverageView(scheduler, ledger, 1025)).find("ble=gap 500/1000") !=
                std::string::npos,
            "the replay checkpoint keeps the observed share");
     ledger.SetFault(Radio::kWifi, "init failed");
-    Expect(text(1025) == "WiFi err BLE gap", "a fault reads err (\"fault\" does not fit the bar)");
+    s = status(1025);
+    Expect(is(s.wifi, RadioSlotState::kFault, 3) && is(s.ble, RadioSlotState::kGap, 0),
+           "a fault wins over scanning and keeps the last channel");
     scheduler.Configure({.wifi_enabled = false});
-    Expect(text(1025) == "WiFi off BLE gap", "a disabled radio reads off");
+    s = status(1025);
+    Expect(is(s.wifi, RadioSlotState::kOff, 0) && is(s.ble, RadioSlotState::kGap, 0),
+           "a disabled radio reads off with no channel");
     scheduler.Configure({.wifi_enabled = false, .ble_enabled = false});
-    Expect(text(1025) == "Host only", "both radios off reads Host only");
+    s = status(1025);
+    Expect(is(s.wifi, RadioSlotState::kOff, 0) && is(s.ble, RadioSlotState::kOff, 0),
+           "both radios off (Host only) is both slots off");
     scheduler.Configure({});
     ledger.ClearFault(Radio::kWifi);
-    Expect(text(60'000) == "WiFi ? BLE ?", "reports gone stale read unknown, not the last window");
+    s = status(60'000);
+    Expect(is(s.wifi, RadioSlotState::kNoData, 0) && is(s.ble, RadioSlotState::kNoData, 0),
+           "reports gone stale read unknown, not the last window");
   }
   {
     ObservationScheduler scheduler({.ble_enabled = false, .wifi_channels = {6, 11}});
     CoverageLedger ledger;
     ledger.Record(CompletedReport(*scheduler.NextWindow(0), 205, 0));
-    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 205)) == "WiFi ch6 BLE off",
-           "WiFi alone: its window and BLE off");
+    auto s = MakeCoverageStatus(MakeCoverageView(scheduler, ledger, 205));
+    Expect(s.wifi.state == RadioSlotState::kScanning && s.wifi.channel == 6 &&
+               s.ble.state == RadioSlotState::kOff,
+           "WiFi alone: its window scans and BLE is off");
     ledger.Record(CompletedReport(*scheduler.NextWindow(205), 60, 0));  // under half observed
-    Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 410)) == "WiFi gap BLE off",
-           "a lost current WiFi window reads gap, not its channel");
+    s = MakeCoverageStatus(MakeCoverageView(scheduler, ledger, 410));
+    Expect(s.wifi.state == RadioSlotState::kGap && s.wifi.channel == 11,
+           "a lost current WiFi window reads gap, with the channel it was on");
+  }
+
+  // BLE never shows a channel, whatever the view carries; precedence over idle.
+  {
+    CoverageView view;
+    view.wifi.state = RadioState::kObserving;
+    view.wifi.last_channel = 9;
+    view.ble.state = RadioState::kObserving;
+    view.ble.last_channel = 7;
+    view.current = Radio::kBle;
+    auto s = MakeCoverageStatus(view);
+    Expect(s.ble.state == RadioSlotState::kScanning && s.ble.channel == 0 &&
+               s.wifi.state == RadioSlotState::kIdle && s.wifi.channel == 9,
+           "BLE carries no channel; idle WiFi keeps its last one");
+    view.ble.state = RadioState::kOperatorDisabled;
+    view.wifi.state = RadioState::kOperatorDisabled;
+    view.wifi.last_channel = 9;
+    s = MakeCoverageStatus(view);
+    Expect(s.wifi.channel == 0, "a disabled WiFi shows no channel");
+    view.wifi.state = RadioState::kNoData;
+    Expect(MakeCoverageStatus(view).wifi.channel == 0, "unknown WiFi shows no channel");
   }
 
   // A Coverage Gap is under half the planned time; exactly half is not a gap, and
@@ -314,9 +358,11 @@ int main() {
     auto view = MakeCoverageView(config, ledger, 410);
     Expect(view.current == Radio::kBle, "without an active window the latest report is current");
     view = MakeCoverageView(config, ledger, 500, ActiveWindow{Radio::kWifi, 2, 3, 410, 205});
+    const auto active_status = MakeCoverageStatus(view);
     Expect(view.current == Radio::kWifi && view.wifi.last_channel == 2 &&
-               CoverageStatusText(view) == "WiFi ch2",
-           "an active window is current and names its channel before its report arrives");
+               active_status.wifi.state == RadioSlotState::kScanning &&
+               active_status.wifi.channel == 2 && active_status.ble.state == RadioSlotState::kIdle,
+           "an active window scans on its channel before its report arrives");
     Expect(
         MakeCoverageView(config, ledger, 500, ActiveWindow{Radio::kBle, 0, 4, 410, 205}).current ==
             Radio::kBle,

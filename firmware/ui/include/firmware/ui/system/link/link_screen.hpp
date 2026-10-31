@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "firmware/domain/agents_bar.hpp"
+#include "firmware/domain/coverage.hpp"
 #include "firmware/domain/cpu_view.hpp"
 #include "firmware/domain/link_view.hpp"
 #include "firmware/ui/system/settings/settings_panel.hpp"
@@ -37,7 +38,8 @@ class LinkScreen {
   void Update(const firmware::domain::CpuView& status,
               std::span<const firmware::domain::MetricCardView> cards,
               const firmware::domain::LinkView& link,
-              const firmware::domain::AgentsBarView& agents = {}, const std::string& coverage = {});
+              const firmware::domain::AgentsBarView& agents = {},
+              const firmware::domain::CoverageStatus& coverage = {});
   const SystemScreen& system() const { return system_; }
   SystemScreen& system() { return system_; }
   SettingsPanel& settings_panel() { return *settings_panel_; }

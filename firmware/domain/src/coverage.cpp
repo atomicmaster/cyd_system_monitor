@@ -237,32 +237,32 @@ std::string FormatCoverage(const CoverageView& view) {
          " | host_only=" + (view.host_only ? "1" : "0");
 }
 
-std::string CoverageStatusText(const CoverageView& view) {
-  if (view.host_only) return "Host only";
-  const auto radio = [&](Radio which, const RadioCoverageView& v) -> std::string {
-    const std::string name = which == Radio::kWifi ? "WiFi " : "BLE ";
+CoverageStatus MakeCoverageStatus(const CoverageView& view) {
+  const auto slot = [&](Radio which, const RadioCoverageView& v) {
+    RadioSlotView slot;
     switch (v.state) {
       case RadioState::kOperatorDisabled:
-        return name + "off";
-      case RadioState::kFault:
-        return name + "err";  // "fault" does not fit the bar's worst case
+        slot.state = RadioSlotState::kOff;
+        return slot;
       case RadioState::kNoData:
-        return name + "?";
+        slot.state = RadioSlotState::kNoData;
+        return slot;
+      case RadioState::kFault:
+        slot.state = RadioSlotState::kFault;
+        break;
       case RadioState::kGap:
-        return name + "gap";
+        slot.state = RadioSlotState::kGap;
+        break;
       case RadioState::kObserving:
-        // Named only while its window is the current one: between windows a
+        // Scanning only while its window is the current one: between windows a
         // radio is not receiving, so it is not shown as if it were.
-        if (view.current != which) return "";
-        return which == Radio::kWifi ? name + "ch" + std::to_string(v.last_channel) : name + "scan";
+        slot.state = view.current == which ? RadioSlotState::kScanning : RadioSlotState::kIdle;
+        break;
     }
-    return name + "?";
+    if (which == Radio::kWifi) slot.channel = v.last_channel;
+    return slot;
   };
-  const std::string wifi = radio(Radio::kWifi, view.wifi);
-  const std::string ble = radio(Radio::kBle, view.ble);
-  if (wifi.empty()) return ble;
-  if (ble.empty()) return wifi;
-  return wifi + " " + ble;
+  return {slot(Radio::kWifi, view.wifi), slot(Radio::kBle, view.ble)};
 }
 
 }  // namespace firmware::domain

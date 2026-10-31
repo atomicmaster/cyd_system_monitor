@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -72,8 +73,9 @@ class Preview {
 
   // Renders at `ms`. A non-empty `clock` or `connection` replaces the domain's
   // text, to show a Host-supplied time or a worst-case width.
-  void Render(uint64_t ms, const std::string& coverage, const std::string& clock_text = {},
-              const std::string& connection = {}, const domain::LinkView& link = {}) {
+  void Render(uint64_t ms, const domain::CoverageStatus& coverage,
+              const std::string& clock_text = {}, const std::string& connection = {},
+              const domain::LinkView& link = {}) {
     clock_.Set(ms);
     feed_.Tick();
     std::vector<domain::MetricCardView> cards;
@@ -92,14 +94,14 @@ class Preview {
   firmware::ui::system::LinkScreen ui_;
 };
 
-std::string Coverage(domain::RadioState wifi, domain::RadioState ble,
-                     std::optional<domain::Radio> current, uint8_t channel) {
+domain::CoverageStatus Coverage(domain::RadioState wifi, domain::RadioState ble,
+                                std::optional<domain::Radio> current, uint8_t channel) {
   domain::CoverageView view;
   view.wifi.state = wifi;
   view.wifi.last_channel = channel;
   view.ble.state = ble;
   view.current = current;
-  return domain::CoverageStatusText(view);
+  return domain::MakeCoverageStatus(view);
 }
 
 }  // namespace
@@ -171,6 +173,23 @@ int RunPreview(const std::string& dir) {
     preview.Render(1000, Coverage(RadioState::kFault, RadioState::kGap, Radio::kWifi, 13),
                    "Time unavailable", "Incompatible", link);
     save("5-status-bar-worst-case");
+  }
+  {
+    // A radio problem: WiFi lost its last window, BLE switched off.
+    Preview preview(screen);
+    preview.Push(2000, 1);
+    preview.Render(2000, Coverage(RadioState::kGap, RadioState::kOperatorDisabled, {}, 9),
+                   "10:42 PM");
+    save("5b-radio-problem");
+  }
+  {
+    // Host only: both radios off, each slashed.
+    Preview preview(screen);
+    preview.Push(2000, 1);
+    preview.Render(2000,
+                   Coverage(RadioState::kOperatorDisabled, RadioState::kOperatorDisabled, {}, 0),
+                   "10:42 PM");
+    save("5c-host-only");
   }
   {
     Preview preview(screen);

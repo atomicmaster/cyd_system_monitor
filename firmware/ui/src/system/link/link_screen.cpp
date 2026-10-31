@@ -167,7 +167,7 @@ void LinkScreen::Update(const firmware::domain::CpuView& status,
                         std::span<const firmware::domain::MetricCardView> cards,
                         const firmware::domain::LinkView& link,
                         const firmware::domain::AgentsBarView& agents,
-                        const std::string& coverage) {
+                        const firmware::domain::CoverageStatus& coverage) {
   system_.Update(status, cards, agents, coverage, link.fault);
   latest_details_ = link.details;
   ShowDetails();

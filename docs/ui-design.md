@@ -17,9 +17,26 @@ Every screen keeps:
 - the clock, or an honest `Time unavailable` state before the first post-boot time source;
 - the highest-priority unacknowledged Alert and remaining Alert count;
 - compact host/USB state; and
-- the current WiFi or BLE Observation Window.
+- a radio tray: one fixed slot each for WiFi and BLE.
 
-Live Host data shows as a cyan USB glyph rather than the word; every other connection state is spelled out. A hairline separates the bar from the cards. The bar is one 12 pt line, and every combination of its longest texts must fit its 312 px ("Disconnected", "WiFi gap BLE scan", "Time unavailable"; checked by the simulator's `system-screen` scenario). That is why its words are short ("Waiting", "Incompatible", `err` for a faulted radio) and the clock has no zone suffix. When the zone is unknown the clock still says `UTC`, so it can never pass as local time.
+Live Host data shows as a cyan USB glyph rather than the word; every other connection state is spelled out. A hairline separates the bar from the cards. The bar is one 12 pt line, left to right: the connection, a flexible centre kept free for the future Alert, the radio tray, then the clock.
+
+The radio tray sits beside the clock, phone-style. Each radio has its own slot that never moves: the WiFi icon, then a fixed one-character flag box, then a fixed 27 px channel box (`ch11`, `ch14`; digits never shift anything); the BLE icon (a drawn rune: the font's Bluetooth symbol reads as a filled pill at 12 px), then a flag box. A flag sits right after its own icon so it can never be read as the other radio's, and the two slots are 8 px apart against 2 px inside a slot. BLE shows no channel: its controller cycles the three advertising channels itself. A 1x12 hairline in the rule colour and a 6 px gap come before the clock. The state is the icon's colour, always with a mark where colour alone would be ambiguous:
+
+| State | Colour | Mark |
+| --- | --- | --- |
+| Scanning (its window is the current one) | WiFi cyan, BLE blue | none |
+| Idle (enabled, not its window now) | muted | none |
+| Off (operator-disabled) | dim `0x3A4266` | a slash across the icon |
+| Gap (the latest window was lost) | muted | `~` |
+| No data (unknown, never idle or quiet) | muted | `?` |
+| Fault | text | `!` |
+
+Fault, gap, no data and off win over scanning and idle. The WiFi channel is the active window's while scanning, the last observed one while idle, gap or fault, and blank when off or unknown. Both radios off (Host only) is both slots off. Red, orange, amber and yellow stay reserved for Alerts.
+
+This replaces a single coverage label that swapped between "WiFi chN" and "BLE scan" in one spot. Observation Windows alternate about five times a second, so it read as blinking (owner feedback from the first board run). With fixed slots only a colour changes, and only in that radio's own place.
+
+The worst case, "Disconnected" plus the whole tray with its flags shown plus "Time unavailable", measures 280 px of the 312 px (84 + 95 + 101), leaving the centre free; the simulator's `system-screen` scenario checks it. The clock has no zone suffix; when the zone is unknown it still says `UTC`, so it can never pass as local time.
 
 Tapping the connection text opens the Host link sheet (versions, pairing, and any link fault, as label/value rows built only while it is open); tapping the rest of the bar opens the clock settings sheet. Tapping a status item opens the relevant detail. Alert priority sorts by Severity, then Confidence, then recency.
 

@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "esp_event.h"
+#include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -64,6 +65,9 @@ void WifiMonitor::OnPacket(void* buffer, int type) {
 
 DriverResult WifiMonitor::Init() {
   g_monitor = this;
+  // The driver logs two INFO lines per window (ic_enable_sniffer and
+  // ic_disable_sniffer), about five lines a second. Our own fw.* tags are untouched.
+  esp_log_level_set("wifi", ESP_LOG_WARN);
   esp_err_t err = esp_netif_init();
   if (err == ESP_OK) {
     err = esp_event_loop_create_default();

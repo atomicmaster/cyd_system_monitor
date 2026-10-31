@@ -17,6 +17,9 @@ inline constexpr uint32_t kPanelBorder = 0x252D4A;
 inline constexpr uint32_t kTrack = 0x252D4A;
 inline constexpr uint32_t kText = 0xE8EBF7;
 inline constexpr uint32_t kMuted = 0x8A91B4;
+// Quieter than kMuted: a switched-off thing (a disabled radio), always with a
+// slash across it.
+inline constexpr uint32_t kDim = 0x3A4266;
 inline constexpr uint32_t kCyan = 0x22D3EE;
 inline constexpr uint32_t kViolet = 0xA78BFA;
 inline constexpr uint32_t kBlue = 0x60A5FA;

@@ -15,6 +15,7 @@
 #include "firmware/domain/cpu_view.hpp"
 #include "firmware/domain/host_feed.hpp"
 #include "firmware/ui/system/system_screen.hpp"
+#include "firmware/ui/theme.hpp"
 #include "protocol.hpp"
 #include "scenarios.hpp"
 
@@ -25,6 +26,7 @@ namespace domain = firmware::domain;
 namespace proto = cyd::protocol;
 using firmware::ui::system::MetricCard;
 using firmware::ui::system::SystemScreen;
+namespace theme = firmware::ui::theme;
 
 constexpr uint64_t kGiB = 1ULL << 30;
 constexpr uint64_t kGB = 1000ULL * 1000 * 1000;
@@ -146,7 +148,8 @@ class Overview {
     feed_.Push(frame);
   }
 
-  void Render(uint64_t ms, const std::string& coverage = {}, const std::string& notice = {}) {
+  void Render(uint64_t ms, const domain::CoverageStatus& coverage = {},
+              const std::string& notice = {}) {
     clock_.Set(ms);
     feed_.Tick();
     std::vector<domain::MetricCardView> cards;
@@ -220,7 +223,7 @@ int RunSystemScreen() {
   };
   const auto render = [&](uint64_t now_ms) {
     overview.Render(
-        now_ms, domain::CoverageStatusText(domain::MakeCoverageView(scheduler, ledger, now_ms)));
+        now_ms, domain::MakeCoverageStatus(domain::MakeCoverageView(scheduler, ledger, now_ms)));
   };
 
   render(1000);
@@ -268,37 +271,122 @@ int RunSystemScreen() {
                     !lv_obj_has_flag(ui.card(1).arc(), LV_OBJ_FLAG_HIDDEN),
                 "stale RAM keeps its last value labelled Last while the dial decays to neutral");
 
-  // Coverage stays in the persistent bar and never reads as quiet.
-  result.Expect(Has(ui.coverage_label(), "WiFi ? BLE ?"),
-                "coverage is unknown, not quiet, before the radio reports");
+  // Each radio keeps its own slot in the bar's tray; colour and a mark show
+  // its state, and unknown never reads as quiet.
+  const auto slot_is = [](lv_obj_t* icon, lv_obj_t* flag, lv_obj_t* slash, uint32_t color,
+                          const char* flag_text, bool slashed) {
+    // WiFi's icon is a symbol label; BLE's is a drawn rune (a line).
+    const lv_color_t icon_color = lv_obj_check_type(icon, &lv_line_class)
+                                      ? lv_obj_get_style_line_color(icon, 0)
+                                      : lv_obj_get_style_text_color(icon, 0);
+    return lv_color_eq(icon_color, theme::Color(color)) &&
+           lv_color_eq(lv_obj_get_style_text_color(flag, 0), theme::Color(color)) &&
+           std::strcmp(lv_label_get_text(flag), flag_text) == 0 &&
+           lv_obj_has_flag(slash, LV_OBJ_FLAG_HIDDEN) != slashed;
+  };
+  const auto wifi_is = [&](uint32_t color, const char* flag, const char* channel, bool slashed) {
+    return slot_is(ui.wifi_icon(), ui.wifi_flag_label(), ui.wifi_slash(), color, flag, slashed) &&
+           std::strcmp(lv_label_get_text(ui.wifi_channel_label()), channel) == 0 &&
+           lv_color_eq(lv_obj_get_style_text_color(ui.wifi_channel_label(), 0),
+                       theme::Color(color));
+  };
+  const auto ble_is = [&](uint32_t color, const char* flag, bool slashed) {
+    return slot_is(ui.ble_icon(), ui.ble_flag_label(), ui.ble_slash(), color, flag, slashed);
+  };
+  result.Expect(wifi_is(theme::kMuted, "?", "", false) && ble_is(theme::kMuted, "?", false),
+                "both radios read unknown (muted, ?), not quiet, before the radio reports");
   run_windows(8000, 2, false);
   render(8500);
-  result.Expect(Has(ui.coverage_label(), "BLE scan") && !Has(ui.coverage_label(), "%"),
-                "the bar names the current Observation Window, never a percentage");
+  result.Expect(wifi_is(theme::kMuted, "", "ch1", false) && ble_is(theme::kBlue, "", false),
+                "the BLE window lights BLE blue; idle WiFi is muted and keeps its channel");
   run_windows(8500, 1, false);
   render(8750);
-  result.Expect(Has(ui.coverage_label(), "WiFi ch2"), "a WiFi window names its channel");
+  result.Expect(wifi_is(theme::kCyan, "", "ch2", false) && ble_is(theme::kMuted, "", false),
+                "a WiFi window lights WiFi cyan and names its channel");
   // A window whose receiver is on but has not reported yet is already current.
-  overview.Render(8800, domain::CoverageStatusText(domain::MakeCoverageView(
+  overview.Render(8800, domain::MakeCoverageStatus(domain::MakeCoverageView(
                             scheduler.config(), ledger, 8800,
                             domain::ActiveWindow{domain::Radio::kWifi, 3, 0, 8750, 205})));
-  result.Expect(Has(ui.coverage_label(), "WiFi ch3"),
+  result.Expect(wifi_is(theme::kCyan, "", "ch3", false),
                 "an active window names its channel before its report arrives");
   run_windows(8705, 2, true);
   render(9200);
-  result.Expect(Has(ui.coverage_label(), "gap"), "a lost window shows as a gap in the status bar");
+  result.Expect(wifi_is(theme::kMuted, "~", "ch3", false) && ble_is(theme::kMuted, "~", false),
+                "a lost window shows a muted ~ in its slot");
   scheduler.Configure({.wifi_enabled = false});
   render(9300);
-  result.Expect(Has(ui.coverage_label(), "WiFi off"), "a disabled radio reads off");
+  result.Expect(wifi_is(theme::kDim, "", "", true) && ble_is(theme::kMuted, "~", false),
+                "a disabled radio is dim with a slash and no channel");
   scheduler.Configure({.wifi_enabled = false, .ble_enabled = false});
   render(9400);
-  result.Expect(Has(ui.coverage_label(), "Host only"), "both radios off reads Host only");
+  result.Expect(wifi_is(theme::kDim, "", "", true) && ble_is(theme::kDim, "", true),
+                "Host only is both slots dim and slashed");
   render(200000);
-  result.Expect(Has(ui.coverage_label(), "Host only") && !Has(ui.connection_label(), "Connected"),
-                "coverage stays in the bar while the Host link goes stale");
+  result.Expect(wifi_is(theme::kDim, "", "", true) && ble_is(theme::kDim, "", true) &&
+                    !Has(ui.connection_label(), "Connected"),
+                "the tray stays in the bar while the Host link goes stale");
 
-  // The persistent bar: connection, coverage and clock side by side. The
-  // longest of each must fit together, since any combination can occur.
+  // Every slot state for both radios: its colour, mark, slash and channel, and
+  // nothing in the bar moves when the state changes.
+  {
+    using domain::RadioSlotState;
+    struct Expected {
+      RadioSlotState state;
+      uint32_t wifi_color;
+      uint32_t ble_color;
+      const char* flag;
+      bool slashed;
+    };
+    const Expected expected[] = {
+        {RadioSlotState::kScanning, theme::kCyan, theme::kBlue, "", false},
+        {RadioSlotState::kIdle, theme::kMuted, theme::kMuted, "", false},
+        {RadioSlotState::kOff, theme::kDim, theme::kDim, "", true},
+        {RadioSlotState::kGap, theme::kMuted, theme::kMuted, "~", false},
+        {RadioSlotState::kNoData, theme::kMuted, theme::kMuted, "?", false},
+        {RadioSlotState::kFault, theme::kText, theme::kText, "!", false},
+    };
+    lv_obj_t* const parts[] = {ui.connection_label(),   ui.radio_tray(),      ui.wifi_icon(),
+                               ui.wifi_channel_label(), ui.wifi_flag_label(), ui.ble_icon(),
+                               ui.ble_flag_label(),     ui.tray_separator(),  ui.clock_label()};
+    const auto coords = [&] {
+      std::vector<lv_area_t> areas;
+      lv_obj_update_layout(screen);
+      for (lv_obj_t* part : parts) {
+        lv_area_t area;
+        lv_obj_get_coords(part, &area);
+        areas.push_back(area);
+      }
+      return areas;
+    };
+    const auto same = [](const std::vector<lv_area_t>& a, const std::vector<lv_area_t>& b) {
+      for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i].x1 != b[i].x1 || a[i].x2 != b[i].x2 || a[i].y1 != b[i].y1 || a[i].y2 != b[i].y2)
+          return false;
+      }
+      return true;
+    };
+    overview.Render(300000, {});
+    const auto reference = coords();
+    bool fixed = true, all_right = true;
+    for (const Expected& e : expected) {
+      for (const uint8_t channel : {uint8_t{0}, uint8_t{6}, uint8_t{11}, uint8_t{14}}) {
+        domain::CoverageStatus status;
+        status.wifi = {e.state, channel};
+        status.ble = {e.state, 0};
+        overview.Render(300000, status);
+        const std::string text = channel == 0 ? "" : "ch" + std::to_string(channel);
+        all_right = all_right && wifi_is(e.wifi_color, e.flag, text.c_str(), e.slashed) &&
+                    ble_is(e.ble_color, e.flag, e.slashed);
+        fixed = fixed && same(reference, coords());
+      }
+    }
+    result.Expect(all_right, "every slot state shows its colour, mark, slash and channel");
+    result.Expect(fixed, "no tray, connection or clock position moves with state or channel");
+  }
+
+  // The persistent bar: connection, a free centre, the tray and the clock.
+  // The tray is fixed-width, so its flags count in the worst case; the longest
+  // connection and clock must fit with it.
   {
     lv_obj_update_layout(screen);
     const auto widest = [&](lv_obj_t* label, const std::vector<std::string>& texts,
@@ -325,43 +413,41 @@ int RunSystemScreen() {
     }
     const std::vector<std::string> clocks = {"Time unavailable", "12:58 PM UTC", "12:58 PM",
                                              "23:58 UTC", "23:58"};
-    std::vector<std::string> coverages = {"Host only"};
-    const domain::RadioState states[] = {domain::RadioState::kOperatorDisabled,
-                                         domain::RadioState::kFault, domain::RadioState::kNoData,
-                                         domain::RadioState::kObserving, domain::RadioState::kGap};
-    for (const auto wifi : states) {
-      for (const auto ble : states) {
-        for (int current = 0; current < 3; ++current) {
-          for (uint8_t channel = 1; channel <= 14; ++channel) {
-            domain::CoverageView v;
-            v.wifi.state = wifi;
-            v.wifi.last_channel = channel;
-            v.ble.state = ble;
-            if (current == 1) v.current = domain::Radio::kWifi;
-            if (current == 2) v.current = domain::Radio::kBle;
-            coverages.push_back(domain::CoverageStatusText(v));
-          }
-        }
-      }
-    }
-    std::string long_connection, long_clock, long_coverage;
+    std::string long_connection, long_clock;
     const int connection_w = widest(ui.connection_label(), connections, &long_connection);
     const int clock_w = widest(ui.clock_label(), clocks, &long_clock);
-    const int coverage_w = widest(ui.coverage_label(), coverages, &long_coverage);
+    // Show the flags on both radios and the widest channel, then measure.
+    domain::CoverageStatus worst;
+    worst.wifi = {domain::RadioSlotState::kFault, 14};
+    worst.ble = {domain::RadioSlotState::kNoData, 0};
+    overview.Render(300000, worst);
+    lv_obj_update_layout(screen);
+    const int tray_w = lv_obj_get_width(ui.radio_tray());
     const int bar_w = lv_obj_get_content_width(ui.status_bar());
-    const int gaps = 2 * lv_obj_get_style_pad_column(ui.status_bar(), 0);
-    const int need_worst = connection_w + coverage_w + clock_w + gaps;
+    const int need_worst = connection_w + tray_w + clock_w;
     std::printf(
-        "status bar %d px: worst connection \"%s\" %d + coverage \"%s\" %d + clock \"%s\" %d "
-        "+ gaps %d = %d\n",
-        bar_w, long_connection.c_str(), connection_w, long_coverage.c_str(), coverage_w,
-        long_clock.c_str(), clock_w, gaps, need_worst);
-    bool no_percentage = true;
-    for (const auto& text : coverages)
-      no_percentage = no_percentage && text.find('%') == std::string::npos;
-    result.Expect(no_percentage, "no coverage text is a percentage");
+        "status bar %d px: worst connection \"%s\" %d + tray (flags shown) %d + clock \"%s\" %d "
+        "= %d\n",
+        bar_w, long_connection.c_str(), connection_w, tray_w, long_clock.c_str(), clock_w,
+        need_worst);
     result.Expect(need_worst <= bar_w,
-                  "the longest connection, coverage and clock texts fit the bar together");
+                  "the longest connection and clock fit the bar together with the tray");
+    // Each fixed box holds its widest text.
+    bool boxes_fit = true;
+    for (const char* text : {"ch11", "ch14", "ch10", "ch13", "ch12"})
+      boxes_fit = boxes_fit && TextWidth(ui.wifi_channel_label(), text) <= 27;
+    for (const char* text : {"~", "?", "!"})
+      boxes_fit = boxes_fit && TextWidth(ui.wifi_flag_label(), text) <= 7;
+    result.Expect(boxes_fit, "the channel box fits ch14 and the flag box fits ~ ? !");
+    lv_area_t tray_box, connection_box, clock_box;
+    lv_obj_get_coords(ui.radio_tray(), &tray_box);
+    lv_obj_get_coords(ui.connection_label(), &connection_box);
+    lv_obj_get_coords(ui.clock_label(), &clock_box);
+    result.Expect(tray_box.x1 > connection_box.x2 && tray_box.x2 < clock_box.x1,
+                  "the tray sits between the connection and the clock");
+    result.Expect(
+        lv_obj_get_height(ui.tray_separator()) == 12 && lv_obj_get_width(ui.tray_separator()) == 1,
+        "the separator is a 1x12 hairline");
   }
 
   // The fixed layout: every card and the Agents bar sit inside the 320x240

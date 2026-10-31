@@ -431,7 +431,7 @@ void DrawMonitor() {
                            cards,
                            firmware::domain::MakeLinkView(g_link->link, g_link->link.paired()),
                            firmware::domain::MakeAgentsBar(state, now_ms),
-                           firmware::domain::CoverageStatusText(firmware::domain::MakeCoverageView(
+                           firmware::domain::MakeCoverageStatus(firmware::domain::MakeCoverageView(
                                g_radio.config, g_radio.ledger, now_ms, g_radio.active)));
   }
 }
