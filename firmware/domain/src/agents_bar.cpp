@@ -4,7 +4,7 @@
 #include "firmware/domain/card_registry.hpp"
 
 namespace firmware::domain {
-// Agents (Codex, Claude, Grok Build) with a same-user process, each with what
+// Agents (Codex, Claude, Grok Build, Gemini, OpenCode) with a same-user process, each with what
 // is known about its activity: unknown when the Host has no activity source
 // for it, never a guessed busy or idle.
 AgentsBarView MakeAgentsBar(const HostState& state, uint64_t /*now_ms*/) {

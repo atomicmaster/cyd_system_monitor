@@ -409,8 +409,10 @@ write("battery-snapshot-v1-duplicate-group.hex",
       "Battery group present twice in the snapshot body: malformed")
 
 
-# Agents group (TB07), key 8: availability, source age and three fixed agent
-# state slots [codex, claude, grok]; no freshness field.
+# Agents group (TB07), key 8: availability, source age and five fixed agent
+# state slots [codex, claude, grok, gemini, opencode]; no freshness field.
+# Slots 5 and 6 (gemini, opencode) were appended after the first three; a
+# decoder that predates them skips them as unknown optional keys.
 def with_agents(group, extra_body=(), ram=None, storage=None, battery=None):
     items = [(0, u(0)), (1, u(723)), (2, u(1000)), (3, u(0)), (4, u(4))]
     if ram is not None:
@@ -424,8 +426,8 @@ def with_agents(group, extra_body=(), ram=None, storage=None, battery=None):
     return uint(5, len(items)) + kv(items)
 
 
-# 0 availability, 1 source age ms, 2 codex, 3 claude, 4 grok
-AGENTS = [(0, u(0)), (1, u(250)), (2, u(0)), (3, u(1)), (4, u(0))]
+# 0 availability, 1 source age ms, 2 codex, 3 claude, 4 grok, 5 gemini, 6 opencode
+AGENTS = [(0, u(0)), (1, u(250)), (2, u(0)), (3, u(1)), (4, u(0)), (5, u(1)), (6, u(0))]
 
 
 def agents_frame(items, **kw):
@@ -437,22 +439,22 @@ def agents_replaced(index, item):
 
 
 write("agents-snapshot-v1.hex", agents_frame(AGENTS),
-      "CPU plus Agents group: Claude running with activity unknown, Codex and Grok Build not running (age 250 ms)")
+      "CPU plus Agents group: Claude and Gemini running with activity unknown, Codex, Grok Build and OpenCode not running (age 250 ms)")
 write("agents-snapshot-v1-none.hex",
-      agents_frame([(0, u(0)), (1, u(0)), (2, u(0)), (3, u(0)), (4, u(0))]),
+      agents_frame([(0, u(0)), (1, u(0))] + [(k, u(0)) for k in range(2, 7)]),
       "Agents group with the source available and no agent running")
 write("agents-snapshot-v1-all-running.hex",
-      agents_frame([(0, u(0)), (1, u(1200)), (2, u(1)), (3, u(1)), (4, u(1))]),
-      "Agents group with all three agents running, activity unknown")
+      agents_frame([(0, u(0)), (1, u(1200))] + [(k, u(1)) for k in range(2, 7)]),
+      "Agents group with all five agents running, activity unknown")
 write("agents-snapshot-v1-busy-idle.hex",
-      agents_frame([(0, u(0)), (1, u(300)), (2, u(2)), (3, u(3)), (4, u(1))]),
+      agents_frame([(0, u(0)), (1, u(300)), (2, u(2)), (3, u(3)), (4, u(1)), (5, u(2)), (6, u(3))]),
       "Agents group with busy (2) and idle (3) states, which only a future adapter supplies")
 write("agents-snapshot-v1-unavailable.hex",
-      agents_frame([(0, u(3)), (1, u(0)), (2, u(0)), (3, u(0)), (4, u(0))]),
+      agents_frame([(0, u(3)), (1, u(0))] + [(k, u(0)) for k in range(2, 7)]),
       "Agents source temporarily unavailable: zero states, never 'none running'")
 write("agents-snapshot-v1-max.hex",
-      agents_frame([(0, u(4)), (1, u(0xffffffff)), (2, u(3)), (3, u(3)), (4, u(3))]),
-      "Agents at every maximum: valid, the largest group (16 bytes)")
+      agents_frame([(0, u(4)), (1, u(0xffffffff))] + [(k, u(3)) for k in range(2, 7)]),
+      "Agents at every maximum: valid, the largest group (20 bytes)")
 write("agents-snapshot-v1-with-groups.hex",
       frame(envelope(4, with_agents(ram_group(AGENTS), ram=ram_group(RAM), storage=ram_group(STORAGE),
                                     battery=ram_group(BATTERY)))),
@@ -463,14 +465,19 @@ write("agents-snapshot-v1-with-bad-battery.hex",
 write("agents-snapshot-v1-bad-state.hex",
       agents_frame(agents_replaced(3, (3, u(4)))),
       "Agents state 4 is not a defined value: malformed")
+write("agents-snapshot-v1-bad-state-opencode.hex",
+      agents_frame(agents_replaced(6, (6, u(4)))),
+      "Agents state 4 in the appended opencode slot is not a defined value: malformed")
 write("agents-snapshot-v1-bad-availability.hex",
       agents_frame(agents_replaced(0, (0, u(5)))),
       "Agents availability 5 is not a defined value: malformed")
 write("agents-snapshot-v1-age-overflow.hex",
       agents_frame(agents_replaced(1, (1, u(1 << 32)))),
       "Agents source age above 32 bits: malformed")
-write("agents-snapshot-v1-missing-field.hex", agents_frame(AGENTS[:4]),
-      "Agents group without the grok slot (key 4): malformed")
+write("agents-snapshot-v1-missing-field.hex", agents_frame(AGENTS[:6]),
+      "Agents group without the opencode slot (key 6): malformed")
+write("agents-snapshot-v1-three-slot.hex", agents_frame(AGENTS[:5]),
+      "Agents group as a Host that predates Gemini and OpenCode sent it (keys 0-4 only): malformed, no partial apply")
 write("agents-snapshot-v1-duplicate-key.hex",
       agents_frame(AGENTS[:3] + [AGENTS[2]] + AGENTS[3:]),
       "Agents group key 2 twice: malformed")
@@ -478,10 +485,10 @@ write("agents-snapshot-v1-not-a-map.hex",
       frame(envelope(4, with_agents(uint(2, 3) + b"\x01\x02\x03"))),
       "Agents group is a byte string, not a field map: malformed")
 write("agents-snapshot-v1-unknown-field.hex",
-      agents_frame(AGENTS + [(5, uint(4, 2) + u(1) + u(2))]),
-      "unknown optional Agents field 5 holding [1, 2]: skipped, snapshot applies")
+      agents_frame(AGENTS + [(7, uint(4, 2) + u(1) + u(2))]),
+      "unknown optional Agents field 7 holding [1, 2]: skipped, snapshot applies")
 write("agents-snapshot-v1-unknown-too-deep.hex",
-      agents_frame(AGENTS + [(5, nest(4))]),
+      agents_frame(AGENTS + [(7, nest(4))]),
       "unknown Agents field nested four arrays deep: over the skip limit, malformed")
 write("agents-snapshot-v1-noncanonical.hex",
       agents_frame(agents_replaced(1, (1, b"\x18\x05"))),

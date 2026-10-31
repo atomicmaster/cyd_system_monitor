@@ -66,6 +66,7 @@ class Preview {
   void Push(uint64_t ms, uint32_t sequence,
             std::array<proto::AgentState, proto::kAgentSlots> agents = {
                 proto::AgentState::kNotRunning, proto::AgentState::kRunning,
+                proto::AgentState::kNotRunning, proto::AgentState::kNotRunning,
                 proto::AgentState::kNotRunning}) {
     clock_.Set(ms);
     feed_.Push(SnapshotFrame(sequence, LiveGroups(agents)));
@@ -151,10 +152,12 @@ int RunPreview(const std::string& dir) {
     save("3-stale");
   }
   {
-    // A future activity adapter: Codex busy, Claude activity unknown, Grok idle.
+    // Wire order [codex, claude, grok, gemini, opencode]: Codex busy, Claude
+    // activity unknown, Grok idle, Gemini busy, OpenCode busy.
     Preview preview(screen);
     preview.Push(2000, 1,
-                 {proto::AgentState::kBusy, proto::AgentState::kRunning, proto::AgentState::kIdle});
+                 {proto::AgentState::kBusy, proto::AgentState::kRunning, proto::AgentState::kIdle,
+                  proto::AgentState::kBusy, proto::AgentState::kBusy});
     preview.Render(2000, Coverage(RadioState::kObserving, RadioState::kObserving, Radio::kBle, 6),
                    "22:42");
     save("4-agents-busy-unknown-idle");
@@ -220,14 +223,42 @@ int RunPreview(const std::string& dir) {
     save("8-pairing-prompt");
   }
   {
-    // Nothing running: three silhouettes, no words.
+    // Nothing running: five silhouettes, no words.
     Preview preview(screen);
     preview.Push(2000, 1,
                  {proto::AgentState::kNotRunning, proto::AgentState::kNotRunning,
+                  proto::AgentState::kNotRunning, proto::AgentState::kNotRunning,
                   proto::AgentState::kNotRunning});
     preview.Render(2000, Coverage(RadioState::kObserving, RadioState::kObserving, Radio::kWifi, 6),
                    "10:42 PM");
     save("9-agents-none");
+  }
+  {
+    // The two newest agents running with activity unknown beside silhouettes:
+    // Gemini and OpenCode lit, still.
+    Preview preview(screen);
+    preview.Push(
+        2000, 1,
+        {proto::AgentState::kNotRunning, proto::AgentState::kNotRunning,
+         proto::AgentState::kNotRunning, proto::AgentState::kRunning, proto::AgentState::kRunning});
+    preview.Render(2000, Coverage(RadioState::kObserving, RadioState::kObserving, Radio::kWifi, 6),
+                   "10:42 PM");
+    save("10-agents-gemini-opencode-running");
+  }
+  {
+    // Every agent busy: five animated badges, the Overview's peak.
+    Preview preview(screen);
+    preview.Push(2000, 1,
+                 {proto::AgentState::kBusy, proto::AgentState::kBusy, proto::AgentState::kBusy,
+                  proto::AgentState::kBusy, proto::AgentState::kBusy});
+    preview.Render(2000, Coverage(RadioState::kObserving, RadioState::kObserving, Radio::kWifi, 6),
+                   "10:42 PM");
+    save("11-agents-all-busy");
+    lv_mem_monitor_t memory;
+    lv_mem_monitor(&memory);
+    std::printf("LVGL pool, all five busy: %u of %u bytes used, peak %u\n",
+                static_cast<unsigned>(memory.total_size - memory.free_size),
+                static_cast<unsigned>(memory.total_size), static_cast<unsigned>(memory.max_used));
   }
   return failures == 0 ? 0 : 1;
 }

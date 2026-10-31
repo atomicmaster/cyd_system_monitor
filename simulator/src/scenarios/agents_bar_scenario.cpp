@@ -17,23 +17,25 @@ namespace proto = cyd::protocol;
 
 constexpr auto kOk = proto::Availability::kAvailable;
 
-// Agent states, in slot order [codex, claude, grok] below.
+// Agent states, in wire slot order [codex, claude, grok, gemini, opencode] below.
 constexpr auto kOff = proto::AgentState::kNotRunning;
 constexpr auto kOn = proto::AgentState::kRunning;  // activity unknown
 constexpr auto kBusy = proto::AgentState::kBusy;
 constexpr auto kIdle = proto::AgentState::kIdle;
 
 proto::AgentsSnapshot Snap(proto::AgentState codex, proto::AgentState claude,
-                           proto::AgentState grok, uint32_t age_ms) {
+                           proto::AgentState grok, uint32_t age_ms, proto::AgentState gemini = kOff,
+                           proto::AgentState opencode = kOff) {
   proto::AgentsSnapshot g;
   g.availability = kOk;
   g.source_age_ms = age_ms;
-  g.state = {codex, claude, grok};
+  g.state = {codex, claude, grok, gemini, opencode};
   return g;
 }
 
 // Wire slot names, for the transcript and checks.
-constexpr const char* kSlotNames[proto::kAgentSlots] = {"codex", "claude", "grok"};
+constexpr const char* kSlotNames[proto::kAgentSlots] = {"codex", "claude", "grok", "gemini",
+                                                        "opencode"};
 
 const char* ActivityName(firmware::domain::AgentActivity activity) {
   switch (activity) {
@@ -133,7 +135,25 @@ int RunAgentsBar() {
   result.Expect(Labels(view) == "codex(unknown),claude(unknown)",
                 "each running agent gets its own badge");
   push(4500, ++seq, Snap(kOn, kOn, kOn, 100));
-  at(4500, "all three running, no activity source");
+  at(4500, "Codex, Claude and Grok running, no activity source");
+  push(4600, ++seq, Snap(kOff, kOff, kOff, 100, kOn, kOff));
+  view = at(4600, "Gemini running, no activity source");
+  result.Expect(Labels(view) == "gemini(unknown)" && view.badges[0].slot == 3,
+                "Gemini is wire slot 3");
+  push(4700, ++seq, Snap(kOff, kOff, kOff, 100, kOff, kOn));
+  view = at(4700, "OpenCode running, no activity source");
+  result.Expect(Labels(view) == "opencode(unknown)" && view.badges[0].slot == 4,
+                "OpenCode is wire slot 4");
+  push(4800, ++seq, Snap(kOn, kOn, kOn, 100, kOn, kOn));
+  view = at(4800, "all five running, no activity source");
+  result.Expect(view.badges.size() == 5, "all five agents get a badge");
+  // The bar draws them left to right Codex, Claude, Gemini, Grok, OpenCode.
+  std::string visual;
+  for (const uint8_t slot : firmware::domain::kAgentVisualOrder) {
+    visual += std::string(visual.empty() ? "" : ",") + kSlotNames[slot];
+  }
+  result.Expect(visual == "codex,claude,gemini,grok,opencode",
+                "the visual order is Codex, Claude, Gemini, Grok, OpenCode");
 
   // The source could not list processes: never "none running".
   proto::AgentsSnapshot down;
@@ -150,17 +170,23 @@ int RunAgentsBar() {
 
   // Busy and idle come from the Host's activity sources; each badge carries it.
   push(6000, ++seq, Snap(kOff, kBusy, kOff, 100));
-  view = at(6000, "future adapter: Claude busy");
+  view = at(6000, "Claude busy");
   result.Expect(Labels(view) == "claude(busy)" &&
                     view.badges[0].activity == firmware::domain::AgentActivity::kBusy,
                 "busy is carried as busy");
   push(6500, ++seq, Snap(kOff, kOff, kIdle, 100));
-  view = at(6500, "future adapter: Grok idle");
+  view = at(6500, "Grok idle");
   result.Expect(Labels(view) == "grok(idle)" &&
                     view.badges[0].activity == firmware::domain::AgentActivity::kIdle,
                 "idle is carried as idle");
   push(7000, ++seq, Snap(kBusy, kIdle, kOn, 100));
-  at(7000, "future adapter: busy, idle and unknown together");
+  at(7000, "busy, idle and unknown together");
+  push(7200, ++seq, Snap(kOff, kOff, kOff, 100, kBusy, kIdle));
+  view = at(7200, "Gemini busy, OpenCode idle (CPU use)");
+  result.Expect(Labels(view) == "gemini(busy),opencode(idle)",
+                "the new agents carry busy and idle like the others");
+  push(7400, ++seq, Snap(kBusy, kIdle, kOn, 100, kBusy, kOn));
+  at(7400, "all five: busy, idle, unknown, busy, unknown");
 
   // Freshness is derived on the device from the source age (15 s).
   push(20'000, ++seq, Snap(kOff, kOn, kOff, 14'999));

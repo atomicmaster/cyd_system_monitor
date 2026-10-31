@@ -96,15 +96,19 @@ pub struct BatterySnapshot {
     pub condition_age_ms: u32,
 }
 pub const BATTERY_UNKNOWN_U16: u16 = 0xFFFF;
-/// Agents group (TB07): exact same-user process presence for the three
-/// supported agents in fixed slot order [codex, claude, grok]. Each state is
+/// Agent slots on the wire: codex, claude, grok, gemini, opencode.
+pub const AGENT_SLOTS: usize = 5;
+/// Agents group (TB07): exact same-user process presence for the five
+/// supported agents in fixed slot order [codex, claude, grok, gemini,
+/// opencode] (the last two were appended; the first three keep their slots).
+/// Each state is
 /// 0 not running, 1 running with activity unknown, 2 busy, 3 idle (2 and 3
 /// need an activity adapter). Not Available means all states are 0.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentsSnapshot {
     pub availability: Availability,
     pub source_age_ms: u32,
-    pub state: [u8; 3],
+    pub state: [u8; AGENT_SLOTS],
 }
 /// The kind of the primary-route interface (Network group, key 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -549,16 +553,14 @@ pub fn encode_groups(envelope: &Envelope, snapshot: &Snapshot) -> Result<Vec<u8>
     }
     if let Some(agents) = agents {
         uint(&mut c, 0, 8);
-        c.push(0xa5);
-        for (k, v) in [
-            (0, agents.availability as u64),
-            (1, agents.source_age_ms as u64),
-            (2, agents.state[0] as u64),
-            (3, agents.state[1] as u64),
-            (4, agents.state[2] as u64),
-        ] {
-            uint(&mut c, 0, k);
-            uint(&mut c, 0, v)
+        c.push(0xa0 + 2 + AGENT_SLOTS as u8);
+        uint(&mut c, 0, 0);
+        uint(&mut c, 0, agents.availability as u64);
+        uint(&mut c, 0, 1);
+        uint(&mut c, 0, agents.source_age_ms as u64);
+        for (slot, &state) in agents.state.iter().enumerate() {
+            uint(&mut c, 0, 2 + slot as u64);
+            uint(&mut c, 0, state as u64)
         }
     }
     if let Some(network) = network {
@@ -947,17 +949,18 @@ fn decode_battery_group(input: &[u8], p: &mut usize) -> Result<BatterySnapshot, 
     })
 }
 
-/// The Agents group: five required fields, unknown extra keys skipped
-/// (mirrors the C++ `ReadAgentsGroup`).
+/// The Agents group: seven required fields (availability, age, five agent
+/// slots), unknown extra keys skipped (mirrors the C++ `ReadAgentsGroup`).
 fn decode_agents_group(input: &[u8], p: &mut usize) -> Result<AgentsSnapshot, Error> {
+    const FIELDS: usize = 2 + AGENT_SLOTS;
     let count = read_uint(input, p, 5).ok_or(Error::Malformed)?;
     if count > 16 {
         return Err(Error::Malformed);
     }
-    let mut value = [None; 5];
+    let mut value = [None; FIELDS];
     for _ in 0..count {
         let key = read_uint(input, p, 0).ok_or(Error::Malformed)? as usize;
-        if key > 4 {
+        if key >= FIELDS {
             skip_value(input, p, 0)?;
             continue;
         }
@@ -966,7 +969,7 @@ fn decode_agents_group(input: &[u8], p: &mut usize) -> Result<AgentsSnapshot, Er
         }
         value[key] = Some(read_uint(input, p, 0).ok_or(Error::Malformed)?);
     }
-    let all: Vec<u64> = (0..5)
+    let all: Vec<u64> = (0..FIELDS)
         .map(|k| value[k].ok_or(Error::Malformed))
         .collect::<Result<_, _>>()?;
     if all[1] > u64::from(u32::MAX) || all[2..].iter().any(|&s| s > 3) {
@@ -975,7 +978,7 @@ fn decode_agents_group(input: &[u8], p: &mut usize) -> Result<AgentsSnapshot, Er
     Ok(AgentsSnapshot {
         availability: availability_from(all[0])?,
         source_age_ms: all[1] as u32,
-        state: [all[2] as u8, all[3] as u8, all[4] as u8],
+        state: std::array::from_fn(|slot| all[2 + slot] as u8),
     })
 }
 
@@ -2035,7 +2038,7 @@ mod tests {
         let g = golden.agents.clone().expect("agents group");
         assert_eq!(
             (g.availability, g.source_age_ms, g.state),
-            (Availability::Available, 250, [0, 1, 0])
+            (Availability::Available, 250, [0, 1, 0, 1, 0])
         );
         assert_eq!(
             encode_groups(
@@ -2072,19 +2075,19 @@ mod tests {
         );
         // Busy and idle round-trip although no MVP Host produces them.
         let (_, busy) = decode_snapshot(&fixture("agents-snapshot-v1-busy-idle.hex")).unwrap();
-        assert_eq!(busy.agents.unwrap().state, [2, 3, 1]);
+        assert_eq!(busy.agents.unwrap().state, [2, 3, 1, 2, 3]);
         let (_, down) = decode_snapshot(&fixture("agents-snapshot-v1-unavailable.hex")).unwrap();
         let down = down.agents.unwrap();
         assert_eq!(down.availability, Availability::TemporarilyUnavailable);
-        assert_eq!(down.state, [0, 0, 0]);
+        assert_eq!(down.state, [0, 0, 0, 0, 0]);
         let max = fixture("agents-snapshot-v1-max.hex");
         assert!(max.len() < 2048);
         let (envelope, snap) = decode_snapshot(&max).unwrap();
         let without = encode_groups(&envelope, &Snapshot::new(snap.cpu.clone())).unwrap();
-        // key + map header + five keys + availability + 5-byte age + three states
-        assert_eq!(max.len() - without.len(), 16);
+        // key + map header + seven keys + availability + 5-byte age + five states
+        assert_eq!(max.len() - without.len(), 20);
         let bad = AgentsSnapshot {
-            state: [0, 4, 0],
+            state: [0, 4, 0, 0, 0],
             ..snap.agents.clone().unwrap()
         };
         assert_eq!(

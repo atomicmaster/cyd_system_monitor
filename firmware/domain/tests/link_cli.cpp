@@ -11,7 +11,7 @@
 // "STATE phase=<n> paired=<0|1> seen=<0|1> cpu=<per-mille> ram=<used>/<total>|-
 // storage=<total>/<avail>/<read>/<write>|-
 // battery=<charge-availability>/<per-mille>/<state>/<max-capacity>|-
-// agents=<availability>/<codex>/<claude>/<grok>|-
+// agents=<availability>/<codex>/<claude>/<grok>/<gemini>/<opencode>|-
 // network=<traffic-availability>/<kind>/<via-tunnel>/<rx>/<tx>/<context>/<coverage>/<channel>|-
 // code=<n|->" line.
 #include <cstdio>
@@ -111,10 +111,12 @@ int main() {
     }
     std::printf(" agents=");
     if (state.agents.has_data) {
-      std::printf("%u/%u/%u/%u", static_cast<unsigned>(state.agents.availability),
+      std::printf("%u/%u/%u/%u/%u/%u", static_cast<unsigned>(state.agents.availability),
                   static_cast<unsigned>(state.agents.state[0]),
                   static_cast<unsigned>(state.agents.state[1]),
-                  static_cast<unsigned>(state.agents.state[2]));
+                  static_cast<unsigned>(state.agents.state[2]),
+                  static_cast<unsigned>(state.agents.state[3]),
+                  static_cast<unsigned>(state.agents.state[4]));
     } else {
       std::printf("-");
     }

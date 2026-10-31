@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Agent Activity: same-user process presence for Codex, Claude and Grok Build
+//! Agent Activity: same-user process presence for Codex, Claude, Grok Build, Gemini and OpenCode
 //! (5 s cadence, its own age).
 //!
 //! The process list comes from `libproc`: `proc_listallpids` for the pids,
@@ -644,7 +644,7 @@ mod tests {
         let mut c = collector(script, Rc::new(Cell::new(0)));
         let sample = c.collect(0);
         assert_eq!(sample.availability, MetricAvailability::Available);
-        assert_eq!(sample.value.unwrap().states, [AgentState::NotRunning; 3]);
+        assert_eq!(sample.value.unwrap().states, [AgentState::NotRunning; 5]);
         let script = Rc::new(RefCell::new(vec![Some(vec![])]));
         let mut c = collector(script, Rc::new(Cell::new(0)));
         assert_eq!(c.collect(0).availability, MetricAvailability::Available);
@@ -727,7 +727,7 @@ mod tests {
         assert_eq!(c.collect(15_000).availability, MetricAvailability::Error);
         assert_eq!(c.collect(16_000).availability, MetricAvailability::Error);
         let back = c.collect(20_000).value.unwrap();
-        assert_eq!((back.states, back.age_ms), ([AgentState::NotRunning; 3], 0));
+        assert_eq!((back.states, back.age_ms), ([AgentState::NotRunning; 5], 0));
     }
 
     #[test]
@@ -748,7 +748,7 @@ mod tests {
         let r = c.collect(3_000).value.unwrap();
         assert_eq!(
             (calls.get(), r.states, r.age_ms),
-            (2, [AgentState::NotRunning; 3], 0)
+            (2, [AgentState::NotRunning; 5], 0)
         );
         // A two-hour sleep and a failing rescan: the old presence is past its
         // retention by the sleep-inclusive age, so it is an error, not shown.

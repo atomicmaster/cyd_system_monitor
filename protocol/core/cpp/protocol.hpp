@@ -106,12 +106,13 @@ struct BatterySnapshot {
   uint16_t cycle_count = kBatteryUnknownU16;
   uint32_t condition_age_ms = 0;
 };
-// Agents (TB07): exact same-user process presence for the three supported
-// agents, in fixed slot order [codex, claude, grok]. Busy and idle need an
+// Agents (TB07): exact same-user process presence for the five supported
+// agents, in fixed slot order [codex, claude, grok, gemini, opencode]; gemini
+// and opencode were appended, the first three keep their slots. Busy and idle need an
 // adapter that MVP Hosts do not have. Not kAvailable means every state is
 // kNotRunning and the device shows `--`, never "not running". No freshness
 // field.
-constexpr std::size_t kAgentSlots = 3;
+constexpr std::size_t kAgentSlots = 5;
 enum class AgentState : uint8_t {
   kNotRunning,
   kRunning, // running, activity unknown

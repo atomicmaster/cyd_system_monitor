@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! Agent Activity: exact same-user process presence for the supported agents
-//! (Codex, Claude, Grok Build). Pure and fixture-tested; the macOS collector
+//! (Codex, Claude, Grok Build, Gemini, OpenCode). Pure and fixture-tested; the macOS collector
 //! only lists processes and resolves their executable paths.
 //!
 //! Identity is the process's *resolved executable path* matched exactly against
@@ -11,7 +11,7 @@
 //! only the owner uid, pid, resolved executable path and, for an allowlisted
 //! process, its cumulative CPU time.
 //!
-//! Activity for Codex and Grok is a CPU heuristic ([`classify_activity`]): a
+//! Activity for every agent but Claude is a CPU heuristic ([`classify_activity`]): a
 //! running agent whose processes used at least [`BUSY_CPU_PERMILLE`] of one core
 //! since the previous scan is busy, otherwise idle; with no previous scan to
 //! compare against it is running with activity unknown. Claude's idle CPU is
@@ -27,10 +27,22 @@ pub enum Agent {
     Codex = 0,
     Claude = 1,
     Grok = 2,
+    /// Google's Antigravity CLI, installed as `agy`.
+    Gemini = 3,
+    OpenCode = 4,
 }
 
-pub const AGENT_COUNT: usize = 3;
-pub const AGENTS: [Agent; AGENT_COUNT] = [Agent::Codex, Agent::Claude, Agent::Grok];
+pub const AGENT_COUNT: usize = 5;
+pub const AGENTS: [Agent; AGENT_COUNT] = [
+    Agent::Codex,
+    Agent::Claude,
+    Agent::Grok,
+    Agent::Gemini,
+    Agent::OpenCode,
+];
+
+/// The agents whose busy/idle comes from CPU use. Claude uses its hooks.
+const CPU_AGENTS: [Agent; 4] = [Agent::Codex, Agent::Grok, Agent::Gemini, Agent::OpenCode];
 
 /// Wire values of an agent's state (`protocol/CORE_PROTOCOL.md`, key 8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -303,6 +315,45 @@ const ALLOWLIST: &[Entry] = &[
             Seg::Versioned("grok-", "-macos-x86_64"),
         ]),
     },
+    // Gemini, run as the `agy` Antigravity CLI: a regular, standalone arm64
+    // Mach-O at ~/.local/bin/agy on the development Mac (verified: not a
+    // symlink), so the resolved path is the install path. Matched only at that
+    // exact home-relative path, never by the bare name `agy`.
+    Entry {
+        agent: Agent::Gemini,
+        root: Root::Home,
+        shape: Shape::Executable(&[lit(".local"), lit("bin"), lit("agy")]),
+    },
+    // OpenCode: /opt/homebrew/bin/opencode is a symlink to
+    // ../Cellar/opencode-v2/<version>/bin/opencode (verified), a standalone
+    // Mach-O. A running process resolves to the versioned Cellar path, like
+    // Codex's Caskroom; the unresolved link path is deliberately not listed.
+    Entry {
+        agent: Agent::OpenCode,
+        root: Root::Absolute,
+        shape: Shape::Executable(&[
+            lit("opt"),
+            lit("homebrew"),
+            lit("Cellar"),
+            lit("opencode-v2"),
+            Seg::Versioned("", ""),
+            lit("bin"),
+            lit("opencode"),
+        ]),
+    },
+    Entry {
+        agent: Agent::OpenCode,
+        root: Root::Absolute,
+        shape: Shape::Executable(&[
+            lit("usr"),
+            lit("local"),
+            lit("Cellar"),
+            lit("opencode-v2"),
+            Seg::Versioned("", ""),
+            lit("bin"),
+            lit("opencode"),
+        ]),
+    },
 ];
 
 /// `N.N.N` with an optional `-`/`+` tail of at most 32 `[A-Za-z0-9.-]`.
@@ -468,7 +519,7 @@ pub fn parse_hook_file(name: &str, contents: &str) -> Option<(i32, HookActivity)
     Some((pid, activity))
 }
 
-/// Presence, the CPU heuristic (Codex, Grok) and hooks (Claude). `previous` is
+/// Presence, the CPU heuristic (all but Claude) and hooks (Claude). `previous` is
 /// the CPU baseline from the last successful scan (none after start or a
 /// wake); `now_ms` is this scan's monotonic time; `hooks` are the event files
 /// present now. Returns the states and the baseline for the next scan.
@@ -505,7 +556,7 @@ pub fn classify_activity(
         }
     }
     if elapsed_ms > 0 {
-        for agent in [Agent::Codex, Agent::Grok] {
+        for agent in CPU_AGENTS {
             let i = agent as usize;
             if states[i] != AgentState::NotRunning && compared[i] {
                 // used / elapsed >= permille / 1000, in integers.
@@ -576,6 +627,8 @@ mod tests {
     const CODEX: &str = "/opt/homebrew/Caskroom/codex/0.155.1/bin/codex";
     const CLAUDE: &str = "/opt/homebrew/Caskroom/claude-code@latest/2.1.280/claude";
     const GROK: &str = "/Users/tester/.grok/bin/grok";
+    const GEMINI: &str = "/Users/tester/.local/bin/agy";
+    const OPENCODE: &str = "/opt/homebrew/Cellar/opencode-v2/2.2.5/bin/opencode";
     const MS: u64 = 1_000_000;
 
     fn cpu(pid: i32, path: &str, cpu_ns: u64) -> ProcessRecord {
@@ -591,7 +644,7 @@ mod tests {
         records: &[ProcessRecord],
         previous: Option<&CpuBaseline>,
         now_ms: u64,
-    ) -> ([u8; 3], CpuBaseline) {
+    ) -> ([u8; 5], CpuBaseline) {
         let (states, next) = classify_activity(records, UID, HOME, previous, now_ms, &[]);
         (states.map(|s| s as u8), next)
     }
@@ -695,7 +748,7 @@ mod tests {
     #[test]
     fn the_first_scan_cannot_tell_busy_from_idle() {
         let (states, next) = activity(&[cpu(10, CLAUDE, 900 * MS)], None, 5_000);
-        assert_eq!(states, [0, 1, 0]);
+        assert_eq!(states, [0, 1, 0, 0, 0]);
         assert_eq!(next.at_ms, 5_000);
         assert_eq!(next.cpu_ns.get(&10), Some(&(900 * MS)));
     }
@@ -709,7 +762,7 @@ mod tests {
             Some(&base),
             5_000,
         );
-        assert_eq!(states, [3, 0, 2]);
+        assert_eq!(states, [3, 0, 2, 0, 0]);
     }
 
     #[test]
@@ -718,7 +771,7 @@ mod tests {
         let first: Vec<_> = (0..5).map(|i| cpu(30 + i, GROK, 0)).collect();
         let (_, base) = activity(&first, None, 0);
         let later: Vec<_> = (0..5).map(|i| cpu(30 + i, GROK, 15 * MS)).collect();
-        assert_eq!(activity(&later, Some(&base), 5_000).0, [0, 0, 2]);
+        assert_eq!(activity(&later, Some(&base), 5_000).0, [0, 0, 2, 0, 0]);
     }
 
     #[test]
@@ -727,12 +780,12 @@ mod tests {
         // A new pid only: unknown, not idle and not busy.
         assert_eq!(
             activity(&[cpu(11, CODEX, 900 * MS)], Some(&base), 5_000).0,
-            [1, 0, 0]
+            [1, 0, 0, 0, 0]
         );
         // The same pid with less CPU time is another process: not compared.
         assert_eq!(
             activity(&[cpu(10, CODEX, MS)], Some(&base), 5_000).0,
-            [1, 0, 0]
+            [1, 0, 0, 0, 0]
         );
         // A comparable process decides even next to a new one.
         let (states, _) = activity(
@@ -740,7 +793,7 @@ mod tests {
             Some(&base),
             5_000,
         );
-        assert_eq!(states, [2, 0, 0]);
+        assert_eq!(states, [2, 0, 0, 0, 0]);
     }
 
     #[test]
@@ -748,11 +801,11 @@ mod tests {
         let (_, base) = activity(&[cpu(10, CODEX, 0)], None, 5_000);
         assert_eq!(
             activity(&[rec(UID, CODEX)], Some(&base), 10_000).0,
-            [1, 0, 0]
+            [1, 0, 0, 0, 0]
         );
         assert_eq!(
             activity(&[cpu(10, CODEX, 900 * MS)], Some(&base), 5_000).0,
-            [1, 0, 0]
+            [1, 0, 0, 0, 0]
         );
     }
 
@@ -767,11 +820,11 @@ mod tests {
             },
         ];
         let (states, base) = activity(&records, None, 0);
-        assert_eq!(states, [0, 1, 0]);
+        assert_eq!(states, [0, 1, 0, 0, 0]);
         assert_eq!(base.cpu_ns.len(), 1);
     }
 
-    fn states(records: &[ProcessRecord]) -> [u8; 3] {
+    fn states(records: &[ProcessRecord]) -> [u8; 5] {
         classify(records, UID, HOME).map(|s| s as u8)
     }
 
@@ -803,6 +856,97 @@ mod tests {
             identify("/Users/tester/.local/share/claude/versions/2.1.3", HOME),
             Some(Agent::Claude)
         );
+    }
+
+    #[test]
+    fn gemini_and_opencode_match_their_verified_install_paths() {
+        // `agy` is a regular file at ~/.local/bin/agy (no symlink to resolve).
+        assert_eq!(identify(GEMINI, HOME), Some(Agent::Gemini));
+        // /opt/homebrew/bin/opencode is a symlink into the Cellar; libproc and
+        // realpath report the Cellar path, so only that is on the allowlist.
+        assert_eq!(identify(OPENCODE, HOME), Some(Agent::OpenCode));
+        assert_eq!(
+            identify("/usr/local/Cellar/opencode-v2/2.2.5/bin/opencode", HOME),
+            Some(Agent::OpenCode)
+        );
+        assert_eq!(
+            identify(
+                "/opt/homebrew/Cellar/opencode-v2/10.0.1-beta.2/bin/opencode",
+                HOME
+            ),
+            Some(Agent::OpenCode)
+        );
+        assert_eq!(states(&[rec(UID, GEMINI)]), [0, 0, 0, 1, 0]);
+        assert_eq!(states(&[rec(UID, OPENCODE)]), [0, 0, 0, 0, 1]);
+        assert_eq!(Agent::Gemini as usize, 3);
+        assert_eq!(Agent::OpenCode as usize, 4);
+    }
+
+    #[test]
+    fn gemini_and_opencode_never_match_by_name_or_look_alike_path() {
+        for path in [
+            // A bare name or the same name anywhere else.
+            "agy",
+            "opencode",
+            "/usr/local/bin/agy",
+            "/opt/homebrew/bin/agy",
+            "/opt/homebrew/bin/opencode",
+            "/usr/local/bin/opencode",
+            "/Users/tester/bin/agy",
+            "/Users/tester/.local/bin/opencode",
+            "/Users/tester/.local/bin/agy/child",
+            "/Users/tester/.local/share/agy",
+            "/Users/tester/.local/bin/agy2",
+            "/Users/tester/agy",
+            // Another user's home.
+            "/Users/other/.local/bin/agy",
+            // The unlinked symlink path, a different formula, a non-semver or
+            // wrong-binary Cellar path.
+            "/opt/homebrew/Cellar/opencode/2.2.5/bin/opencode",
+            "/opt/homebrew/Cellar/opencode-v2/latest/bin/opencode",
+            "/opt/homebrew/Cellar/opencode-v2/2.2/bin/opencode",
+            "/opt/homebrew/Cellar/opencode-v2/2.2.5/bin/other",
+            "/opt/homebrew/Cellar/opencode-v2/2.2.5/libexec/opencode",
+            "/opt/homebrew/Cellar/opencode-v2/2.2.5/bin/opencode/child",
+            "/opt/homebrew/Cellar/opencode-v2/../opencode-v2/2.2.5/bin/opencode",
+            "/Users/tester/opt/homebrew/Cellar/opencode-v2/2.2.5/bin/opencode",
+        ] {
+            assert_eq!(states(&[rec(UID, path)]), [0, 0, 0, 0, 0], "{path}");
+        }
+        // Another user's process on the exact path does not count either.
+        assert_eq!(
+            states(&[rec(UID + 1, GEMINI), rec(UID + 1, OPENCODE)]),
+            [0; 5]
+        );
+    }
+
+    #[test]
+    fn gemini_and_opencode_busy_comes_from_cpu_like_codex_and_grok() {
+        let (_, base) = activity(&[cpu(10, GEMINI, 0), cpu(20, OPENCODE, 0)], None, 0);
+        // 5 s later: agy used 50 ms (1.0%, busy), opencode 49 ms (0.98%, idle).
+        let (states, _) = activity(
+            &[cpu(10, GEMINI, 50 * MS), cpu(20, OPENCODE, 49 * MS)],
+            Some(&base),
+            5_000,
+        );
+        assert_eq!(states, [0, 0, 0, 2, 3]);
+        // The first scan cannot tell: running, activity unknown.
+        let (states, _) = activity(
+            &[cpu(10, GEMINI, 900 * MS), cpu(20, OPENCODE, 900 * MS)],
+            None,
+            5_000,
+        );
+        assert_eq!(states, [0, 0, 0, 1, 1]);
+        // Hooks only ever drive Claude: a hook for an agy/opencode pid is ignored.
+        let (states, _) = classify_activity(
+            &[cpu(10, GEMINI, 0)],
+            UID,
+            HOME,
+            None,
+            0,
+            &[hook(10, HookActivity::Busy, 0)],
+        );
+        assert_eq!(states.map(|s| s as u8), [0, 0, 0, 1, 0]);
     }
 
     #[test]
@@ -838,7 +982,7 @@ mod tests {
             "/Users/tester/.vscode/extensions/openai.chatgpt-26.1007.21434-darwin-arm64/bin/macos-aarch64/rg",
             "/Users/tester/.vscode/extensions/openai.chatgpt-26.1007.21434-darwin-arm64/bin/codex",
         ] {
-            assert_eq!(states(&[rec(UID, path)]), [0, 0, 0], "{path}");
+            assert_eq!(states(&[rec(UID, path)]), [0, 0, 0, 0, 0], "{path}");
         }
     }
 
@@ -852,7 +996,7 @@ mod tests {
                 rec(UID, "/Applications/T3 Code (Alpha).app/Contents/MacOS/T3 Code (Alpha)"),
                 rec(UID, "/Applications/T3 Code (Alpha).app/Contents/Resources/resource-monitor/t3-resource-monitor"),
             ]),
-            [0, 0, 0]
+            [0, 0, 0, 0, 0]
         );
         assert_eq!(
             states(&[
@@ -866,7 +1010,7 @@ mod tests {
                 ),
                 rec(UID, "/opt/homebrew/Caskroom/codex/0.162.1/bin/codex"),
             ]),
-            [1, 1, 0]
+            [1, 1, 0, 0, 0]
         );
     }
 
@@ -911,7 +1055,7 @@ mod tests {
             "/opt/homebrew/Caskroom/codex/0.155.1/bin/codex/extra",
             "/opt/homebrew/Caskroom/claude-code@latest/2.1.280/claude-other",
         ] {
-            assert_eq!(states(&[rec(UID, path)]), [0, 0, 0], "{path}");
+            assert_eq!(states(&[rec(UID, path)]), [0, 0, 0, 0, 0], "{path}");
         }
     }
 
@@ -929,20 +1073,23 @@ mod tests {
             "/Users/tester/.grok/bin/grok/child",
             "/Users/other/.grok/bin/grok",
         ] {
-            assert_eq!(states(&[rec(UID, path)]), [0, 0, 0], "{path}");
+            assert_eq!(states(&[rec(UID, path)]), [0, 0, 0, 0, 0], "{path}");
         }
         assert_eq!(
             states(&[rec(UID, "/Users/tester/.grok/bin/grok")]),
-            [0, 0, 1]
+            [0, 0, 1, 0, 0]
         );
     }
 
     #[test]
     fn another_users_process_on_an_allowlisted_path_does_not_count() {
         let path = "/opt/homebrew/Caskroom/codex/0.155.1/bin/codex";
-        assert_eq!(states(&[rec(UID + 1, path)]), [0, 0, 0]);
-        assert_eq!(states(&[rec(0, path)]), [0, 0, 0]);
-        assert_eq!(states(&[rec(UID + 1, path), rec(UID, path)]), [1, 0, 0]);
+        assert_eq!(states(&[rec(UID + 1, path)]), [0, 0, 0, 0, 0]);
+        assert_eq!(states(&[rec(0, path)]), [0, 0, 0, 0, 0]);
+        assert_eq!(
+            states(&[rec(UID + 1, path), rec(UID, path)]),
+            [1, 0, 0, 0, 0]
+        );
     }
 
     #[test]
@@ -950,10 +1097,13 @@ mod tests {
         // The collector resolves symlinks; the classifier sees the target.
         assert_eq!(
             states(&[rec(UID, "/opt/homebrew/Caskroom/codex/0.155.1/bin/codex")]),
-            [1, 0, 0]
+            [1, 0, 0, 0, 0]
         );
         // The unresolved link path is not on the allowlist.
-        assert_eq!(states(&[rec(UID, "/opt/homebrew/bin/codex")]), [0, 0, 0]);
+        assert_eq!(
+            states(&[rec(UID, "/opt/homebrew/bin/codex")]),
+            [0, 0, 0, 0, 0]
+        );
     }
 
     #[test]
@@ -1006,18 +1156,18 @@ mod tests {
     fn bundle_helpers_count_only_inside_the_bundle_root() {
         assert_eq!(
             states(&[rec(UID, "/Applications/Claude.app/Contents/MacOS/Claude")]),
-            [0, 1, 0]
+            [0, 1, 0, 0, 0]
         );
         assert_eq!(
             states(&[rec(
                 UID,
                 "/Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper"
             )]),
-            [0, 1, 0]
+            [0, 1, 0, 0, 0]
         );
         assert_eq!(
             states(&[rec(UID, "/Applications/Codex.app/Contents/MacOS/Codex")]),
-            [1, 0, 0]
+            [1, 0, 0, 0, 0]
         );
         for path in [
             "/Applications/Claude.app",
@@ -1029,7 +1179,7 @@ mod tests {
             "/Users/tester/Downloads/Claude.app/Contents/MacOS/Claude",
             "/Applications/Claude.app/Contents/../../../tmp/evil",
         ] {
-            assert_eq!(states(&[rec(UID, path)]), [0, 0, 0], "{path}");
+            assert_eq!(states(&[rec(UID, path)]), [0, 0, 0, 0, 0], "{path}");
         }
     }
 
@@ -1039,7 +1189,7 @@ mod tests {
         let claude = "/opt/homebrew/Caskroom/claude-code@latest/2.1.280/claude";
         assert_eq!(
             states(&[rec(UID, codex), rec(UID, codex), rec(UID, codex)]),
-            [1, 0, 0]
+            [1, 0, 0, 0, 0]
         );
         assert_eq!(
             states(&[
@@ -1048,13 +1198,13 @@ mod tests {
                 rec(UID, codex),
                 rec(UID, claude),
             ]),
-            [1, 1, 0]
+            [1, 1, 0, 0, 0]
         );
     }
 
     #[test]
     fn zero_processes_is_all_not_running() {
-        assert_eq!(states(&[]), [0, 0, 0]);
+        assert_eq!(states(&[]), [0, 0, 0, 0, 0]);
     }
 
     #[test]
@@ -1073,7 +1223,7 @@ mod tests {
 
     #[test]
     fn the_allowlist_is_small_and_every_agent_has_an_entry() {
-        assert!(ALLOWLIST.len() <= 16);
+        assert!(ALLOWLIST.len() <= 20);
         for agent in AGENTS {
             assert!(ALLOWLIST.iter().any(|e| e.agent == agent));
         }

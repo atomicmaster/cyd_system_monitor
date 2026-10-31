@@ -167,7 +167,7 @@ First pairing needs a touch on the display within 60 s; see `docs/tickets/TB02.m
 
 ## Agent activity: Claude Code hooks
 
-The Agents bar shows Codex and Grok Build busy or idle from their CPU use.
+The Agents bar shows Codex, Grok Build, Gemini and OpenCode busy or idle from their CPU use.
 Claude Code's comes from its hooks, which call `cyd-host agent-event claude
 busy|idle` (see [agent-integrations.md](agent-integrations.md#busy-and-idle-claude-code-hooks)).
 Build the CLI with `cd host && cargo build --release`, then add to

@@ -12,10 +12,20 @@ namespace {
 using firmware::domain::AgentActivity;
 
 constexpr int32_t kContentWidth = 308;  // the 312 px Overview row less 2 px padding each side
-constexpr uint32_t kBeatMs = 300;       // half a dance step / cursor blink
-constexpr uint32_t kRockMs = 420;       // the Grok mark's swing to one side
+constexpr int32_t kSlotCount = static_cast<int32_t>(cyd::protocol::kAgentSlots);
+constexpr uint32_t kBeatMs = 300;  // half a dance step / cursor blink
+constexpr uint32_t kRockMs = 420;  // the Grok mark's swing to one side
 constexpr int32_t kRockTenthsOfDegree = 150;
 constexpr uint32_t kDimAnimationMs = 300;
+
+// Where a wire slot sits on the bar, counted from the left.
+int32_t VisualPosition(size_t slot) {
+  const auto& order = firmware::domain::kAgentVisualOrder;
+  for (size_t position = 0; position < order.size(); ++position) {
+    if (order[position] == slot) return static_cast<int32_t>(position);
+  }
+  return static_cast<int32_t>(slot);
+}
 
 void SetOpacity(void* object, int32_t value) {
   lv_obj_set_style_opa(static_cast<lv_obj_t*>(object), static_cast<lv_opa_t>(value), 0);
@@ -71,9 +81,11 @@ AgentsBar::AgentsBar(lv_obj_t* parent, int32_t width, int32_t height) {
     lv_image_set_src(image, &mascots::Image(slot));
     lv_obj_set_user_data(image, reinterpret_cast<void*>(static_cast<uintptr_t>(slot)));
     lv_obj_set_style_image_recolor_opa(image, LV_OPA_COVER, 0);
-    // Each mascot centred in its own third of the bar, so none moves when
-    // another starts or stops.
-    const int32_t centre = static_cast<int32_t>(2 * slot + 1) * kContentWidth / 6;
+    // Each mascot centred in its own fifth of the bar, left to right in the
+    // visual order (not the wire order), so none moves when another starts or
+    // stops. The largest mascot (32 px) fits a fifth (61 px) unscaled.
+    const int32_t position = VisualPosition(slot);
+    const int32_t centre = (2 * position + 1) * kContentWidth / (2 * kSlotCount);
     lv_obj_align(image, LV_ALIGN_LEFT_MID,
                  centre - static_cast<int32_t>(mascots::Image(slot).header.w) / 2, 0);
     lv_obj_add_flag(image, LV_OBJ_FLAG_HIDDEN);
@@ -114,7 +126,7 @@ void AgentsBar::Set(size_t slot, State state) {
   lv_obj_set_style_image_recolor(
       image, theme::Color(state == State::kSilhouette ? theme::kTrack : mascots::Color(slot)), 0);
   if (state != State::kBusy) return;
-  if (slot == 2) {
+  if (slot == firmware::domain::kSlotGrok) {
     Loop(image, SetRock, -kRockTenthsOfDegree, kRockTenthsOfDegree, kRockMs);
   } else {
     Loop(image, SetFrame, 0, 100, kBeatMs);

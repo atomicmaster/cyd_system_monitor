@@ -36,7 +36,7 @@ struct State {
     ram: Option<(u64, u64)>,
     storage: Option<[u64; 4]>,
     battery: Option<[u64; 4]>,
-    agents: Option<[u64; 4]>,
+    agents: Option<[u64; 6]>,
     network: Option<[u64; 8]>,
     code: Option<u32>,
 }
@@ -530,7 +530,7 @@ fn an_agents_group_reaches_the_firmware_state_and_unavailable_is_not_none_runnin
     let agents = AgentsSnapshot {
         availability: Availability::Available,
         source_age_ms: 250,
-        state: [0, 1, 0],
+        state: [0, 1, 0, 1, 0],
     };
     let frame = client
         .snapshot(
@@ -542,12 +542,12 @@ fn an_agents_group_reaches_the_firmware_state_and_unavailable_is_not_none_runnin
         )
         .unwrap();
     let (_, state) = device.push(&frame);
-    assert_eq!(state.agents, Some([0, 0, 1, 0]));
+    assert_eq!(state.agents, Some([0, 0, 1, 0, 1, 0]));
 
     let down = AgentsSnapshot {
         availability: Availability::TemporarilyUnavailable,
         source_age_ms: 0,
-        state: [0, 0, 0],
+        state: [0; 5],
     };
     let frame = client
         .snapshot(
@@ -559,7 +559,7 @@ fn an_agents_group_reaches_the_firmware_state_and_unavailable_is_not_none_runnin
         )
         .unwrap();
     let (_, state) = device.push(&frame);
-    assert_eq!(state.agents, Some([3, 0, 0, 0]));
+    assert_eq!(state.agents, Some([3, 0, 0, 0, 0, 0]));
 }
 
 #[test]

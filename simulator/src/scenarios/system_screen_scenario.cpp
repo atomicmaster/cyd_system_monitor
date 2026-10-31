@@ -641,7 +641,7 @@ int RunSystemScreen() {
                   "every Network value and note variant fits (fresh and Last)");
   }
 
-  // The Agents bar: every combination of the three agents' wire states, fresh
+  // The Agents bar: every combination of the five agents' wire states, fresh
   // and Last, plus each unavailable wording, fits the bar; and each state has
   // its own look, whose animation stops when the reading is retained.
   {
@@ -661,19 +661,17 @@ int RunSystemScreen() {
       }
     };
     for (const uint32_t age : {0u, 20'000u}) {
-      for (uint8_t a = 0; a < 4; ++a) {
-        for (uint8_t b = 0; b < 4; ++b) {
-          for (uint8_t c = 0; c < 4; ++c) {
-            proto::AgentsSnapshot g;
-            g.availability = proto::Availability::kAvailable;
-            g.source_age_ms = age;
-            g.state = {static_cast<proto::AgentState>(a), static_cast<proto::AgentState>(b),
-                       static_cast<proto::AgentState>(c)};
-            overview.Push(2'000'000, {.agents = g});
-            overview.Render(2'000'000);
-            measure();
-          }
+      // 4^5 combinations: one base-4 digit per wire slot.
+      for (unsigned combination = 0; combination < 1024; ++combination) {
+        proto::AgentsSnapshot g;
+        g.availability = proto::Availability::kAvailable;
+        g.source_age_ms = age;
+        for (size_t slot = 0; slot < proto::kAgentSlots; ++slot) {
+          g.state[slot] = static_cast<proto::AgentState>((combination >> (2 * slot)) & 3);
         }
+        overview.Push(2'000'000, {.agents = g});
+        overview.Render(2'000'000);
+        measure();
       }
     }
     for (uint8_t availability = 1; availability <= 4; ++availability) {
@@ -682,25 +680,42 @@ int RunSystemScreen() {
       overview.Push(2'000'000, {.agents = g});
       overview.Render(2'000'000);
       measure();
-      result.Expect(Has(bar.message_label(), "--") && !bar.mascot_visible(0) &&
-                        !bar.mascot_visible(1) && !bar.mascot_visible(2),
+      bool any_visible = false;
+      for (size_t slot = 0; slot < proto::kAgentSlots; ++slot) {
+        any_visible = any_visible || bar.mascot_visible(slot);
+      }
+      result.Expect(Has(bar.message_label(), "--") && !any_visible,
                     "an unavailable process listing is -- with its cause and no mascots, never "
                     "silhouettes that read as nothing running");
     }
-    result.Expect(variants == 132 && fits, "every Agents bar variant fits (fresh and Last)");
+    result.Expect(variants == 2052 && fits, "every Agents bar variant fits (fresh and Last)");
 
     proto::AgentsSnapshot mixed;
     mixed.availability = proto::Availability::kAvailable;
-    mixed.state = {proto::AgentState::kBusy, proto::AgentState::kRunning, proto::AgentState::kIdle};
+    mixed.state = {proto::AgentState::kBusy, proto::AgentState::kRunning, proto::AgentState::kIdle,
+                   proto::AgentState::kBusy, proto::AgentState::kRunning};
     overview.Push(2'100'000, {.agents = mixed});
     overview.Render(2'100'000);
     result.Expect(bar.lit(0) && bar.animating(0), "a busy agent's mascot is lit and animated");
     result.Expect(bar.lit(1) && !bar.animating(1),
                   "an agent of unknown activity is lit and still, never shown busy");
     result.Expect(bar.lit(2) && !bar.animating(2), "an idle agent is lit and still");
+    result.Expect(bar.lit(3) && bar.animating(3), "a busy Gemini sparkle is lit and twinkling");
+    result.Expect(bar.lit(4) && !bar.animating(4),
+                  "an OpenCode of unknown activity is lit and still");
+    {
+      // Left to right: Codex, Claude, Gemini (wire slot 3), Grok (2), OpenCode (4).
+      lv_obj_update_layout(bar.root());
+      const auto centre = [&](size_t slot) {
+        return lv_obj_get_x(bar.mascot(slot)) + lv_obj_get_width(bar.mascot(slot)) / 2;
+      };
+      result.Expect(centre(0) < centre(1) && centre(1) < centre(3) && centre(3) < centre(2) &&
+                        centre(2) < centre(4),
+                    "the mascots sit left to right Codex, Claude, Gemini, Grok, OpenCode");
+    }
     overview.Render(2'104'000);  // 4 s without a frame: link stale
     result.Expect(bar.dimmed() && Has(bar.message_label(), "Last") && bar.lit(0) && bar.lit(1) &&
-                      !bar.animating(0),
+                      bar.lit(3) && !bar.animating(0) && !bar.animating(3),
                   "a retained reading keeps its mascots lit, labelled Last, every one still");
     proto::AgentsSnapshot none;
     none.availability = proto::Availability::kAvailable;
@@ -708,7 +723,8 @@ int RunSystemScreen() {
     overview.Render(2'110'000);
     result.Expect(lv_obj_has_flag(bar.message_label(), LV_OBJ_FLAG_HIDDEN) &&
                       bar.mascot_visible(0) && bar.mascot_visible(1) && bar.mascot_visible(2) &&
-                      !bar.lit(0) && !bar.lit(1) && !bar.lit(2) && !bar.dimmed(),
+                      bar.mascot_visible(3) && bar.mascot_visible(4) && !bar.lit(0) &&
+                      !bar.lit(1) && !bar.lit(2) && !bar.lit(3) && !bar.lit(4) && !bar.dimmed(),
                   "with nothing running every mascot is a dim silhouette, with no words");
     overview.Render(2'110'000, {}, "Incompatible protocol: Host data rejected");
     std::string why;

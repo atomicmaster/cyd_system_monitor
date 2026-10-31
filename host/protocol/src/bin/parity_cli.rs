@@ -101,8 +101,14 @@ fn summary(result: &Result<Decoded, String>) -> String {
             }
             if let Some(g) = &snapshot.agents {
                 text += &format!(
-                    ";agents={},{},{},{},{}",
-                    g.availability as u8, g.source_age_ms, g.state[0], g.state[1], g.state[2]
+                    ";agents={},{},{},{},{},{},{}",
+                    g.availability as u8,
+                    g.source_age_ms,
+                    g.state[0],
+                    g.state[1],
+                    g.state[2],
+                    g.state[3],
+                    g.state[4]
                 );
             }
             if let Some(g) = &snapshot.network {

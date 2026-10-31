@@ -6,18 +6,28 @@ Claude running, no activity source
   message="" | 1:claude (unknown) | dimmed=0
 Codex and Claude running, no activity source
   message="" | 0:codex (unknown) | 1:claude (unknown) | dimmed=0
-all three running, no activity source
+Codex, Claude and Grok running, no activity source
   message="" | 0:codex (unknown) | 1:claude (unknown) | 2:grok (unknown) | dimmed=0
+Gemini running, no activity source
+  message="" | 3:gemini (unknown) | dimmed=0
+OpenCode running, no activity source
+  message="" | 4:opencode (unknown) | dimmed=0
+all five running, no activity source
+  message="" | 0:codex (unknown) | 1:claude (unknown) | 2:grok (unknown) | 3:gemini (unknown) | 4:opencode (unknown) | dimmed=0
 process listing temporarily unavailable
   message="-- Unavailable" | dimmed=0
 process listing error
   message="-- Read error" | dimmed=0
-future adapter: Claude busy
+Claude busy
   message="" | 1:claude (busy) | dimmed=0
-future adapter: Grok idle
+Grok idle
   message="" | 2:grok (idle) | dimmed=0
-future adapter: busy, idle and unknown together
+busy, idle and unknown together
   message="" | 0:codex (busy) | 1:claude (idle) | 2:grok (unknown) | dimmed=0
+Gemini busy, OpenCode idle (CPU use)
+  message="" | 3:gemini (busy) | 4:opencode (idle) | dimmed=0
+all five: busy, idle, unknown, busy, unknown
+  message="" | 0:codex (busy) | 1:claude (idle) | 2:grok (unknown) | 3:gemini (busy) | 4:opencode (unknown) | dimmed=0
 source sample 14.999 s old: fresh
   message="" | 1:claude (unknown) | dimmed=0
 source sample 15 s old in a new snapshot: stale

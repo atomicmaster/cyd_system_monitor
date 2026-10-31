@@ -19,7 +19,7 @@ The macOS adapter runs in the logged-in Operator's per-user LaunchAgent. Ordinar
 | Current WiFi BSS | Optional SSID/BSSID context when the Operator grants macOS Location Services access | Public CoreWLAN | 1 s or association change |
 | Battery charge/state | Current charge and charging state, or absent on hosts without a battery | Public IOPowerSources API | 30 s or power change |
 | Battery condition | Best-effort maximum capacity and condition with source age | Defensive parsing of `system_profiler SPPowerDataType -json` | 1 h |
-| Agent Activity | Exact same-user resolved-binary-path matches for Codex, Claude, and Grok Build; activity remains unknown without an adapter signal | `libproc` plus AppKit workspace APIs | 5 s |
+| Agent Activity | Exact same-user resolved-binary-path matches for Codex, Claude, Grok Build, Gemini (`agy`), and OpenCode; activity remains unknown without an adapter signal | `libproc` plus AppKit workspace APIs | 5 s |
 
 ## V2 Apple Activity Diagnostics
 
@@ -35,7 +35,7 @@ Metric Availability uses available, unsupported, absent, temporarily unavailable
 
 ## Privacy
 
-Agent adapters inspect same-user process identities and exact resolved executable or bundle paths, never a bare process name, so an unrelated same-named binary is never mistaken for the supported agent; Grok Build's `grok` executable in particular is only recognized under its documented `~/.grok/bin` install path because Homebrew separately distributes an unrelated tool under the same bare name. Adapters do not inspect command-line arguments, which may contain secrets and do not provide trustworthy task state.
+Agent adapters inspect same-user process identities and exact resolved executable or bundle paths, never a bare process name, so an unrelated same-named binary is never mistaken for the supported agent; Grok Build's `grok` executable in particular is only recognized under its documented `~/.grok/bin` install path because Homebrew separately distributes an unrelated tool under the same bare name. Gemini's `agy` is only recognized at `~/.local/bin/agy`, and OpenCode only at its versioned Homebrew Cellar path `.../Cellar/opencode-v2/<version>/bin/opencode` (the `/opt/homebrew/bin/opencode` link resolves to it). Busy and idle for every agent but Claude come from the same CPU heuristic. Adapters do not inspect command-line arguments, which may contain secrets and do not provide trustworthy task state.
 
 macOS gates CoreWLAN SSID/BSSID behind Location Services even though the product does not need coordinates. A foreground setup surface may request this optional permission only after explaining that it enables connected-WiFi identity and stronger Alert correlation; the Operator may skip or deny it without disabling monitoring. No coordinates or movement history are collected or retained.
 

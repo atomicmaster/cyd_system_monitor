@@ -9,7 +9,7 @@ lv_color_t CardAccent(size_t index) {
 }
 
 lv_color_t AgentAccent(size_t slot) {
-  static constexpr uint32_t kAccents[] = {kCyan, kMagenta, kViolet};
+  static constexpr uint32_t kAccents[] = {kCyan, kMagenta, kViolet, kBlue, kTeal};
   return Color(kAccents[slot % (sizeof kAccents / sizeof kAccents[0])]);
 }
 

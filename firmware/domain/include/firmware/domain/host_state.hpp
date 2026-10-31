@@ -78,7 +78,7 @@ struct BatteryMetricState {
   uint16_t cycle_count = protocol::kBatteryUnknownU16;
   int64_t condition_source_time_ms = 0;
 };
-// Agents (TB07): same-user process presence for [codex, claude, grok]. The
+// Agents (TB07): same-user process presence for [codex, claude, grok, gemini, opencode]. The
 // wire carries no freshness; the device derives it from the *source* sample
 // time (received time minus the reported age): stale 15 s after the sample
 // (5 s cadence x 3). A re-sent old sample stays stale.
@@ -87,7 +87,7 @@ struct AgentsMetricState {
   bool has_data = false;
   protocol::Availability availability = protocol::Availability::kTemporarilyUnavailable;
   protocol::Freshness freshness = protocol::Freshness::kFresh;
-  // In the wire's slot order: codex, claude, grok.
+  // In the wire's slot order: codex, claude, grok, gemini, opencode.
   std::array<protocol::AgentState, protocol::kAgentSlots> state{};
   // Signed: a sample older than device uptime predates the device clock.
   int64_t source_time_ms = 0;

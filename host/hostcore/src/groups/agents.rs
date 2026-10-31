@@ -4,7 +4,7 @@
 
 use metrics::Collector;
 use platform_macos::agents::{AgentsCollector, AgentsReading};
-use protocol::{AgentsSnapshot, Availability, Snapshot};
+use protocol::{AgentsSnapshot, Availability, Snapshot, AGENT_SLOTS};
 
 use super::{without_value, Group, Report};
 
@@ -13,8 +13,13 @@ impl Group for AgentsCollector {
         let agents = agents_snapshot(self.collect(now_ms));
         report.status("agents", agents.availability);
         report.line(format!(
-            "agents {:?}: codex {} claude {} grok {}",
-            agents.availability, agents.state[0], agents.state[1], agents.state[2]
+            "agents {:?}: codex {} claude {} gemini {} grok {} opencode {}",
+            agents.availability,
+            agents.state[0],
+            agents.state[1],
+            agents.state[3],
+            agents.state[2],
+            agents.state[4]
         ));
         snapshot.agents = Some(agents);
     }
@@ -37,7 +42,7 @@ fn agents_snapshot(sample: metrics::MetricSample<AgentsReading>) -> AgentsSnapsh
         None => AgentsSnapshot {
             availability: without_value(sample.availability),
             source_age_ms: 0,
-            state: [0; 3],
+            state: [0; AGENT_SLOTS],
         },
     }
 }
@@ -55,15 +60,17 @@ mod tests {
                 AgentState::NotRunning,
                 AgentState::RunningActivityUnknown,
                 AgentState::NotRunning,
+                AgentState::Busy,
+                AgentState::Idle,
             ],
             age_ms: 1_200,
         }));
         assert_eq!(g.availability, Availability::Available);
-        assert_eq!((g.state, g.source_age_ms), ([0, 1, 0], 1_200));
+        assert_eq!((g.state, g.source_age_ms), ([0, 1, 0, 2, 3], 1_200));
         let down = agents_snapshot(metrics::MetricSample::unavailable(
             MetricAvailability::TemporarilyUnavailable,
         ));
         assert_eq!(down.availability, Availability::TemporarilyUnavailable);
-        assert_eq!((down.state, down.source_age_ms), ([0; 3], 0));
+        assert_eq!((down.state, down.source_age_ms), ([0; AGENT_SLOTS], 0));
     }
 }

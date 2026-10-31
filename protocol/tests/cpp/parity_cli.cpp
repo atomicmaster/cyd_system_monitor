@@ -84,7 +84,9 @@ std::string Body(const p::Decoded &d) {
       out << ";agents=" << static_cast<int>(g.availability) << ','
           << g.source_age_ms << ',' << static_cast<int>(g.state[0]) << ','
           << static_cast<int>(g.state[1]) << ','
-          << static_cast<int>(g.state[2]);
+          << static_cast<int>(g.state[2]) << ','
+          << static_cast<int>(g.state[3]) << ','
+          << static_cast<int>(g.state[4]);
     }
     if (d.groups.network) {
       const auto &g = *d.groups.network;

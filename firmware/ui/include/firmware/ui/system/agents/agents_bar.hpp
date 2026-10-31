@@ -11,12 +11,13 @@
 
 namespace firmware::ui::system {
 
-// The Overview's bottom bar: each agent's mascot in its own third of the bar,
-// in a fixed place, with three states:
+// The Overview's bottom bar: each agent's mascot in its own fifth of the bar,
+// in a fixed place, left to right Codex, Claude, Gemini, Grok, OpenCode, with three states:
 //   not running        a dim silhouette;
 //   running or idle    the mascot in its own colour, still;
-//   busy               animated (the crab dances, Codex's cursor blinks, the
-//                      Grok mark rocks).
+//   busy               animated (the crab dances, Codex's cursor and
+//                      OpenCode's inner block blink, Gemini's sparkle twinkles,
+//                      the Grok mark rocks).
 // A dimmed bar is a retained reading, labelled "Last", and every mascot stops
 // (docs/ui-design.md: animations decay to neutral when stale). When there is
 // no reading ("--" and its cause) no mascot is drawn, so it never reads as
@@ -35,7 +36,7 @@ class AgentsBar {
   lv_obj_t* message_label() const { return message_label_; }
   lv_obj_t* notice_label() const { return notice_label_; }
   bool dimmed() const { return dimmed_; }
-  // Per wire slot (codex, claude, grok).
+  // Per wire slot (codex, claude, grok, gemini, opencode).
   lv_obj_t* mascot(size_t slot) const { return mascots_[slot].image; }
   bool mascot_visible(size_t slot) const;
   // Drawn in its own colour (running), not as a silhouette or hidden.

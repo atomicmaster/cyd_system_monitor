@@ -32,16 +32,19 @@ inline constexpr uint32_t kRateFirst = kPink;
 inline constexpr uint32_t kRateSecond = kCyan;
 // The agent mascots keep their own colours: Claude Code's terracotta crab
 // (the one deliberate orange outside Alerts, always with its shape) and the
-// monochrome Codex and Grok marks.
+// monochrome Codex, Grok and OpenCode marks. Gemini is its own blue (not one
+// of the reserved Alert colours).
 inline constexpr uint32_t kMascotCodex = 0xF2F4FA;
 inline constexpr uint32_t kMascotClaude = 0xD77757;
 inline constexpr uint32_t kMascotGrok = 0xE8EBF7;
+inline constexpr uint32_t kMascotGemini = 0x8AB4F8;
+inline constexpr uint32_t kMascotOpenCode = 0xD8DCE8;
 
 inline lv_color_t Color(uint32_t hex) { return lv_color_hex(hex); }
 
 // The accent of the Overview card at `index` in registry order.
 lv_color_t CardAccent(size_t index);
-// The accent of an agent by wire slot (codex, claude, grok).
+// The accent of an agent by wire slot (codex, claude, grok, gemini, opencode).
 lv_color_t AgentAccent(size_t slot);
 
 // A rounded panel on the navy screen: panel fill, 1 px border, no scrolling.

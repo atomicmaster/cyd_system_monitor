@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -13,9 +14,23 @@ namespace firmware::domain {
 // running agent is kUnknown; busy and idle need an activity adapter.
 enum class AgentActivity : uint8_t { kUnknown, kBusy, kIdle };
 
+// The wire slots, in the order the Host sends them (codex, claude and grok
+// keep the slots they had; gemini and opencode were appended).
+inline constexpr uint8_t kSlotCodex = 0;
+inline constexpr uint8_t kSlotClaude = 1;
+inline constexpr uint8_t kSlotGrok = 2;
+inline constexpr uint8_t kSlotGemini = 3;
+inline constexpr uint8_t kSlotOpenCode = 4;
+
+// The slots left to right on the bar. This is not the wire order: Gemini sits
+// between Claude and Grok.
+inline constexpr std::array<uint8_t, 5> kAgentVisualOrder = {kSlotCodex, kSlotClaude, kSlotGemini,
+                                                             kSlotGrok, kSlotOpenCode};
+static_assert(kAgentVisualOrder.size() == protocol::kAgentSlots);
+
 // One running agent in the Overview's bottom bar, drawn as its mascot.
 struct AgentBadge {
-  uint8_t slot = 0;  // wire slot: 0 codex, 1 claude, 2 grok (fixed mascot per slot)
+  uint8_t slot = 0;  // wire slot (kSlot*; fixed mascot per slot)
   AgentActivity activity = AgentActivity::kUnknown;
 };
 

@@ -309,15 +309,14 @@ Error EncodeBody(const Envelope &e, const CpuSnapshot *cpu,
           return Error::kMalformed;
       }
       UInt(cbor, 0, 8);
-      Map(cbor, 5);
-      const uint64_t values[5] = {static_cast<uint8_t>(agents->availability),
-                                  agents->source_age_ms,
-                                  static_cast<uint8_t>(agents->state[0]),
-                                  static_cast<uint8_t>(agents->state[1]),
-                                  static_cast<uint8_t>(agents->state[2])};
-      for (uint64_t key = 0; key < 5; ++key) {
-        UInt(cbor, 0, key);
-        UInt(cbor, 0, values[key]);
+      Map(cbor, 2 + kAgentSlots);
+      UInt(cbor, 0, 0);
+      UInt(cbor, 0, static_cast<uint8_t>(agents->availability));
+      UInt(cbor, 0, 1);
+      UInt(cbor, 0, agents->source_age_ms);
+      for (std::size_t slot = 0; slot < kAgentSlots; ++slot) {
+        UInt(cbor, 0, 2 + slot);
+        UInt(cbor, 0, static_cast<uint8_t>(agents->state[slot]));
       }
     }
     if (network) {
@@ -632,19 +631,21 @@ bool ReadBatteryGroup(std::span<const uint8_t> c, std::size_t *p,
   battery->condition_age_ms = static_cast<uint32_t>(value[9]);
   return true;
 }
-// The Agents group: five required fields, unknown extra keys skipped.
+// The Agents group: seven required fields (availability, age, five agent
+// slots), unknown extra keys skipped.
 bool ReadAgentsGroup(std::span<const uint8_t> c, std::size_t *p,
                      AgentsSnapshot *agents) {
+  constexpr std::size_t kFields = 2 + kAgentSlots;
   uint64_t count;
   if (!ReadUInt(c, p, 5, &count) || count > 16)
     return false;
-  bool seen[5] = {};
-  uint64_t value[5] = {};
+  bool seen[kFields] = {};
+  uint64_t value[kFields] = {};
   for (uint64_t i = 0; i < count; ++i) {
     uint64_t key;
     if (!ReadUInt(c, p, 0, &key))
       return false;
-    if (key > 4) {
+    if (key >= kFields) {
       if (!Skip(c, p))
         return false;
       continue;
