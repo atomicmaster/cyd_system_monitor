@@ -22,7 +22,7 @@ pub fn run_dir() -> PathBuf {
     home().join("Library/Application Support/CYD System Monitor/run")
 }
 
-/// `<run dir>/agent-events`: Claude hook events (`cyd-host agent-event`).
+/// `<run dir>/agent-events`: the agents' hook events (`cyd-host agent-event`).
 pub fn agent_events_dir() -> PathBuf {
     run_dir().join("agent-events")
 }

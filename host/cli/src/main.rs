@@ -51,8 +51,8 @@ commands:
                        --launch-agents-dir <d> (default ~/Library/LaunchAgents)
                        --log-dir <d>           (default ~/Library/Logs/CYD System
                                                Monitor)
-  agent-event claude busy|idle
-                     For Claude Code hooks: record that the Claude process
+  agent-event codex|claude|grok|gemini|opencode busy|idle
+                     For an agent's hooks: record that the agent process
                      running the hook is busy or idle (shown on the Agents bar).
                      Reads nothing from the hook's input; always exits 0.
   help               Show this message.
@@ -354,14 +354,14 @@ fn service_command(args: &[String]) -> ExitCode {
     }
 }
 
-/// The Claude Code hook entry point. It must never fail or slow the hook: any
+/// The agents' hook entry point. It must never fail or slow the hook: any
 /// problem is ignored and the exit status is always 0 (a non-zero status from a
-/// PreToolUse hook would block the tool).
+/// pre-tool hook would block the tool).
 fn agent_event(args: &[String]) -> ExitCode {
     use io::{IsTerminal, Read};
     use metrics::agents::HookActivity;
-    // Claude Code writes JSON (which can include the prompt) to stdin; drain it
-    // unread so the writer never sees a broken pipe.
+    // Agents write JSON (which can include the prompt) to a hook's stdin; drain
+    // it unread so the writer never sees a broken pipe.
     let stdin = io::stdin();
     if !stdin.is_terminal() {
         let _ = io::copy(&mut stdin.lock().take(1 << 20), &mut io::sink());
@@ -370,13 +370,21 @@ fn agent_event(args: &[String]) -> ExitCode {
         args.get(1).map(String::as_str),
         args.get(2).map(String::as_str),
     ) {
-        (Some("claude"), Some("busy")) => HookActivity::Busy,
-        (Some("claude"), Some("idle")) => HookActivity::Idle,
+        (Some(agent), Some("busy")) => (agent, HookActivity::Busy),
+        (Some(agent), Some("idle")) => (agent, HookActivity::Idle),
         _ => return ExitCode::SUCCESS,
     };
-    if let Some(pid) = platform_macos::agents::hook_caller_claude_pid() {
-        let _ =
-            platform_macos::agents::record_hook_event(&paths::agent_events_dir(), pid, activity);
+    let (agent, activity) = activity;
+    let Some(agent) = metrics::agents::Agent::from_slug(agent) else {
+        return ExitCode::SUCCESS;
+    };
+    if let Some(pid) = platform_macos::agents::hook_caller_pid(agent) {
+        let _ = platform_macos::agents::record_hook_event(
+            &paths::agent_events_dir(),
+            agent,
+            pid,
+            activity,
+        );
     }
     ExitCode::SUCCESS
 }

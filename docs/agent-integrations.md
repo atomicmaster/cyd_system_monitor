@@ -2,7 +2,7 @@
 
 # Agent integration boundary
 
-The MVP reports exact same-user process presence for supported agents, plus a CPU heuristic for busy and idle (below); `running with activity unknown` remains for a process with nothing to compare against. V2 may add separately enabled adapters that distinguish busy, idle, and bounded usage through documented local APIs, structured logs, or hooks supplied by the agent.
+The MVP reports exact same-user process presence for supported agents, and busy and idle only from activity events the agent itself reports through its hooks (below), never from CPU use. A running agent with no event source, or none reported yet, is `running with activity unknown`. V2 may add separately enabled adapters that distinguish busy, idle, and bounded usage through documented local APIs, structured logs, or hooks supplied by the agent.
 
 Each adapter declares the source, fields read, availability states, sampling rate, and retention. It does not inspect private conversation files, prompt or response contents, source contents, command arguments, or credentials. Metric Availability uses the shared available/unsupported/absent/temporarily unavailable/error states. Adapter enablement and Metric Freshness are separate fields: disabled is an adapter setting, and stale describes the age of a retained sample rather than adding another availability enum value. An adapter may report only the evidence its source supports and may not infer semantic task activity from process load alone.
 
@@ -48,17 +48,17 @@ Deliberately not recognised: `/opt/homebrew/bin/grok` and any other `grok` outsi
 
 Cost on the development Mac (437 same-user processes of about 700): a scan takes 6-17 ms (debug build), run inline on the `collect` call at most once every 5 s; the 1 s loop is otherwise a cache read.
 
-## Busy and idle: the CPU heuristic (Codex, Grok Build, Gemini, OpenCode)
+## Busy and idle: activity events (every agent)
 
-A running Codex, Grok Build, Gemini or OpenCode is **busy** when its allowlisted processes together used at least 1% of one core (`BUSY_CPU_PERMILLE`) since the previous scan, and **idle** below that. With nothing to compare against (the first scan, after a wake, or only new pids) it stays `running, activity unknown` (wire state 1). Busy is an inference from CPU use, not a report from the agent: an agent waiting quietly on a slow tool or the network can read idle, and one running a heavy tool in a child process is not counted (only the allowlisted process itself is measured).
+Busy and idle are never inferred from CPU use. An earlier CPU heuristic (busy at 1% of one core) could not tell an agent waiting on a slow tool or the network from an idle one, and Claude Code's idle CPU sat too close to its working CPU, so it was removed. Instead, each agent's own lifecycle hooks report its state through one shared channel:
 
-- **Source:** `proc_pidinfo(PROC_PIDTASKINFO)`, user + system CPU time, read only for processes already matched by the allowlist above.
-- **Fields read:** those two counters and the pid. Nothing else from the task info is used.
-- **Sampling:** the same 5 s scan as presence; the threshold is relative to the real time between scans.
-- **Retention:** only the previous scan's counters per pid, in memory; dropped on wake, so time asleep never reads as idle.
-- **Measured** on the development Mac over 20 s: idle Codex 0%, five idle Grok processes 0.3% together, a working Claude Code waiting on a tool 2.2%. Claude Code is excluded: its idle CPU (about 1%) sits too close to its working CPU (2-4% while waiting on a tool), so the crab danced while idle. Claude uses its hooks instead (below).
+- **Command:** `cyd-host agent-event <agent> busy|idle`, where `<agent>` is `codex`, `claude`, `grok`, `gemini` or `opencode`. Anything else is ignored. It drains the hook's stdin unread (the JSON an agent writes there can include the prompt) and always exits 0, so it can never block a tool or a prompt.
+- **Identity:** the command walks up its parent processes (at most eight) to the first same-user process whose resolved path is on that agent's allowlist rows. That pid is the only identity used; a hook run by anything else records nothing.
+- **Written:** `busy` or `idle` to `<run dir>/agent-events/<agent>-<pid>` (directory `0700`), atomically. Files of processes that no longer exist are removed on each write.
+- **Read:** each 5 s scan reads at most 64 files of at most 16 bytes, and only a file whose pid is a running process of that same agent counts. Its age is the file's modification time.
+- **States:** busy while any running process of the agent last reported busy; idle when its processes have reported and none is busy; `running, activity unknown` before any report (hooks not installed, or a new session without a prompt yet). A busy report older than 15 minutes with nothing since counts as idle, for a session killed mid-turn.
 
-**Gemini and OpenCode: what is and is not verified.** Only the two executables' paths and kinds were checked, by reading symlinks and file types and running `agy --help`, which starts no session. Whether a real session runs entirely in that one executable, or spawns helper or child processes from other paths, could not be checked without an interactive session. The allowlist therefore measures only the allowlisted process itself: a session whose work happens in an unlisted helper reads idle (or not running, if the main executable exits), exactly like the heavy-tool-in-a-child caveat above. Their idle and busy CPU has not been measured either; they use the same 1% threshold as Codex and Grok Build until it is.
+Each agent's adapter is the set of its hooks that call this command, listed below. An agent with no adapter yet stays `running, activity unknown` while it runs: Codex, Grok Build, Gemini and OpenCode, until their sections are added.
 
 ## Busy and idle: Claude Code hooks
 
@@ -69,11 +69,4 @@ Claude Code runs a command on lifecycle events. With the hooks below installed i
 | `UserPromptSubmit`, `PreToolUse`, `PostToolUse` | busy |
 | `Stop`, `Notification` (a permission request or a wait for input), `SessionEnd` | idle |
 
-Each hook runs `cyd-host agent-event claude busy|idle`:
-
-- **Source:** the hook command, run by Claude Code itself. It finds the Claude process that ran it by walking up its parent processes (at most eight) to the first same-user process whose resolved path is on the Claude allowlist. That pid is the only identity used.
-- **Fields read:** none from the hook. The JSON Claude Code writes to the hook's stdin (which can include the prompt) is drained unread, so the writer never sees a broken pipe.
-- **Written:** `busy` or `idle` to `<run dir>/agent-events/claude-<pid>` (directory `0700`), atomically. Files of Claude processes that no longer exist are removed on each write. The command always exits 0, so it can never block a tool or a prompt.
-- **Read:** each 5 s scan reads at most 64 files of at most 16 bytes, and only files whose pid is a running Claude process count. Their age is the file's modification time.
-- **States:** busy while any running Claude process last reported busy; idle when its processes have reported and none is busy; `running, activity unknown` before any report (hooks not installed, or a new session without a prompt yet). A busy report older than 15 minutes with nothing since counts as idle, for a session killed mid-turn.
-
+Each hook runs `cyd-host agent-event claude busy|idle` (the shared channel above). The hook JSON is never read.
