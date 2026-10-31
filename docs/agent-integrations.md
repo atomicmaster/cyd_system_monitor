@@ -71,7 +71,6 @@ Claude Code runs a command on lifecycle events. With the hooks below installed i
 
 Each hook runs `cyd-host agent-event claude busy|idle` (the shared channel above). The hook JSON is never read.
 
-
 ## Busy and idle: Codex hooks
 
 Codex supports command hooks in `~/.codex/hooks.json`. This setup targets codex-cli 0.166.0; [0.124.0 made hooks stable](https://github.com/openai/codex/releases/tag/rust-v0.124.0), but the minimum version supporting every event below has not been established. The installed CLI reports hooks as stable and enabled in `codex features list`; `codex --help` describes hook trust and `--no-daemon`. See OpenAI's [hooks documentation](https://developers.openai.com/codex/hooks) and [hook implementation](https://github.com/openai/codex/tree/rust-v0.166.0/codex-rs/hooks).
@@ -83,7 +82,7 @@ Codex supports command hooks in `~/.codex/hooks.json`. This setup targets codex-
 
 Tool hooks refresh busy when supported tools start or finish. PermissionRequest occurs before approval; automatic approval can therefore briefly report idle. There is no verified event for every wait for user input or for resuming immediately after approval, so idle can persist until the next tool or prompt event. A tool or turn lasting over 15 minutes without another event is shown idle. Before the first event the bar shows activity unknown. Concurrent turns sharing one process can overwrite each other's state.
 
-Merge the following into `~/.codex/hooks.json` (preserve existing hooks). Replace `/absolute/path/to/cyd-host` with the installed host binary's absolute path; a local debug build is `host/target/debug/cyd-host` under this checkout, after building it. Review and trust the hooks in Codex using `/hooks`.
+Merge the following into `~/.codex/hooks.json` (preserve existing hooks; inline `[[hooks.EVENT]]` tables in `~/.codex/config.toml` work too). Replace `/absolute/path/to/cyd-host` with the installed host binary's absolute path; a local debug build is `host/target/debug/cyd-host` under this checkout, after building it. Review and trust the hooks in Codex using `/hooks`.
 
 ```json
 {
@@ -99,4 +98,4 @@ Merge the following into `~/.codex/hooks.json` (preserve existing hooks). Replac
 }
 ```
 
-The channel drains hook input without reading its contents. The installed version and feature flag were checked on this Mac; hook dispatch, trust, the VS Code extension and the hook command's ancestor chain have not been verified here. In particular, a shared daemon or remote app server may not descend from an allowlisted process within eight levels, in which case no event is recorded. No new allowlist row is justified without a resolved path and process-tree evidence.
+**Verified on this Mac (codex-cli 0.166.0, `codex exec`):** with `UserPromptSubmit` and `Stop` hooks given inline (`-c 'hooks.UserPromptSubmit=[...]'`, plus `--dangerously-bypass-hook-trust` for that one invocation, with a scratch `CYD_RUN_DIR`), both hooks ran as direct children of the `codex` process (the Homebrew cask binary on the allowlist), and `cyd-host agent-event` wrote `codex-<pid>` as `busy`, then `idle`. A `hooks.json` in an untrusted scratch project did not run: project hooks need a trusted project, and every non-managed hook needs trust (`/hooks`). Not verified: the interactive TUI, `codex app-server` (how T3 Code runs Codex), the daemon `--no-daemon` refers to, and the VS Code extension. If one of them runs hooks from a process that is not a Codex allowlist row within eight parents, nothing is recorded and the bar stays `running, activity unknown`; it never reads busy by mistake.
