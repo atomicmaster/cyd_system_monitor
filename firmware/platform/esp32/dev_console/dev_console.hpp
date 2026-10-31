@@ -13,7 +13,10 @@ namespace firmware::platform::esp32::dev_console {
 // tone), and "DEV:PERIPHERAL_STATUS" (re-probes and logs MicroSD/battery/
 // BOOT-button state live). Bounded and narrow on purpose: this is not
 // TB02's real USB session/protocol, just a way to exercise/recover a
-// board before that protocol exists.
+// board before that protocol exists. TB09 adds "DEV:RADIO_STATUS" and the
+// "DEV:RADIO_WIFI_ON/OFF" and "DEV:RADIO_BLE_ON/OFF" toggles. DEV: commands are
+// not parsed once "CYD:LINK" has activated the Host link; only a reset
+// returns the console to line commands.
 void StartDevConsole();
 
 // "DEV:CPU_REPLAY" asks the UI loop to replay the scripted CPU-snapshot

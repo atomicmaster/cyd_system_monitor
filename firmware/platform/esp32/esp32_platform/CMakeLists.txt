@@ -29,7 +29,12 @@ idf_component_register(
     "../dev_console/dev_console.cpp"
     "../capacity/capacity_probe.cpp"
     "../capacity/cpu_load.cpp"
-    "../radio/controller_probe.cpp"
+    "../radio/observation_gate.cpp"
+    "../radio/hci_transport.cpp"
+    "../radio/ble_scanner.cpp"
+    "../radio/wifi_monitor.cpp"
+    "../radio/radio_driver.cpp"
+    "../radio/radio_task.cpp"
   INCLUDE_DIRS ".."
   REQUIRES domain driver esp_lcd esp_adc sdmmc fatfs esp_timer nvs_flash lvgl esp_lcd_ili9341 bt esp_wifi esp_event esp_netif
 )

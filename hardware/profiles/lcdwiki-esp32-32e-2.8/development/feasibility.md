@@ -2,6 +2,8 @@
 
 # M1a combined hardware feasibility record
 
+> **Retired in TB09.** The `controller_probe` code these records exercised, and its `DEV:HCI_STATUS`, `DEV:CHANNEL_STATUS` and `DEV:BLE_TOGGLE_STATUS` commands, were replaced by the product radio task and `DEV:RADIO_STATUS`; the evidence below is unchanged historical record ([TB09 slice 3](../../../../docs/tickets/TB09.md)).
+
 **Status: the capacity blocker is resolved, and every physical measurement
 this record's owner (F08) controls is now recorded -- CPU load, NVS and
 raw-partition write/erase rate, touch under combined radio load, WiFi

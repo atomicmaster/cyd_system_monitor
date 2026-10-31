@@ -2,6 +2,8 @@
 
 # F08 investigation: passive Wi-Fi monitor capacity
 
+> **Retired in TB09.** The `controller_probe` code these records exercised, and its `DEV:HCI_STATUS`, `DEV:CHANNEL_STATUS` and `DEV:BLE_TOGGLE_STATUS` commands, were replaced by the product radio task and `DEV:RADIO_STATUS`; the evidence below is unchanged historical record ([TB09 slice 3](../../../../docs/tickets/TB09.md)).
+
 **Status: candidate for a measured capacity probe, not a demonstrated memory
 saving.** This note applies only to the original ESP32 and ESP-IDF **v5.3.2**
 used by the `lcdwiki-esp32-32e-2.8` profile. It does not make an operational

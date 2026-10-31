@@ -7,6 +7,7 @@
 // loaded or a fresh calibration is accepted (F06). See
 // docs/tickets/F05.md/F06.md/F07.md for what remains unverified pending
 // physical hardware.
+#include <cstdio>
 #include <cstdlib>
 #include <optional>
 #include <utility>
@@ -22,12 +23,14 @@
 #include "firmware/domain/agents_bar.hpp"
 #include "firmware/domain/calibration/calibration.hpp"
 #include "firmware/domain/card_registry.hpp"
+#include "firmware/domain/coverage.hpp"
 #include "firmware/domain/cpu_replay.hpp"
 #include "firmware/domain/cpu_view.hpp"
 #include "firmware/domain/generated/profile.hpp"
 #include "firmware/domain/host_link.hpp"
 #include "firmware/domain/link_view.hpp"
 #include "firmware/domain/profile_check.hpp"
+#include "firmware/domain/radio_messages.hpp"
 #include "firmware/ui/calibration/calibration_flow.hpp"
 #include "firmware/ui/capacity/capacity_slice.hpp"
 #include "firmware/ui/diagnostic/diagnostic_screen.hpp"
@@ -38,7 +41,7 @@
 #include "nvs/calibration_store.hpp"
 #include "nvs/display_settings_store.hpp"
 #include "nvs/pairing_store.hpp"
-#include "radio/controller_probe.hpp"
+#include "radio/radio_task.hpp"
 #include "usb/host_serial.hpp"
 
 namespace {
@@ -49,6 +52,7 @@ namespace calibration = firmware::domain::calibration;
 namespace ui_calibration = firmware::ui::calibration;
 namespace ui_diagnostic = firmware::ui::diagnostic;
 namespace ui_capacity = firmware::ui::capacity;
+namespace radio = firmware::platform::esp32::radio;
 
 constexpr const char* kTag = "fw.main";
 // The single orientation the MVP supports; see firmware/domain/geometry.hpp
@@ -117,7 +121,20 @@ struct LinkSession {
 enum class PendingAction { kNone, kRecalibrate, kDebug };
 PendingAction g_pending_action = PendingAction::kNone;
 
+// The app loop's picture of the radio task, built only from its RadioMessages
+// (kConfigApplied, kWindowStarted, kWindowReport, kFault, kFaultCleared). The
+// radio subsystem runs on its own from boot, so this is fed on every loop
+// iteration whichever screen is shown and whether or not a Host is linked.
+struct RadioApp {
+  firmware::domain::ObservationConfig config;  // the effective config; default until announced
+  uint32_t generation = 0;
+  std::optional<firmware::domain::ActiveWindow> active;
+  std::optional<firmware::domain::WindowReport> last;
+  firmware::domain::CoverageLedger ledger;
+};
+
 AppState g_app;
+RadioApp g_radio;
 std::optional<CpuReplaySession> g_cpu_replay;
 std::optional<LinkSession> g_link;
 
@@ -347,6 +364,61 @@ void PumpLinkTransport() {
   }
 }
 
+// Copies the radio view for the dev console, which reads it from its own task.
+void PublishRadioView() {
+  namespace domain = firmware::domain;
+  radio::AppView view;
+  view.config = domain::ToConfigApplied(g_radio.generation, g_radio.config);
+  view.has_active = g_radio.active.has_value();
+  if (view.has_active) view.active = *g_radio.active;
+  view.has_last = g_radio.last.has_value();
+  if (view.has_last) view.last = *g_radio.last;
+  for (const domain::Radio which : {domain::Radio::kWifi, domain::Radio::kBle}) {
+    const size_t i = which == domain::Radio::kWifi ? 0 : 1;
+    view.totals[i] = g_radio.ledger.totals(which);
+    std::snprintf(view.fault[i], sizeof(view.fault[i]), "%s", g_radio.ledger.fault(which).c_str());
+  }
+  radio::PublishAppView(view);
+}
+
+// Drains the radio task's messages. Bounded per call so a burst cannot hold the
+// loop; the queue is sized for a multi-second stall.
+void PumpRadio() {
+  namespace domain = firmware::domain;
+  constexpr int kMaxMessagesPerPump = 32;
+  bool changed = false;
+  domain::RadioMessage message;
+  for (int i = 0; i < kMaxMessagesPerPump && radio::ReceiveMessage(message); ++i) {
+    changed = true;
+    switch (message.kind) {
+      case domain::RadioMessageKind::kConfigApplied:
+        g_radio.config = domain::ToObservationConfig(message.config);
+        g_radio.generation = message.config.config_generation;
+        break;
+      case domain::RadioMessageKind::kWindowStarted:
+        g_radio.active = domain::ActiveWindow{
+            message.started.radio, message.started.channel, message.started.window_id,
+            message.started.rx_start_ms, message.started.planned_ms};
+        break;
+      case domain::RadioMessageKind::kWindowReport:
+        g_radio.ledger.Record(message.report);
+        g_radio.last = message.report;
+        if (g_radio.active && g_radio.active->window_id == message.report.window_id) {
+          g_radio.active.reset();
+        }
+        break;
+      case domain::RadioMessageKind::kFault:
+        g_radio.ledger.SetFault(message.fault.radio,
+                                domain::FaultText(message.fault.op, message.fault.code));
+        break;
+      case domain::RadioMessageKind::kFaultCleared:
+        g_radio.ledger.ClearFault(message.cleared_radio);
+        break;
+    }
+  }
+  if (changed) PublishRadioView();
+}
+
 void DrawMonitor() {
   const int64_t now_us = esp_timer_get_time();
   if (g_link->screen.has_value() && now_us - g_link->last_draw_us >= 100'000) {
@@ -358,7 +430,9 @@ void DrawMonitor() {
     g_link->screen->Update(firmware::domain::MakeCpuView(state, now_ms, g_link->screen->settings()),
                            cards,
                            firmware::domain::MakeLinkView(g_link->link, g_link->link.paired()),
-                           firmware::domain::MakeAgentsBar(state, now_ms));
+                           firmware::domain::MakeAgentsBar(state, now_ms),
+                           firmware::domain::CoverageStatusText(firmware::domain::MakeCoverageView(
+                               g_radio.config, g_radio.ledger, now_ms, g_radio.active)));
   }
 }
 
@@ -491,7 +565,9 @@ extern "C" void app_main(void) {
   firmware::platform::esp32::capacity::RegisterTask("main", xTaskGetCurrentTaskHandle());
 
   g_app.diagnostic_state = board::InitBoard(g_app.board);
-  firmware::platform::esp32::radio::StartControllerOnlyProbe();
+  // Asynchronous: creates the radio and HCI tasks and returns. WiFi/BLE bring-up
+  // happens on the radio task and a failure there faults that radio only.
+  radio::StartRadio();
 
   // lv_indev_create() binds the new device to lv_display_get_default() at
   // the moment it's called -- created before InitBoard() (which is where
@@ -568,6 +644,7 @@ extern "C" void app_main(void) {
   for (;;) {
     PumpTouch();
     PumpCpuReplay();
+    PumpRadio();
     PumpLink();
     PumpTouchDiagnostics();
     const uint32_t sleep_ms = lv_timer_handler();

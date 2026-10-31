@@ -22,14 +22,16 @@
 #include "esp_partition.h"
 #include "esp_timer.h"
 #include "expansion/expansion.hpp"
+#include "firmware/domain/coverage.hpp"
 #include "firmware/domain/generated/profile.hpp"
+#include "firmware/domain/radio_runner.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "led/led.hpp"
 #include "microsd/microsd.hpp"
 #include "nvs/calibration_store.hpp"
 #include "nvs/pairing_store.hpp"
-#include "radio/controller_probe.hpp"
+#include "radio/radio_task.hpp"
 #include "usb/host_serial.hpp"
 
 namespace firmware::platform::esp32::dev_console {
@@ -244,65 +246,138 @@ void RunPartitionWriteTest() {
   esp_partition_erase_range(partition, 0, kSectorBytes);
 }
 
-void RunControllerProbeStatus() {
-  const auto status = firmware::platform::esp32::radio::ReadControllerProbeStatus();
-  ESP_LOGI(kTag,
-           "DEV:HCI_STATUS: enabled=%d scan_enabled=%d commands_sent=%lu command_failures=%lu "
-           "advertising_reports=%lu wifi_management_frames=%lu malformed_events=%lu "
-           "dropped_events=%lu",
-           status.enabled, status.scan_enabled, static_cast<unsigned long>(status.commands_sent),
-           static_cast<unsigned long>(status.command_failures),
-           static_cast<unsigned long>(status.advertising_reports),
-           static_cast<unsigned long>(status.wifi_management_frames),
-           static_cast<unsigned long>(status.malformed_events),
-           static_cast<unsigned long>(status.dropped_events));
+const char* WindowEndName(firmware::domain::WindowEnd end) {
+  switch (end) {
+    case firmware::domain::WindowEnd::kCompleted:
+      return "completed";
+    case firmware::domain::WindowEnd::kConfigurationChanged:
+      return "config-changed";
+    case firmware::domain::WindowEnd::kDriverFault:
+      return "driver-fault";
+  }
+  return "?";
 }
 
-// F08 Work item 2: on-demand summary of the WiFi channel-hop probe
-// (ChannelHopTask in controller_probe.cpp) -- switch count and
-// last/max/average switch duration, alongside the current channel. The
-// per-switch trace (channel, duration, and running BLE/WiFi counters at
-// that instant) is logged directly by the hop task itself as it happens;
-// this command is only the cumulative summary, not a replacement for that
-// trace.
-void RunChannelStatus() {
-  const auto status = firmware::platform::esp32::radio::ReadControllerProbeStatus();
-  const uint64_t average_us = status.channel_switch_count > 0
-                                  ? status.total_switch_duration_us / status.channel_switch_count
-                                  : 0;
+// TB09: the radio subsystem's state in one place. The console task never
+// touches app-loop state: the effective config, windows and ledger totals come
+// from the copy the app loop publishes (radio::PublishAppView), and the counters
+// from the radio side's own thread-safe reads.
+void RunRadioStatus() {
+  namespace domain = firmware::domain;
+  const auto view = radio::ReadAppView();
+  const auto status = radio::ReadStatus();
+
+  ESP_LOGI(kTag, "DEV:RADIO_STATUS: started=%d wifi_init=%s(%ld) ble_init=%s(%ld)", status.started,
+           status.wifi_init_ok ? "ok" : "FAILED", static_cast<long>(status.wifi_init_code),
+           status.ble_init_ok ? "ok" : "FAILED", static_cast<long>(status.ble_init_code));
+
+  char channels[domain::kMaxPlanChannels * 3 + 1] = "";
+  size_t used = 0;
+  for (uint8_t i = 0; i < view.config.channel_count && used + 4 < sizeof(channels); ++i) {
+    used += static_cast<size_t>(std::snprintf(channels + used, sizeof(channels) - used, "%s%u",
+                                              i == 0 ? "" : ",",
+                                              static_cast<unsigned>(view.config.channels[i])));
+  }
   ESP_LOGI(kTag,
-           "DEV:CHANNEL_STATUS: current_channel=%u switch_count=%lu last_switch_duration_us=%lu "
-           "max_switch_duration_us=%lu average_switch_duration_us=%llu beacon_frames_total=%lu",
-           status.current_channel, static_cast<unsigned long>(status.channel_switch_count),
-           static_cast<unsigned long>(status.last_switch_duration_us),
-           static_cast<unsigned long>(status.max_switch_duration_us),
-           static_cast<unsigned long long>(average_us),
-           static_cast<unsigned long>(status.beacon_frames));
+           "DEV:RADIO_STATUS: config generation=%lu wifi=%s ble=%s wifi_dwell_ms=%lu "
+           "ble_window_ms=%lu channels=[%s]",
+           static_cast<unsigned long>(view.config.config_generation),
+           view.config.wifi_enabled ? "on" : "off", view.config.ble_enabled ? "on" : "off",
+           static_cast<unsigned long>(view.config.wifi_dwell_ms),
+           static_cast<unsigned long>(view.config.ble_window_ms), channels);
+
+  if (view.has_active) {
+    ESP_LOGI(kTag,
+             "DEV:RADIO_STATUS: active window id=%lu radio=%s channel=%u rx_start_ms=%llu "
+             "planned_ms=%lu",
+             static_cast<unsigned long>(view.active.window_id),
+             view.active.radio == domain::Radio::kWifi ? "wifi" : "ble",
+             static_cast<unsigned>(view.active.channel),
+             static_cast<unsigned long long>(view.active.rx_start_ms),
+             static_cast<unsigned long>(view.active.planned_ms));
+  } else {
+    ESP_LOGI(kTag, "DEV:RADIO_STATUS: active window none");
+  }
+  if (view.has_last) {
+    ESP_LOGI(kTag,
+             "DEV:RADIO_STATUS: last window id=%lu radio=%s channel=%u planned_ms=%lu "
+             "observed_ms=%lu end=%s drops=%lu completed_ms=%llu generation=%lu",
+             static_cast<unsigned long>(view.last.window_id),
+             view.last.window.radio == domain::Radio::kWifi ? "wifi" : "ble",
+             static_cast<unsigned>(view.last.window.channel),
+             static_cast<unsigned long>(view.last.window.planned_ms),
+             static_cast<unsigned long>(view.last.observed_ms), WindowEndName(view.last.end),
+             static_cast<unsigned long>(view.last.dropped_events),
+             static_cast<unsigned long long>(view.last.completed_ms),
+             static_cast<unsigned long>(view.last.config_generation));
+  } else {
+    ESP_LOGI(kTag, "DEV:RADIO_STATUS: last window none");
+  }
+
+  const char* const names[2] = {"wifi", "ble"};
+  for (size_t i = 0; i < 2; ++i) {
+    const auto& totals = view.totals[i];
+    ESP_LOGI(kTag,
+             "DEV:RADIO_STATUS: %s totals windows=%lu planned_ms=%llu observed_ms=%llu "
+             "dropped_events=%llu last_channel=%u fault=\"%s\"",
+             names[i], static_cast<unsigned long>(totals.windows),
+             static_cast<unsigned long long>(totals.planned_ms),
+             static_cast<unsigned long long>(totals.observed_ms),
+             static_cast<unsigned long long>(totals.dropped_events),
+             static_cast<unsigned>(totals.last_channel), view.fault[i]);
+  }
+
+  ESP_LOGI(kTag,
+           "DEV:RADIO_STATUS: events wifi=%lu ble=%lu outside_window wifi=%lu ble=%lu "
+           "wrong_radio wifi=%lu ble=%lu",
+           static_cast<unsigned long>(status.events_drained[0]),
+           static_cast<unsigned long>(status.events_drained[1]),
+           static_cast<unsigned long>(status.outside_window[0]),
+           static_cast<unsigned long>(status.outside_window[1]),
+           static_cast<unsigned long>(status.wrong_radio[0]),
+           static_cast<unsigned long>(status.wrong_radio[1]));
+  ESP_LOGI(kTag,
+           "DEV:RADIO_STATUS: ring_drops=%llu unattributed_drops=%lu message_overflows=%lu "
+           "control_overflows=%lu",
+           static_cast<unsigned long long>(status.ring_drops),
+           static_cast<unsigned long>(status.unattributed_drops),
+           static_cast<unsigned long>(status.message_overflows),
+           static_cast<unsigned long>(status.control_overflows));
+  const auto& hci = status.hci;
+  ESP_LOGI(kTag,
+           "DEV:RADIO_STATUS: hci vhci_rx_overflow=%lu malformed=%lu commands_sent=%lu "
+           "timeouts=%lu rejections=%lu late=%llu unexpected=%llu credit=%u hardware_errors=%lu "
+           "controller_resets=%lu",
+           static_cast<unsigned long>(hci.rx_overflow), static_cast<unsigned long>(hci.malformed),
+           static_cast<unsigned long>(hci.commands_sent), static_cast<unsigned long>(hci.timeouts),
+           static_cast<unsigned long>(hci.rejections), static_cast<unsigned long long>(hci.late),
+           static_cast<unsigned long long>(hci.unexpected), static_cast<unsigned>(hci.credit),
+           static_cast<unsigned long>(hci.hardware_errors),
+           static_cast<unsigned long>(hci.controller_resets));
+  ESP_LOGI(kTag, "DEV:RADIO_STATUS: stack_free_bytes radio=%lu hci_worker=%lu",
+           static_cast<unsigned long>(status.radio_stack_free_bytes),
+           static_cast<unsigned long>(hci.worker_stack_free_bytes));
 }
 
-// F08 Work item 2: on-demand summary of the BLE-side scan toggle probe
-// (BleScanToggleTask in controller_probe.cpp) -- the BLE counterpart to
-// RunChannelStatus above. BLE has no per-channel switch, so this reports
-// scan disable/enable round-trip timing and the cumulative count of
-// advertising reports seen while the scan was deliberately off (expected
-// to stay at zero).
-void RunBleToggleStatus() {
-  const auto status = firmware::platform::esp32::radio::ReadControllerProbeStatus();
-  const uint64_t average_us =
-      status.ble_scan_toggle_count > 0
-          ? status.total_scan_toggle_duration_us / (2ULL * status.ble_scan_toggle_count)
-          : 0;
-  ESP_LOGI(kTag,
-           "DEV:BLE_TOGGLE_STATUS: toggle_count=%lu last_disable_duration_us=%lu "
-           "last_enable_duration_us=%lu max_toggle_duration_us=%lu "
-           "average_toggle_duration_us=%llu advertising_reports_while_disabled=%lu",
-           static_cast<unsigned long>(status.ble_scan_toggle_count),
-           static_cast<unsigned long>(status.last_scan_disable_duration_us),
-           static_cast<unsigned long>(status.last_scan_enable_duration_us),
-           static_cast<unsigned long>(status.max_scan_toggle_duration_us),
-           static_cast<unsigned long long>(average_us),
-           static_cast<unsigned long>(status.advertising_reports_while_disabled));
+// Each toggle is a ControlRequest to the radio task through its thread-safe
+// queue, so the console never touches app-loop or scheduler state. The new
+// budget shows up in DEV:RADIO_STATUS (and the status bar) with the next
+// kConfigApplied.
+void SendRadioToggle(const char* name, bool wifi, bool on) {
+  firmware::domain::ControlRequest request;
+  if (wifi) {
+    request.wifi_enabled = on;
+  } else {
+    request.ble_enabled = on;
+  }
+  const bool queued = radio::RequestControl(request);
+  ESP_LOGI(kTag, "%s: %s", name, queued ? "requested" : "NOT queued (radio stopped or queue full)");
 }
+
+void RunRadioWifiOn() { SendRadioToggle("DEV:RADIO_WIFI_ON", true, true); }
+void RunRadioWifiOff() { SendRadioToggle("DEV:RADIO_WIFI_OFF", true, false); }
+void RunRadioBleOn() { SendRadioToggle("DEV:RADIO_BLE_ON", false, true); }
+void RunRadioBleOff() { SendRadioToggle("DEV:RADIO_BLE_OFF", false, false); }
 
 // F08: measures raw UART throughput and frame loss against a host-side
 // simulator sending representative-sized Host Metric snapshot frames
@@ -447,9 +522,11 @@ constexpr Command kCommands[] = {
     {"DEV:AUDIO_TEST", RunAudioTest},
     {"DEV:PERIPHERAL_STATUS", RunPeripheralStatus},
     {"DEV:CAPACITY_STATUS", RunCapacityStatus},
-    {"DEV:HCI_STATUS", RunControllerProbeStatus},
-    {"DEV:CHANNEL_STATUS", RunChannelStatus},
-    {"DEV:BLE_TOGGLE_STATUS", RunBleToggleStatus},
+    {"DEV:RADIO_STATUS", RunRadioStatus},
+    {"DEV:RADIO_WIFI_ON", RunRadioWifiOn},
+    {"DEV:RADIO_WIFI_OFF", RunRadioWifiOff},
+    {"DEV:RADIO_BLE_ON", RunRadioBleOn},
+    {"DEV:RADIO_BLE_OFF", RunRadioBleOff},
     {"DEV:CPU_STATUS", RunCpuStatus},
     {"DEV:NVS_WRITE_TEST", RunNvsWriteTest},
     {"DEV:PARTITION_WRITE_TEST", RunPartitionWriteTest},
@@ -476,7 +553,10 @@ void DevConsoleTask(void* /*arg*/) {
   for (;;) {
     const int ch = getchar();
     if (usb::LinkModeActive()) {
-      // Negotiated link: every byte is protocol data. Poll at the smallest
+      // DEV: commands are NOT parsed once CYD:LINK has activated (until the next
+      // reset): from then on the UART carries only protocol bytes, so
+      // DEV:RADIO_STATUS and the other DEV: lines are unavailable on a linked
+      // board. Negotiated link: every byte is protocol data. Poll at the smallest
       // real delay so the UART FIFO never overruns (see RunSerialRxTest).
       if (ch == EOF) {
         vTaskDelay(pdMS_TO_TICKS(10));
