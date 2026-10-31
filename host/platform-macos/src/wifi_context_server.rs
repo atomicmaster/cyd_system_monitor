@@ -676,7 +676,10 @@ mod tests {
         let started = Instant::now();
         let mut client = Client::connect(&server).hello();
         let waited = started.elapsed();
-        assert!(waited < Duration::from_millis(500), "acked after {waited:?}");
+        assert!(
+            waited < Duration::from_millis(500),
+            "acked after {waited:?}"
+        );
         client.send(&context(1, 1, "unsupported", "null", "null"));
         wait_until("good provider served", || server.stats().applied >= 1);
         assert_eq!(availability_now(&server), ContextAvailability::Unsupported);
