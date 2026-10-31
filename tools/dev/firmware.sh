@@ -53,6 +53,8 @@ check() {
   "$test_dir/build/firmware_domain_host_link_tests"
   "$test_dir/build/firmware_domain_display_settings_tests"
   "$test_dir/build/firmware_domain_coverage_tests"
+  "$test_dir/build/firmware_domain_event_ring_tests"
+  "$test_dir/build/firmware_domain_radio_runner_tests"
   run_parity_gate firmware
 }
 

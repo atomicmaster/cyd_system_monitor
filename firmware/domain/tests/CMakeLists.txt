@@ -7,6 +7,8 @@ project(firmware_domain_tests LANGUAGES CXX)
 
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/.." domain)
 
+find_package(Threads REQUIRED)
+
 add_executable(firmware_domain_tests test_geometry.cpp)
 target_link_libraries(firmware_domain_tests PRIVATE firmware_domain)
 
@@ -37,6 +39,12 @@ target_link_libraries(firmware_domain_display_settings_tests PRIVATE firmware_do
 add_executable(firmware_domain_coverage_tests test_coverage.cpp)
 target_link_libraries(firmware_domain_coverage_tests PRIVATE firmware_domain)
 
+add_executable(firmware_domain_event_ring_tests test_event_ring.cpp)
+target_link_libraries(firmware_domain_event_ring_tests PRIVATE firmware_domain Threads::Threads)
+
+add_executable(firmware_domain_radio_runner_tests test_radio_runner.cpp)
+target_link_libraries(firmware_domain_radio_runner_tests PRIVATE firmware_domain)
+
 add_executable(link_cli link_cli.cpp)
 target_link_libraries(link_cli PRIVATE firmware_domain)
 
@@ -50,3 +58,5 @@ add_test(NAME firmware_domain_host_state_tests COMMAND firmware_domain_host_stat
 add_test(NAME firmware_domain_host_link_tests COMMAND firmware_domain_host_link_tests)
 add_test(NAME firmware_domain_display_settings_tests COMMAND firmware_domain_display_settings_tests)
 add_test(NAME firmware_domain_coverage_tests COMMAND firmware_domain_coverage_tests)
+add_test(NAME firmware_domain_event_ring_tests COMMAND firmware_domain_event_ring_tests)
+add_test(NAME firmware_domain_radio_runner_tests COMMAND firmware_domain_radio_runner_tests)

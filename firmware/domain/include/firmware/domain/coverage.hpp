@@ -7,6 +7,7 @@
 #include <deque>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace firmware::domain {
@@ -29,6 +30,10 @@ inline constexpr uint32_t kDefaultWifiDwellMs = 205;
 inline constexpr uint32_t kDefaultBleWindowMs = 205;
 inline constexpr uint8_t kDefaultWifiChannelFirst = 1;
 inline constexpr uint8_t kDefaultWifiChannelLast = 11;
+// 2.4 GHz WiFi channels a plan may name, and the longest window the scheduler
+// accepts; anything else is normalised away rather than trusted.
+inline constexpr uint8_t kMaxWifiChannel = 14;
+inline constexpr uint32_t kMaxWindowMs = 60'000;
 
 struct ObservationConfig {
   bool wifi_enabled = true;
@@ -37,6 +42,11 @@ struct ObservationConfig {
   uint32_t wifi_dwell_ms = kDefaultWifiDwellMs;
   uint32_t ble_window_ms = kDefaultBleWindowMs;
 };
+
+// The configuration actually in force: channels limited to 1-14, duplicates
+// dropped (order kept), the default plan when none remain, and each window
+// defaulted when zero and capped at kMaxWindowMs.
+ObservationConfig NormalizeConfig(ObservationConfig config);
 
 // One requested Observation Window. `channel` is 0 for BLE.
 struct Window {
@@ -55,8 +65,10 @@ class ObservationScheduler {
  public:
   explicit ObservationScheduler(ObservationConfig config = {});
   void Configure(ObservationConfig config);
+  // The effective (normalised) configuration; wifi_channels is never empty.
   const ObservationConfig& config() const { return config_; }
-  const std::vector<uint8_t>& channels() const { return channels_; }
+  // The effective channel plan, the same list as config().wifi_channels.
+  const std::vector<uint8_t>& channels() const { return config_.wifi_channels; }
   // The window that starts at `start_ms`; nullopt when both radios are disabled.
   std::optional<Window> NextWindow(uint64_t start_ms);
   // Time for one WiFi channel to come round again under the current config
@@ -65,22 +77,57 @@ class ObservationScheduler {
 
  private:
   ObservationConfig config_;
-  std::vector<uint8_t> channels_;
   size_t next_channel_ = 0;
   Radio next_radio_ = Radio::kWifi;
 };
 
-// What the driver reports when a window ends.
+// Why a window ended.
+enum class WindowEnd : uint8_t {
+  kCompleted,             // ran to its deadline
+  kConfigurationChanged,  // ended early because the operator changed the schedule
+  kDriverFault,           // the receiver failed to start or stop
+};
+
+// What the driver reports when a window ends. Trivially copyable: it crosses
+// the radio task to app loop queue by value.
 struct WindowReport {
   Window window;
   uint32_t observed_ms = 0;     // receiver actually available; <= planned_ms
   uint32_t dropped_events = 0;  // events lost to overload in this window
+  uint32_t window_id = 0;       // monotonic per boot; events carry the same id
+  uint32_t config_generation = 0;
+  uint64_t completed_ms = 0;  // when the window actually finished, not start + planned
+  WindowEnd end = WindowEnd::kCompleted;
 };
+
+// Whether a window may advance an observed-quiet recovery clock
+// (docs/alert-rules.md 1.1, 1.5): it ran to its deadline (not cut short by a
+// configuration change or a driver fault), observed at least half its planned
+// time, and lost no events. A window with drops still counts as observed, but
+// its event counts are a lower bound, so it is never evidence of quiet.
+inline bool EligibleForQuiet(const WindowReport& report) {
+  return report.end == WindowEnd::kCompleted &&
+         uint64_t{report.observed_ms} * 2 >= report.window.planned_ms && report.dropped_events == 0;
+}
+
+// A report for a window that ran to its deadline on schedule, for scripted
+// drivers (the simulator and tests); the real driver stamps its own times.
+inline WindowReport CompletedReport(const Window& window, uint32_t observed_ms,
+                                    uint32_t dropped_events = 0) {
+  WindowReport report;
+  report.window = window;
+  report.observed_ms = observed_ms;
+  report.dropped_events = dropped_events;
+  report.completed_ms = window.start_ms + window.planned_ms;
+  return report;
+}
 
 // Fixed-capacity queue that drops the oldest event on overflow and counts the
 // drops (docs/extension-interfaces.md, Radio observation).
 template <typename T, size_t N>
 class BoundedEventQueue {
+  static_assert(N > 0, "a zero-capacity queue would divide by zero");
+
  public:
   void Push(T event) {
     if (size_ == N) {
@@ -120,13 +167,17 @@ struct RadioTotals {
   uint64_t dropped_events = 0;
   uint32_t windows = 0;
   uint8_t last_channel = 0;
-  std::optional<uint64_t> last_report_ms;  // end of the most recent reported window
+  std::optional<uint64_t> last_report_ms;  // completion time of the most recent reported window
   uint32_t last_planned_ms = 0;
   uint32_t last_observed_ms = 0;
 };
 
 // Bounded coverage accounting. Keeps per-radio totals and the most recent
-// gaps; older gaps roll off, but their time stays in the totals.
+// gaps; older gaps roll off, but their time stays in the totals. A Coverage
+// Gap is a window that observed less than half its planned time (exactly half
+// is not a gap); its partial observed time stays in the totals, and its
+// `duration_ms` is the unavailable time, planned minus observed. Smaller
+// losses only reduce the observed share and add no gap.
 class CoverageLedger {
  public:
   static constexpr size_t kMaxGaps = 16;
@@ -138,8 +189,11 @@ class CoverageLedger {
   const RadioTotals& totals(Radio radio) const { return totals_[Index(radio)]; }
   const std::string& fault(Radio radio) const { return faults_[Index(radio)]; }
   const std::deque<CoverageGap>& gaps() const { return gaps_; }
-  // Observed time is the only basis for observed-quiet recovery; scheduled
-  // time without a report does not count.
+  // Total observed time across every reported window, gap windows' partial
+  // time included. Display only: observed-quiet recovery must consume eligible
+  // per-window reports (per WiFi channel, zero drops), never these radio-wide
+  // totals (docs/alert-rules.md 1.1); see EligibleForQuiet. Scheduled time
+  // without a report never counts.
   uint64_t observed_ms(Radio radio) const { return totals(radio).observed_ms; }
 
  private:
@@ -180,18 +234,35 @@ struct CoverageView {
 // kNoData: its coverage is unknown, not quiet.
 inline constexpr uint32_t kStaleRevisitPeriods = 3;
 
+// A window whose receiver has started but whose report has not arrived yet.
+struct ActiveWindow {
+  Radio radio = Radio::kWifi;
+  uint8_t channel = 0;  // 0 for BLE
+  uint32_t window_id = 0;
+  uint64_t rx_start_ms = 0;
+  uint32_t planned_ms = 0;
+};
+
+// `config` is the effective configuration (the app loop keeps a copy of the
+// radio task's kConfigApplied, not a second scheduler). With an `active`
+// window, `current` names it and a normally observing radio shows its channel;
+// otherwise `current` is the radio with the latest fresh report.
+CoverageView MakeCoverageView(const ObservationConfig& config, const CoverageLedger& ledger,
+                              uint64_t now_ms, std::optional<ActiveWindow> active = std::nullopt);
+
 CoverageView MakeCoverageView(const ObservationScheduler& scheduler, const CoverageLedger& ledger,
                               uint64_t now_ms);
 
-// "wifi=<state>[ note] <permille>/1000 drop=<n> ch=<c> | ble=... | host_only=<0|1>" for
-// replay checkpoints.
+// "wifi=<state>[(note)] <permille>/1000 drop=<n> ch=<c> | ble=... | host_only=<0|1>"
+// for replay checkpoints, e.g. "wifi=fault(init failed) 928/1000 drop=2 ch=3".
 std::string FormatCoverage(const CoverageView& view);
 
 // Compact persistent-status text: the current Observation Window plus each
 // radio's problem state, e.g. "WiFi ch6", "BLE scan", "WiFi ch6 BLE gap",
 // "WiFi ? BLE off", "Host only". A radio observing normally is named only while
 // its window is the current one; `gap` (a lost window), `?` (unknown, never
-// quiet), `off` and `fault` are always shown. No percentage: an observed share
+// quiet), `off` and `err` (a faulted radio; "fault" does not fit the bar) are
+// always shown. No percentage: an observed share
 // of window time is not capture coverage of any channel.
 std::string CoverageStatusText(const CoverageView& view);
 

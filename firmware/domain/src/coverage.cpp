@@ -31,19 +31,56 @@ const char* StateName(RadioState state) {
   return "?";
 }
 
+// Observed under half the planned time; exactly half is not a gap.
+bool IsGap(uint32_t observed_ms, uint32_t planned_ms) {
+  return uint64_t{observed_ms} * 2 < planned_ms;
+}
+
+uint32_t NormalizeWindowMs(uint32_t window_ms, uint32_t fallback) {
+  // A zero window would spin the driver; fall back to the candidate default.
+  return window_ms == 0 ? fallback : std::min(window_ms, kMaxWindowMs);
+}
+
+// Time for one WiFi channel to come round again (0 when WiFi is disabled). An
+// empty plan counts as the default one. Widened so no input can overflow.
+uint32_t WifiRevisitFor(const ObservationConfig& config) {
+  if (!config.wifi_enabled) return 0;
+  const uint64_t channels = config.wifi_channels.empty()
+                                ? kDefaultWifiChannelLast - kDefaultWifiChannelFirst + 1
+                                : config.wifi_channels.size();
+  const uint64_t per_channel =
+      uint64_t{config.wifi_dwell_ms} + (config.ble_enabled ? config.ble_window_ms : 0);
+  return static_cast<uint32_t>(std::min<uint64_t>(per_channel * channels, UINT32_MAX));
+}
+
 }  // namespace
+
+ObservationConfig NormalizeConfig(ObservationConfig config) {
+  std::vector<uint8_t> channels;
+  for (const uint8_t channel : config.wifi_channels) {
+    if (channel < 1 || channel > kMaxWifiChannel) continue;
+    if (std::find(channels.begin(), channels.end(), channel) == channels.end()) {
+      channels.push_back(channel);
+    }
+  }
+  config.wifi_channels = channels.empty() ? DefaultChannels() : std::move(channels);
+  config.wifi_dwell_ms = NormalizeWindowMs(config.wifi_dwell_ms, kDefaultWifiDwellMs);
+  config.ble_window_ms = NormalizeWindowMs(config.ble_window_ms, kDefaultBleWindowMs);
+  return config;
+}
 
 ObservationScheduler::ObservationScheduler(ObservationConfig config) {
   Configure(std::move(config));
 }
 
 void ObservationScheduler::Configure(ObservationConfig config) {
-  config_ = std::move(config);
-  // A zero window would spin the driver; fall back to the candidate default.
-  if (config_.wifi_dwell_ms == 0) config_.wifi_dwell_ms = kDefaultWifiDwellMs;
-  if (config_.ble_window_ms == 0) config_.ble_window_ms = kDefaultBleWindowMs;
-  channels_ = config_.wifi_channels.empty() ? DefaultChannels() : config_.wifi_channels;
-  next_channel_ = 0;
+  ObservationConfig next = NormalizeConfig(std::move(config));
+  // A change that leaves WiFi's plan alone (a BLE toggle, a dwell change) must
+  // not send the walk back to channel 1, or channels late in the plan starve.
+  const bool keep_place =
+      config_.wifi_enabled && next.wifi_enabled && config_.wifi_channels == next.wifi_channels;
+  config_ = std::move(next);
+  if (!keep_place) next_channel_ = 0;
   next_radio_ = config_.wifi_enabled ? Radio::kWifi : Radio::kBle;
 }
 
@@ -53,9 +90,9 @@ std::optional<Window> ObservationScheduler::NextWindow(uint64_t start_ms) {
   window.start_ms = start_ms;
   if (next_radio_ == Radio::kWifi) {
     window.radio = Radio::kWifi;
-    window.channel = channels_[next_channel_];
+    window.channel = config_.wifi_channels[next_channel_];
     window.planned_ms = config_.wifi_dwell_ms;
-    next_channel_ = (next_channel_ + 1) % channels_.size();
+    next_channel_ = (next_channel_ + 1) % config_.wifi_channels.size();
     if (config_.ble_enabled) next_radio_ = Radio::kBle;
   } else {
     window.radio = Radio::kBle;
@@ -66,12 +103,7 @@ std::optional<Window> ObservationScheduler::NextWindow(uint64_t start_ms) {
   return window;
 }
 
-uint32_t ObservationScheduler::WifiRevisitMs() const {
-  if (!config_.wifi_enabled) return 0;
-  const uint32_t per_channel =
-      config_.wifi_dwell_ms + (config_.ble_enabled ? config_.ble_window_ms : 0);
-  return per_channel * static_cast<uint32_t>(channels_.size());
-}
+uint32_t ObservationScheduler::WifiRevisitMs() const { return WifiRevisitFor(config_); }
 
 void CoverageLedger::Record(const WindowReport& report) {
   RadioTotals& totals = totals_[Index(report.window.radio)];
@@ -81,14 +113,15 @@ void CoverageLedger::Record(const WindowReport& report) {
   totals.dropped_events += report.dropped_events;
   ++totals.windows;
   totals.last_channel = report.window.channel;
-  totals.last_report_ms = report.window.start_ms + report.window.planned_ms;
+  totals.last_report_ms = report.completed_ms;
   totals.last_planned_ms = report.window.planned_ms;
   totals.last_observed_ms = observed;
-  if (observed < report.window.planned_ms) {
-    // The unobserved remainder is a Coverage Gap, kept visible rather than
-    // folded into quiet time.
-    gaps_.push_back({report.window.radio, report.window.start_ms + observed,
-                     report.window.planned_ms - observed});
+  if (IsGap(observed, report.window.planned_ms)) {
+    // A window that observed less than half its time is a Coverage Gap, kept
+    // visible rather than folded into quiet time. Its duration is the
+    // unavailable time; the partial observed time stays in the totals.
+    gaps_.push_back(
+        {report.window.radio, report.window.start_ms, report.window.planned_ms - observed});
     if (gaps_.size() > kMaxGaps) gaps_.pop_front();
   }
 }
@@ -118,36 +151,61 @@ RadioCoverageView MakeRadioView(bool enabled, const RadioTotals& totals, const s
     view.note = fault;
     return view;
   }
-  const bool stale = !totals.last_report_ms.has_value() ||
-                     now_ms > *totals.last_report_ms + uint64_t{kStaleRevisitPeriods} * revisit_ms;
+  // A subtraction, so extreme times cannot wrap it; a report dated after `now`
+  // is not stale.
+  const bool stale =
+      !totals.last_report_ms.has_value() ||
+      (now_ms > *totals.last_report_ms &&
+       now_ms - *totals.last_report_ms > uint64_t{kStaleRevisitPeriods} * revisit_ms);
   if (stale) {
     view.state = RadioState::kNoData;
     return view;
   }
-  // The latest window decides between observing and gap. Sub-millisecond
-  // switching overhead is not a gap; losing half the window or more is.
-  const bool latest_is_gap = uint64_t{totals.last_observed_ms} * 2 < totals.last_planned_ms;
-  view.state = latest_is_gap ? RadioState::kGap : RadioState::kObserving;
+  // The latest window decides between observing and gap. Switching overhead is
+  // not a gap; observing less than half the window is.
+  view.state = IsGap(totals.last_observed_ms, totals.last_planned_ms) ? RadioState::kGap
+                                                                      : RadioState::kObserving;
   return view;
 }
 
 }  // namespace
 
-CoverageView MakeCoverageView(const ObservationScheduler& scheduler, const CoverageLedger& ledger,
-                              uint64_t now_ms) {
-  const auto& config = scheduler.config();
+CoverageView MakeCoverageView(const ObservationConfig& given, const CoverageLedger& ledger,
+                              uint64_t now_ms, std::optional<ActiveWindow> active) {
+  const ObservationConfig config = NormalizeConfig(given);
   CoverageView view;
   view.host_only = !config.wifi_enabled && !config.ble_enabled;
-  view.wifi_revisit_ms = scheduler.WifiRevisitMs();
+  view.wifi_revisit_ms = WifiRevisitFor(config);
   // A radio's own window repeats every wifi revisit / channels; BLE's window
   // comes round once per WiFi dwell when both are on.
-  const uint32_t ble_revisit =
-      config.wifi_enabled ? config.wifi_dwell_ms + config.ble_window_ms : config.ble_window_ms;
+  const uint32_t ble_revisit = static_cast<uint32_t>(
+      std::min<uint64_t>(config.wifi_enabled ? uint64_t{config.wifi_dwell_ms} + config.ble_window_ms
+                                             : config.ble_window_ms,
+                         UINT32_MAX));
   view.wifi = MakeRadioView(config.wifi_enabled, ledger.totals(Radio::kWifi),
                             ledger.fault(Radio::kWifi), view.wifi_revisit_ms, now_ms);
   view.ble = MakeRadioView(config.ble_enabled, ledger.totals(Radio::kBle),
                            ledger.fault(Radio::kBle), ble_revisit, now_ms);
-  // The current window: the radio with the latest fresh report.
+  if (active) {
+    // An active window past its planned end, or one the ledger already holds a
+    // later report for, is stale news from the app loop: ignore it.
+    const uint64_t planned_end = active->rx_start_ms + active->planned_ms < active->rx_start_ms
+                                     ? UINT64_MAX
+                                     : active->rx_start_ms + active->planned_ms;
+    const auto& last = ledger.totals(active->radio).last_report_ms;
+    if (now_ms > planned_end || (last && *last > active->rx_start_ms)) active.reset();
+  }
+  const bool active_enabled =
+      active && (active->radio == Radio::kWifi ? config.wifi_enabled : config.ble_enabled);
+  if (active_enabled) {
+    // The receiver is on and its report is still to come: that window is the
+    // current one, and a normally observing radio shows the channel in progress.
+    view.current = active->radio;
+    RadioCoverageView& radio = active->radio == Radio::kWifi ? view.wifi : view.ble;
+    if (radio.state == RadioState::kObserving) radio.last_channel = active->channel;
+    return view;
+  }
+  // No active window: the radio with the latest fresh report.
   const auto fresh = [](const RadioCoverageView& v) {
     return v.state == RadioState::kObserving || v.state == RadioState::kGap;
   };
@@ -159,6 +217,11 @@ CoverageView MakeCoverageView(const ObservationScheduler& scheduler, const Cover
     view.current = Radio::kBle;
   }
   return view;
+}
+
+CoverageView MakeCoverageView(const ObservationScheduler& scheduler, const CoverageLedger& ledger,
+                              uint64_t now_ms) {
+  return MakeCoverageView(scheduler.config(), ledger, now_ms);
 }
 
 std::string FormatCoverage(const CoverageView& view) {

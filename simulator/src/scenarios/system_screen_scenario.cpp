@@ -214,7 +214,7 @@ int RunSystemScreen() {
     for (int i = 0; i < count; ++i) {
       const auto window = scheduler.NextWindow(now_ms);
       if (!window) break;
-      ledger.Record({*window, lossy ? 0u : window->planned_ms, 0u});
+      ledger.Record(domain::CompletedReport(*window, lossy ? 0u : window->planned_ms, 0u));
       now_ms += window->planned_ms;
     }
   };
@@ -278,6 +278,12 @@ int RunSystemScreen() {
   run_windows(8500, 1, false);
   render(8750);
   result.Expect(Has(ui.coverage_label(), "WiFi ch2"), "a WiFi window names its channel");
+  // A window whose receiver is on but has not reported yet is already current.
+  overview.Render(8800, domain::CoverageStatusText(domain::MakeCoverageView(
+                            scheduler.config(), ledger, 8800,
+                            domain::ActiveWindow{domain::Radio::kWifi, 3, 0, 8750, 205})));
+  result.Expect(Has(ui.coverage_label(), "WiFi ch3"),
+                "an active window names its channel before its report arrives");
   run_windows(8705, 2, true);
   render(9200);
   result.Expect(Has(ui.coverage_label(), "gap"), "a lost window shows as a gap in the status bar");

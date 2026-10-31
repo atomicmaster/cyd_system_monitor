@@ -78,12 +78,14 @@ These fix the shape so TB09, TB13, and TB16 can refine independently; no numeric
 threshold is committed here.
 
 - **Radio observation (TB09/TB10/TB11):** an observer produces bounded
-  *observation events* (protocol, channel or BLE window, timestamp in monotonic
-  ms plus boot identity, minimal metadata) into a fixed-size queue and a
+  *observation events* (protocol, channel or BLE window, window id, timestamp in
+  monotonic µs, minimal metadata) into a fixed-size queue and a
   separate *coverage record* per window (dwell, gap, dropped count). Overload
   drops oldest events and increments a dropped counter that is itself
   reported; rule code consumes events only through this interface and lives in
-  shared C++ (`firmware/domain/`), never in Rust.
+  shared C++ (`firmware/domain/`), never in Rust. Event timestamps are monotonic
+  µs; boot identity is held by the enclosing session, not repeated in each event.
+  The envelope is provisional until TB10/TB11 fix the protocol metadata.
 - **Episode evidence (TB12–TB15):** an episode keeps its ordered evidence keys
   (boot identity, sequence), first/last evidence order, acknowledged flag, and
   state Active/Ended/Interrupted. Ended only by observed-quiet; a reboot marks

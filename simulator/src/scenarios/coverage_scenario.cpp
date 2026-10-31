@@ -21,7 +21,8 @@ uint64_t RunWindows(domain::ObservationScheduler& scheduler, domain::CoverageLed
     const auto window = scheduler.NextWindow(now);
     if (!window) break;
     const bool lossy = i >= lossy_from && i < lossy_to;
-    ledger.Record({*window, lossy ? 0u : window->planned_ms, lossy ? 2u : 0u});
+    ledger.Record(
+        domain::CompletedReport(*window, lossy ? 0u : window->planned_ms, lossy ? 2u : 0u));
     now += window->planned_ms;
   }
   return now;
@@ -49,6 +50,13 @@ int RunCoverage() {
   line("lossy", scheduler, ledger, now);
   now = RunWindows(scheduler, ledger, now, 2);
   line("recovered", scheduler, ledger, now);
+  // A WiFi window has started on channel 4 and not reported yet: it is current,
+  // and the view names its channel rather than the last reported one.
+  transcript << "active @" << now << " | "
+             << domain::FormatCoverage(domain::MakeCoverageView(
+                    scheduler.config(), ledger, now,
+                    domain::ActiveWindow{domain::Radio::kWifi, 4, 0, now, 205}))
+             << "\n";
 
   scheduler.Configure({.wifi_enabled = false});
   line("wifi-disabled", scheduler, ledger, now);

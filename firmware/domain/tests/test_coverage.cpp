@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <cstdio>
 #include <string>
+#include <type_traits>
 
 #include "firmware/domain/coverage.hpp"
 
@@ -74,14 +75,14 @@ int main() {
     Expect(MakeCoverageView(scheduler, ledger, 1000).wifi.state == RadioState::kNoData,
            "an enabled radio with no reports is no-data, not quiet");
 
-    ledger.Record({*scheduler.NextWindow(0), 205, 0});
+    ledger.Record(CompletedReport(*scheduler.NextWindow(0), 205, 0));
     auto view = MakeCoverageView(scheduler, ledger, 300);
     Expect(view.wifi.state == RadioState::kObserving && view.wifi.observed_permille == 1000,
            "a fully observed window reads observing at 1000/1000");
     Expect(view.ble.state == RadioState::kOperatorDisabled,
            "a disabled radio reads operator-disabled");
 
-    ledger.Record({*scheduler.NextWindow(205), 0, 3});
+    ledger.Record(CompletedReport(*scheduler.NextWindow(205), 0, 3));
     view = MakeCoverageView(scheduler, ledger, 500);
     Expect(view.wifi.state == RadioState::kGap, "a window with no observed time is a gap");
     Expect(view.wifi.observed_permille == 500 && view.wifi.dropped_events == 3,
@@ -90,11 +91,11 @@ int main() {
                ledger.gaps().back().duration_ms == 205,
            "the unobserved window is recorded as a gap and adds no observed time");
 
-    ledger.Record({*scheduler.NextWindow(410), 204, 0});
+    ledger.Record(CompletedReport(*scheduler.NextWindow(410), 204, 0));
     Expect(MakeCoverageView(scheduler, ledger, 700).wifi.state == RadioState::kObserving,
            "sub-millisecond switching loss is not a gap");
 
-    ledger.Record({*scheduler.NextWindow(615), 999, 0});
+    ledger.Record(CompletedReport(*scheduler.NextWindow(615), 999, 0));
     Expect(ledger.totals(Radio::kWifi).observed_ms == 205 + 204 + 205,
            "observed time is clamped to the planned window");
 
@@ -122,18 +123,18 @@ int main() {
       return CoverageStatusText(MakeCoverageView(scheduler, ledger, now_ms));
     };
     Expect(text(0) == "WiFi ? BLE ?", "no report reads unknown, never quiet");
-    ledger.Record({*scheduler.NextWindow(0), 205, 0});  // WiFi ch1, observed
+    ledger.Record(CompletedReport(*scheduler.NextWindow(0), 205, 0));  // WiFi ch1, observed
     Expect(text(205) == "WiFi ch1 BLE ?",
            "the WiFi window names its channel; BLE is still unknown");
-    ledger.Record({*scheduler.NextWindow(205), 205, 0});  // BLE, observed
+    ledger.Record(CompletedReport(*scheduler.NextWindow(205), 205, 0));  // BLE, observed
     Expect(text(410) == "BLE scan",
            "the BLE window is current; healthy WiFi between windows is not listed");
-    ledger.Record({*scheduler.NextWindow(410), 205, 0});  // WiFi ch2, observed
+    ledger.Record(CompletedReport(*scheduler.NextWindow(410), 205, 0));  // WiFi ch2, observed
     Expect(text(615) == "WiFi ch2", "the next WiFi window names its own channel");
     Expect(text(615).find('%') == std::string::npos, "no percentage in the status line");
-    ledger.Record({*scheduler.NextWindow(615), 0, 0});  // BLE, lost
+    ledger.Record(CompletedReport(*scheduler.NextWindow(615), 0, 0));  // BLE, lost
     Expect(text(820) == "BLE gap", "a lost window reads gap");
-    ledger.Record({*scheduler.NextWindow(820), 205, 0});  // WiFi ch3, observed
+    ledger.Record(CompletedReport(*scheduler.NextWindow(820), 205, 0));  // WiFi ch3, observed
     Expect(text(1025) == "WiFi ch3 BLE gap",
            "the gap stays visible while the other radio observes");
     Expect(FormatCoverage(MakeCoverageView(scheduler, ledger, 1025)).find("ble=gap 500/1000") !=
@@ -152,19 +153,179 @@ int main() {
   {
     ObservationScheduler scheduler({.ble_enabled = false, .wifi_channels = {6, 11}});
     CoverageLedger ledger;
-    ledger.Record({*scheduler.NextWindow(0), 205, 0});
+    ledger.Record(CompletedReport(*scheduler.NextWindow(0), 205, 0));
     Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 205)) == "WiFi ch6 BLE off",
            "WiFi alone: its window and BLE off");
-    ledger.Record({*scheduler.NextWindow(205), 60, 0});  // under half observed
+    ledger.Record(CompletedReport(*scheduler.NextWindow(205), 60, 0));  // under half observed
     Expect(CoverageStatusText(MakeCoverageView(scheduler, ledger, 410)) == "WiFi gap BLE off",
            "a lost current WiFi window reads gap, not its channel");
+  }
+
+  // A Coverage Gap is under half the planned time; exactly half is not a gap, and
+  // sub-half losses only reduce the observed share.
+  {
+    static_assert(std::is_trivially_copyable_v<WindowReport>, "reports cross a task queue");
+    ObservationScheduler scheduler({.ble_enabled = false, .wifi_dwell_ms = 200});
+    CoverageLedger ledger;
+    ledger.Record(CompletedReport(*scheduler.NextWindow(0), 100));
+    Expect(ledger.gaps().empty(), "exactly half observed is not a gap");
+    Expect(MakeCoverageView(scheduler, ledger, 200).wifi.state == RadioState::kObserving,
+           "exactly half observed still reads observing");
+    ledger.Record(CompletedReport(*scheduler.NextWindow(200), 150));
+    Expect(ledger.gaps().empty() && ledger.totals(Radio::kWifi).observed_ms == 250,
+           "a sub-half loss adds no gap and only reduces the observed share");
+    ledger.Record(CompletedReport(*scheduler.NextWindow(400), 99));
+    Expect(ledger.gaps().size() == 1, "one millisecond under half is a gap");
+    Expect(ledger.gaps().back().radio == Radio::kWifi && ledger.gaps().back().start_ms == 400 &&
+               ledger.gaps().back().duration_ms == 101,
+           "the gap starts with its window and lasts the unavailable time");
+    Expect(ledger.totals(Radio::kWifi).observed_ms == 349,
+           "a gap window keeps its partial observed time in the totals");
+    Expect(MakeCoverageView(scheduler, ledger, 600).wifi.state == RadioState::kGap,
+           "the view reads gap for the same under-half rule");
+  }
+
+  // The ledger dates a report by when the window actually completed.
+  {
+    ObservationScheduler scheduler({.ble_enabled = false});
+    CoverageLedger ledger;
+    WindowReport report = CompletedReport(*scheduler.NextWindow(1000), 205);
+    report.completed_ms = 1230;  // overran its 205 ms plan
+    ledger.Record(report);
+    Expect(ledger.totals(Radio::kWifi).last_report_ms == 1230,
+           "last report is the completion time");
+    const uint64_t revisit = scheduler.WifiRevisitMs();
+    Expect(
+        MakeCoverageView(scheduler, ledger, 1230 + kStaleRevisitPeriods * revisit).wifi.state ==
+                RadioState::kObserving &&
+            MakeCoverageView(scheduler, ledger, 1231 + kStaleRevisitPeriods * revisit).wifi.state ==
+                RadioState::kNoData,
+        "staleness counts from the completion time");
+  }
+
+  // The scheduler plans only what it can run: channels 1-14, no duplicates, sane windows.
+  {
+    ObservationScheduler scheduler({.wifi_channels = {0, 15, 6, 6, 255, 1, 14, 1}});
+    Expect(scheduler.channels() == std::vector<uint8_t>({6, 1, 14}),
+           "channels outside 1-14 and duplicates are dropped, order kept");
+    Expect(scheduler.config().wifi_channels == scheduler.channels(),
+           "config() reports the effective plan");
+    scheduler.Configure({.wifi_channels = {0, 99}});
+    Expect(scheduler.channels().size() == 11 && scheduler.channels().front() == 1 &&
+               scheduler.channels().back() == 11,
+           "no valid channel left falls back to the default 1-11 plan");
+    scheduler.Configure({.wifi_dwell_ms = 4'000'000'000u, .ble_window_ms = 70'000});
+    Expect(scheduler.config().wifi_dwell_ms == kMaxWindowMs &&
+               scheduler.config().ble_window_ms == kMaxWindowMs,
+           "windows are capped");
+    Expect(scheduler.WifiRevisitMs() == 11u * 2 * kMaxWindowMs, "revisit arithmetic does not wrap");
+    const ObservationConfig huge{.wifi_channels = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14},
+                                 .wifi_dwell_ms = 4'000'000'000u,
+                                 .ble_window_ms = 4'000'000'000u};
+    Expect(MakeCoverageView(huge, CoverageLedger{}, 0).wifi_revisit_ms == 14u * 2 * kMaxWindowMs,
+           "the view normalises the config it is given");
+  }
+
+  // The scheduler keeps its place in the channel plan across changes that do
+  // not touch it, and restarts when the plan or WiFi's enablement changes.
+  {
+    ObservationScheduler scheduler({.wifi_channels = {1, 6, 11}});
+    scheduler.NextWindow(0);  // WiFi ch1
+    scheduler.NextWindow(0);  // BLE
+    scheduler.Configure({.wifi_channels = {1, 6, 11}, .wifi_dwell_ms = 100});
+    Expect(scheduler.NextWindow(0)->channel == 6,
+           "a change that leaves the plan alone keeps its place");
+    scheduler.Configure({.ble_enabled = false, .wifi_channels = {1, 6, 11}});
+    Expect(scheduler.NextWindow(0)->channel == 11, "BLE-only changes keep the WiFi position");
+    scheduler.Configure({.ble_enabled = false, .wifi_channels = {1, 11, 6}});
+    Expect(scheduler.NextWindow(0)->channel == 1, "a different plan restarts");
+    scheduler.Configure({.wifi_enabled = false, .wifi_channels = {1, 11, 6}});
+    scheduler.Configure({.ble_enabled = false, .wifi_channels = {1, 11, 6}});
+    Expect(scheduler.NextWindow(0)->channel == 1, "re-enabling WiFi restarts");
+  }
+
+  // Staleness is a subtraction, so extreme times cannot wrap it, and a report
+  // from the "future" is not stale.
+  {
+    ObservationConfig config = NormalizeConfig({.ble_enabled = false});
+    CoverageLedger ledger;
+    WindowReport report = CompletedReport({Radio::kWifi, 1, 0, 205}, 205);
+    report.completed_ms = UINT64_MAX - 10;
+    ledger.Record(report);
+    Expect(MakeCoverageView(config, ledger, UINT64_MAX).wifi.state == RadioState::kObserving,
+           "a report near the end of time is not made stale by wrapping");
+    Expect(MakeCoverageView(config, ledger, 5).wifi.state == RadioState::kObserving,
+           "a report completed after `now` is not stale");
+  }
+
+  // An active window is ignored once it is over or already reported.
+  {
+    ObservationConfig config = NormalizeConfig({});
+    CoverageLedger ledger;
+    ledger.Record(CompletedReport({Radio::kWifi, 1, 0, 205}, 205));  // completed at 205
+    const ActiveWindow active{Radio::kWifi, 2, 3, 205, 205};
+    Expect(MakeCoverageView(config, ledger, 300, active).wifi.last_channel == 2 &&
+               MakeCoverageView(config, ledger, 410, active).wifi.last_channel == 2,
+           "an active window is shown until its planned end");
+    Expect(MakeCoverageView(config, ledger, 411, active).wifi.last_channel == 1,
+           "a window past its planned end is no longer shown as active");
+    ledger.Record(CompletedReport({Radio::kWifi, 2, 205, 205}, 205));  // completed at 410
+    Expect(MakeCoverageView(config, ledger, 420, active).wifi.last_channel == 2,
+           "a window reported after it started is no longer shown as active");
+    ledger.Record(CompletedReport({Radio::kWifi, 3, 410, 205}, 205));  // completed at 615
+    Expect(MakeCoverageView(config, ledger, 420, ActiveWindow{Radio::kWifi, 9, 5, 700, 205})
+                   .wifi.last_channel == 9,
+           "a report that completed before the window started does not hide it");
+    Expect(MakeCoverageView(config, ledger, 620, ActiveWindow{Radio::kWifi, 9, 5, 410, 205})
+                   .wifi.last_channel == 3,
+           "a report that completed after the window started hides it");
+  }
+
+  // Only a completed, at-least-half-observed, drop-free window may feed quiet recovery.
+  {
+    WindowReport report = CompletedReport({Radio::kWifi, 1, 0, 200}, 100);
+    Expect(EligibleForQuiet(report), "exactly half observed with no drops is eligible");
+    report.observed_ms = 99;
+    Expect(!EligibleForQuiet(report), "a Coverage Gap is not eligible");
+    report.observed_ms = 200;
+    report.dropped_events = 1;
+    Expect(!EligibleForQuiet(report), "drops make a lower bound, not observed quiet");
+    report.dropped_events = 0;
+    report.end = WindowEnd::kConfigurationChanged;
+    Expect(!EligibleForQuiet(report),
+           "a window cut short by a configuration change is not eligible");
+    report.end = WindowEnd::kDriverFault;
+    Expect(!EligibleForQuiet(report), "a faulted window is not eligible");
+  }
+
+  // The view from a config alone, with and without an active window.
+  {
+    ObservationConfig config = NormalizeConfig({});
+    CoverageLedger ledger;
+    ledger.Record(CompletedReport({Radio::kWifi, 1, 0, 205}, 205));
+    ledger.Record(CompletedReport({Radio::kBle, 0, 205, 205}, 205));
+    auto view = MakeCoverageView(config, ledger, 410);
+    Expect(view.current == Radio::kBle, "without an active window the latest report is current");
+    view = MakeCoverageView(config, ledger, 500, ActiveWindow{Radio::kWifi, 2, 3, 410, 205});
+    Expect(view.current == Radio::kWifi && view.wifi.last_channel == 2 &&
+               CoverageStatusText(view) == "WiFi ch2",
+           "an active window is current and names its channel before its report arrives");
+    Expect(
+        MakeCoverageView(config, ledger, 500, ActiveWindow{Radio::kBle, 0, 4, 410, 205}).current ==
+            Radio::kBle,
+        "an active BLE window is current");
+    config.wifi_enabled = false;
+    view = MakeCoverageView(config, ledger, 500, ActiveWindow{Radio::kWifi, 2, 3, 410, 205});
+    Expect(view.current == Radio::kBle && view.wifi.state == RadioState::kOperatorDisabled,
+           "an active window of a disabled radio is ignored");
   }
 
   // The gap list is bounded; older gaps roll off but stay in the totals.
   {
     ObservationScheduler scheduler({.ble_enabled = false});
     CoverageLedger ledger;
-    for (int i = 0; i < 40; ++i) ledger.Record({*scheduler.NextWindow(i * 205u), 0, 0});
+    for (int i = 0; i < 40; ++i)
+      ledger.Record(CompletedReport(*scheduler.NextWindow(i * 205u), 0, 0));
     Expect(ledger.gaps().size() == CoverageLedger::kMaxGaps, "the gap list is bounded");
     Expect(ledger.totals(Radio::kWifi).planned_ms == 40u * 205u,
            "rolled-off gaps stay in the totals");
