@@ -196,10 +196,14 @@ void MetricCard::BuildDial(lv_color_t accent) {
   lv_obj_align(rate_slots_, LV_ALIGN_BOTTOM_MID, 0, 0);
   const uint32_t colors[2] = {theme::kRateFirst, theme::kRateSecond};
   const char* letters[2] = {"R", "W"};
+  // The widest rate, "999M", is 32 px; the box is exactly that, and the
+  // letters (R 8 px, W 11 px) and boxes leave 3-4 px between them.
+  constexpr int32_t kLetterX[2] = {0, 47};
+  constexpr int32_t kValueX[2] = {11, 61};
   for (int i = 0; i < 2; ++i) {
-    const int32_t x = 2 + i * 46;
-    lv_label_set_text(Placed(rate_slots_, &lv_font_montserrat_12, colors[i], x, 0), letters[i]);
-    rate_value_[i] = Placed(rate_slots_, &lv_font_montserrat_12, theme::kMuted, x + 14, 0, 31);
+    lv_label_set_text(Placed(rate_slots_, &lv_font_montserrat_12, colors[i], kLetterX[i], 0),
+                      letters[i]);
+    rate_value_[i] = Placed(rate_slots_, &lv_font_montserrat_12, theme::kMuted, kValueX[i], 0, 32);
   }
 }
 
@@ -328,9 +332,11 @@ void MetricCard::UpdateDial(const firmware::domain::MetricCardView& view, bool d
     lv_label_set_text(rate_value_[1], view.rates->second.c_str());
   }
   SetHidden(arc_, !view.has_value);
-  // Dimmed, "Last 62%" is two lines, so it drops to 14 pt to fit the ring.
-  lv_obj_set_style_text_font(value_label_,
-                             dimmed_ ? &lv_font_montserrat_14 : &lv_font_montserrat_18, 0);
+  // Dimmed, "Last 62%" is two lines, so it drops to 14 pt to fit the ring; so
+  // does "100%", which at 18 pt (46 px) would touch the 48 px opening's stroke.
+  const bool small = dimmed_ || view.value.size() > 3;
+  lv_obj_set_style_text_font(value_label_, small ? &lv_font_montserrat_14 : &lv_font_montserrat_18,
+                             0);
   // A retained reading decays to the neutral minimum once, on the way to dim;
   // its text still carries the last value, labelled "Last".
   if (dim_changed && dimmed_) {
