@@ -90,6 +90,13 @@ const char* SlotFlag(firmware::domain::RadioSlotState state) {
   }
   return "";
 }
+void SetHidden(lv_obj_t* object, bool hidden) {
+  if (hidden) {
+    lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+  }
+}
 }  // namespace
 
 void SystemScreen::BuildRadioIcon(RadioWidgets& widgets, lv_obj_t* group, const char* symbol) {
@@ -266,12 +273,11 @@ void SystemScreen::ApplySlot(const RadioWidgets& widgets,
   lv_label_set_text_static(widgets.flag, SlotFlag(slot.state));
   const bool off = slot.state == firmware::domain::RadioSlotState::kOff;
   for (lv_obj_t* line : {widgets.slash_halo, widgets.slash}) {
-    if (off) {
-      lv_obj_remove_flag(line, LV_OBJ_FLAG_HIDDEN);
-    } else {
-      lv_obj_add_flag(line, LV_OBJ_FLAG_HIDDEN);
-    }
+    SetHidden(line, !off);
   }
+  // An off radio has no flag to show: its empty box collapses so the slashed
+  // icon sits beside its neighbour instead of before a blank gap.
+  SetHidden(widgets.flag, off);
 }
 
 void SystemScreen::Update(const firmware::domain::CpuView& status,
@@ -291,6 +297,8 @@ void SystemScreen::Update(const firmware::domain::CpuView& status,
     lv_label_set_text(wifi_channel_, channel == 0 ? "" : ("ch" + std::to_string(channel)).c_str());
     lv_obj_set_style_text_color(wifi_channel_,
                                 theme::Color(SlotColor(coverage.wifi.state, theme::kCyan)), 0);
+    // WiFi off has no channel: collapse the box with the flag (see ApplySlot).
+    SetHidden(wifi_channel_, coverage.wifi.state == firmware::domain::RadioSlotState::kOff);
   }
   if (!shown_coverage_ || shown_coverage_->ble.state != coverage.ble.state) {
     ApplySlot(ble_, coverage.ble, theme::kBlue);

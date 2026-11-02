@@ -367,7 +367,7 @@ int RunSystemScreen() {
     };
     overview.Render(300000, {});
     const auto reference = coords();
-    bool fixed = true, all_right = true;
+    bool fixed = true, all_right = true, collapsed = true;
     for (const Expected& e : expected) {
       for (const uint8_t channel : {uint8_t{0}, uint8_t{6}, uint8_t{11}, uint8_t{14}}) {
         domain::CoverageStatus status;
@@ -377,11 +377,34 @@ int RunSystemScreen() {
         const std::string text = channel == 0 ? "" : "ch" + std::to_string(channel);
         all_right = all_right && wifi_is(e.wifi_color, e.flag, text.c_str(), e.slashed) &&
                     ble_is(e.ble_color, e.flag, e.slashed);
-        fixed = fixed && same(reference, coords());
+        if (e.state == RadioSlotState::kOff) {
+          // Off is an operator toggle, not a reading: its empty boxes collapse.
+          collapsed = collapsed && lv_obj_has_flag(ui.wifi_channel_label(), LV_OBJ_FLAG_HIDDEN) &&
+                      lv_obj_has_flag(ui.wifi_flag_label(), LV_OBJ_FLAG_HIDDEN) &&
+                      lv_obj_has_flag(ui.ble_flag_label(), LV_OBJ_FLAG_HIDDEN);
+        } else {
+          fixed = fixed && same(reference, coords());
+        }
       }
     }
     result.Expect(all_right, "every slot state shows its colour, mark, slash and channel");
-    result.Expect(fixed, "no tray, connection or clock position moves with state or channel");
+    result.Expect(fixed, "no tray, connection or clock position moves with any reading or channel");
+    result.Expect(collapsed, "an off radio collapses its flag box and WiFi's channel box");
+    // WiFi off with BLE working: the slashed WiFi icon sits a slot gap from BLE.
+    {
+      domain::CoverageStatus status;
+      status.wifi = {RadioSlotState::kOff, 0};
+      status.ble = {RadioSlotState::kScanning, 0};
+      overview.Render(300000, status);
+      lv_obj_update_layout(screen);
+      lv_area_t wifi, ble;
+      lv_obj_get_coords(ui.wifi_icon(), &wifi);
+      lv_obj_get_coords(ui.ble_icon(), &ble);
+      result.Expect(ble.x1 - wifi.x2 <= 12, "WiFi off leaves no empty channel gap before BLE");
+      overview.Render(300000, {});
+      fixed = same(reference, coords());
+      result.Expect(fixed, "turning WiFi back on restores every position");
+    }
   }
 
   // The persistent bar: connection, a free centre, the tray and the clock.

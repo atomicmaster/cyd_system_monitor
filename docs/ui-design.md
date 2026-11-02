@@ -21,7 +21,7 @@ Every screen keeps:
 
 Live Host data shows as a cyan USB glyph rather than the word; every other connection state is spelled out. A hairline separates the bar from the cards. The bar is one 12 pt line, left to right: the connection, a flexible centre kept free for the future Alert, the radio tray, then the clock, then the Settings gear.
 
-The radio tray sits beside the clock, phone-style. Each radio has its own slot that never moves: the WiFi icon, then a fixed one-character flag box, then a fixed 27 px channel box (`ch11`, `ch14`; digits never shift anything); the BLE icon (a drawn rune: the font's Bluetooth symbol reads as a filled pill at 12 px), then a flag box. A flag sits right after its own icon so it can never be read as the other radio's, and the two slots are 8 px apart against 2 px inside a slot. BLE shows no channel: its controller cycles the three advertising channels itself. A 1x12 hairline in the rule colour and a 6 px gap come before the clock. The state is the icon's colour, always with a mark where colour alone would be ambiguous:
+The radio tray sits beside the clock, phone-style. Each radio has its own slot that no reading moves: the WiFi icon, then a fixed one-character flag box, then a fixed 27 px channel box (`ch11`, `ch14`; digits never shift anything); the BLE icon (a drawn rune: the font's Bluetooth symbol reads as a filled pill at 12 px), then a flag box. A flag sits right after its own icon so it can never be read as the other radio's, and the two slots are 8 px apart against 2 px inside a slot. BLE shows no channel: its controller cycles the three advertising channels itself. A 1x12 hairline in the rule colour and a 6 px gap come before the clock. The state is the icon's colour, always with a mark where colour alone would be ambiguous:
 
 | State | Colour | Mark |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ The radio tray sits beside the clock, phone-style. Each radio has its own slot t
 | No data (unknown, never idle or quiet) | muted | `?` |
 | Fault | text | `!` |
 
-The colour does not follow the Observation Window: windows alternate about five times a second, and lighting the open one read as pulsing on the board. Fault, gap, no data and off win over scanning and idle. The WiFi channel is the active window's while scanning, the last observed one while idle, gap or fault, and blank when off or unknown. Both radios off (Host only) is both slots off. Red, orange, amber and yellow stay reserved for Alerts.
+The colour does not follow the Observation Window: windows alternate about five times a second, and lighting the open one read as pulsing on the board. Fault, gap, no data and off win over scanning and idle. The WiFi channel is the active window's while scanning, the last observed one while idle, gap or fault, and blank when unknown. An off radio drops its flag box and, for WiFi, its channel box, so the slashed icon sits beside its neighbour rather than before an empty gap; only an operator toggle moves the tray. Both radios off (Host only) is both slots off. Red, orange, amber and yellow stay reserved for Alerts.
 
 This replaces a single coverage label that swapped between "WiFi chN" and "BLE scan" in one spot. Observation Windows alternate about five times a second, so it read as blinking (owner feedback from the first board run). With fixed slots only a colour changes, and only in that radio's own place.
 
