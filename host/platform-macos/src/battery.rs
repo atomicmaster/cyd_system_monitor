@@ -751,9 +751,19 @@ mod tests {
     #[test]
     fn run_bounded_caps_output_and_reports_a_missing_program() {
         let started = Instant::now();
-        let result = run_bounded("/usr/bin/yes", &[], Duration::from_secs(5), 4096);
+        // A producer that stops by itself (64 KiB, far over the cap), never an
+        // endless one like `yes`: a test killed mid-run must not leave it spinning.
+        let result = run_bounded(
+            "/usr/bin/head",
+            &["-c", "65536", "/dev/zero"],
+            Duration::from_secs(5),
+            4096,
+        );
         assert_eq!(result, Err(ProfileFailure::Profile(ProfileError::TooLarge)));
-        assert!(started.elapsed() < Duration::from_secs(4), "yes was killed");
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "the producer was cut off"
+        );
         assert_eq!(
             run_bounded("/nonexistent/program", &[], Duration::from_secs(1), 10),
             Err(ProfileFailure::Spawn)
