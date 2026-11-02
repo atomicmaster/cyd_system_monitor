@@ -78,11 +78,11 @@ lv_obj_t* SettingsPanel::AddRow(const char* text, lv_obj_t** control, bool is_sw
 
 namespace {
 
-// A text-only button sized to its label.
-lv_obj_t* TextButton(lv_obj_t* parent, const char* text, uint32_t color) {
+// An outlined pill sized to its label.
+lv_obj_t* ActionButton(lv_obj_t* parent, const char* text, uint32_t color) {
   lv_obj_t* button = lv_button_create(parent);
-  lv_obj_set_size(button, LV_SIZE_CONTENT, 28);
-  theme::StyleTextButton(button, color);
+  lv_obj_set_size(button, LV_SIZE_CONTENT, 26);
+  theme::StyleActionButton(button, color == theme::kCyan);
   lv_obj_t* label = lv_label_create(button);
   lv_label_set_text(label, text);
   lv_obj_center(label);
@@ -94,7 +94,8 @@ lv_obj_t* TextButton(lv_obj_t* parent, const char* text, uint32_t color) {
 SettingsPanel::SettingsPanel(lv_obj_t* parent, ChangeCallback on_change, Actions actions)
     : on_change_(std::move(on_change)), actions_(std::move(actions)) {
   // A sheet rising from the bottom edge over the Overview, its actions as
-  // text in the header (the Quiet style).
+  // outlined pills in the header. While it is open a transparent scrim under
+  // it takes any tap outside the sheet (the status bar included) and closes it.
   panel_ = lv_obj_create(parent);
   theme::StyleSheet(panel_, 186);
   lv_obj_set_flex_flow(panel_, LV_FLEX_FLOW_COLUMN);
@@ -107,23 +108,24 @@ SettingsPanel::SettingsPanel(lv_obj_t* parent, ChangeCallback on_change, Actions
   lv_obj_set_size(header, LV_PCT(100), 30);
   lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(header, 6, 0);
   lv_obj_t* title = lv_label_create(header);
   theme::StyleHeading(title);
   lv_label_set_text(title, "Clock");
   lv_obj_set_flex_grow(title, 1);
-  recalibrate_ = TextButton(header, "Recalibrate", theme::kMuted);
-  debug_ = TextButton(header, "Debug", theme::kMuted);
-  done_ = TextButton(header, "Done", theme::kCyan);
+  recalibrate_ = ActionButton(header, "Recalibrate", theme::kMuted);
+  debug_ = ActionButton(header, "Debug", theme::kMuted);
+  done_ = ActionButton(header, "Done", theme::kCyan);
 
   AddRow("24-hour clock", &use_24h_switch_, true);
   AddRow("Set zone manually", &manual_zone_switch_, true);
 
   lv_obj_t* offset_row = AddRow("", nullptr, false);
-  offset_down_ = TextButton(offset_row, "-15m", theme::kCyan);
+  offset_down_ = ActionButton(offset_row, "-15m", theme::kCyan);
   lv_obj_align(offset_down_, LV_ALIGN_LEFT_MID, 0, 0);
   offset_label_ = lv_label_create(offset_row);
   lv_obj_align(offset_label_, LV_ALIGN_CENTER, 0, 0);
-  offset_up_ = TextButton(offset_row, "+15m", theme::kCyan);
+  offset_up_ = ActionButton(offset_row, "+15m", theme::kCyan);
   lv_obj_align(offset_up_, LV_ALIGN_RIGHT_MID, 0, 0);
 
   lv_obj_add_event_cb(use_24h_switch_, SettingsPanelEvents::Use24h, LV_EVENT_VALUE_CHANGED, this);
@@ -139,16 +141,28 @@ SettingsPanel::SettingsPanel(lv_obj_t* parent, ChangeCallback on_change, Actions
 
 SettingsPanel::~SettingsPanel() {
   if (panel_ != nullptr) lv_obj_delete(panel_);
+  if (scrim_ != nullptr) lv_obj_delete(scrim_);
 }
 
 void SettingsPanel::Show(const domain::DisplaySettings& current) {
   settings_ = domain::Sanitize(current);
   Refresh();
+  if (scrim_ == nullptr) {
+    scrim_ = theme::CreateScrim(lv_obj_get_parent(panel_));
+    lv_obj_add_event_cb(scrim_, SettingsPanelEvents::Done, LV_EVENT_CLICKED, this);
+  }
+  lv_obj_move_foreground(scrim_);
   lv_obj_remove_flag(panel_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(panel_);
 }
 
-void SettingsPanel::Hide() { lv_obj_add_flag(panel_, LV_OBJ_FLAG_HIDDEN); }
+void SettingsPanel::Hide() {
+  if (scrim_ != nullptr) {
+    lv_obj_delete(scrim_);
+    scrim_ = nullptr;
+  }
+  lv_obj_add_flag(panel_, LV_OBJ_FLAG_HIDDEN);
+}
 
 bool SettingsPanel::visible() const { return !lv_obj_has_flag(panel_, LV_OBJ_FLAG_HIDDEN); }
 

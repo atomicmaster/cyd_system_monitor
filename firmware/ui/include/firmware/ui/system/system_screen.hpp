@@ -23,7 +23,7 @@ namespace firmware::ui::system {
 // The Overview on the 320x240 display, top to bottom:
 //   a persistent status bar: the connection on the left, a centre kept free
 //     for the future Alert, then a tray of one fixed slot per radio (icon,
-//     colour for its state, WiFi channel) beside the clock;
+//     colour for its state, WiFi channel) beside the clock and the Settings gear;
 //   the registered cards: dial cards three to a row, then panel cards two to
 //     a row, sized so the registry's cards fill the area with no scrolling;
 //   the Agents bar.
@@ -47,8 +47,8 @@ class SystemScreen {
               const std::string& notice = {});
 
   // Tapping the connection text reports to the first callback (host link
-  // details); tapping anywhere else on the bar reports to the second. The
-  // owner decides what they open.
+  // details); tapping the gear (or the clock) reports to the second
+  // (Settings). The owner decides what they open.
   void SetConnectionTapCallback(std::function<void()> callback) {
     on_connection_tap_ = std::move(callback);
   }
@@ -59,6 +59,7 @@ class SystemScreen {
   lv_obj_t* status_bar() const { return bar_row_; }
   lv_obj_t* connection_label() const { return connection_label_; }
   lv_obj_t* clock_label() const { return clock_label_; }
+  lv_obj_t* gear() const { return gear_; }
   // The radio tray and its parts, for tests. A slash is visible only for an
   // operator-disabled radio.
   lv_obj_t* radio_tray() const { return tray_; }
@@ -103,6 +104,7 @@ class SystemScreen {
   // What the tray shows now, so an unchanged value touches nothing.
   std::optional<firmware::domain::CoverageStatus> shown_coverage_;
   lv_obj_t* clock_label_ = nullptr;
+  lv_obj_t* gear_ = nullptr;
   lv_obj_t* card_area_ = nullptr;
   std::vector<std::unique_ptr<MetricCard>> cards_;
   std::unique_ptr<AgentsBar> agents_bar_;

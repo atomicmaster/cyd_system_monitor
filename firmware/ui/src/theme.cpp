@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "firmware/ui/theme.hpp"
 
+#include <utility>
+
 namespace firmware::ui::theme {
 
 lv_color_t CardAccent(size_t index) {
@@ -27,7 +29,8 @@ namespace {
 
 // Shared styles: one copy in the LVGL pool however many objects use them.
 struct Styles {
-  lv_style_t caption, heading, sheet, text_button, pressed, disabled, rule;
+  lv_style_t caption, heading, sheet, text_button, action_accent, action_quiet, pressed, disabled,
+      rule;
   Styles() {
     lv_style_init(&caption);
     lv_style_set_text_font(&caption, &lv_font_montserrat_12);
@@ -51,6 +54,18 @@ struct Styles {
     lv_style_set_border_width(&text_button, 0);
     lv_style_set_shadow_width(&text_button, 0);
     lv_style_set_pad_hor(&text_button, 6);
+    // The pill look is the same for both; only the outline and text differ.
+    for (auto [style, color] :
+         {std::pair{&action_accent, kCyan}, std::pair{&action_quiet, kMuted}}) {
+      lv_style_init(style);
+      lv_style_set_bg_color(style, Color(kScreen));
+      lv_style_set_bg_opa(style, LV_OPA_COVER);
+      lv_style_set_border_width(style, 1);
+      lv_style_set_border_color(style, Color(color));
+      lv_style_set_text_color(style, Color(color));
+      lv_style_set_radius(style, LV_RADIUS_CIRCLE);
+      lv_style_set_pad_hor(style, 10);
+    }
     lv_style_init(&pressed);
     lv_style_set_bg_color(&pressed, Color(kPanelBorder));
     lv_style_set_bg_opa(&pressed, LV_OPA_COVER);
@@ -91,11 +106,24 @@ void StyleSheet(lv_obj_t* sheet, int32_t height) {
   lv_obj_align(handle, LV_ALIGN_TOP_MID, 0, -9);
 }
 
-void StyleTextButton(lv_obj_t* button, uint32_t color) {
+void StyleActionButton(lv_obj_t* button, bool accent) {
   lv_obj_add_style(button, &Shared().text_button, 0);
+  lv_obj_add_style(button, accent ? &Shared().action_accent : &Shared().action_quiet, 0);
   lv_obj_add_style(button, &Shared().pressed, LV_STATE_PRESSED);
   lv_obj_add_style(button, &Shared().disabled, LV_STATE_DISABLED);
-  lv_obj_set_style_text_color(button, Color(color), 0);
+}
+
+void StylePressed(lv_obj_t* object) {
+  lv_obj_add_style(object, &Shared().pressed, LV_STATE_PRESSED);
+}
+
+lv_obj_t* CreateScrim(lv_obj_t* parent) {
+  lv_obj_t* scrim = lv_obj_create(parent);
+  lv_obj_remove_style_all(scrim);
+  lv_obj_remove_flag(scrim, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(scrim, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(scrim, 320, 240);
+  return scrim;
 }
 
 void StyleSwitch(lv_obj_t* control) {

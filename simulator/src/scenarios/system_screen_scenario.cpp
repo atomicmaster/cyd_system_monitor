@@ -424,14 +424,17 @@ int RunSystemScreen() {
     lv_obj_update_layout(screen);
     const int tray_w = lv_obj_get_width(ui.radio_tray());
     const int bar_w = lv_obj_get_content_width(ui.status_bar());
-    const int need_worst = connection_w + tray_w + clock_w;
+    const int gear_w = lv_obj_get_width(ui.gear());
+    const int need_worst = connection_w + tray_w + clock_w + gear_w;
     std::printf(
-        "status bar %d px: worst connection \"%s\" %d + tray (flags shown) %d + clock \"%s\" %d "
+        "status bar %d px: worst connection \"%s\" %d + tray (flags shown) %d + clock \"%s\" %d + "
+        "gear %d "
         "= %d\n",
-        bar_w, long_connection.c_str(), connection_w, tray_w, long_clock.c_str(), clock_w,
+        bar_w, long_connection.c_str(), connection_w, tray_w, long_clock.c_str(), clock_w, gear_w,
         need_worst);
-    result.Expect(need_worst <= bar_w,
-                  "the longest connection and clock fit the bar together with the tray");
+    result.Expect(
+        need_worst <= bar_w,
+        "the longest connection and clock fit the bar together with the tray and the gear");
     // Each fixed box holds its widest text.
     bool boxes_fit = true;
     for (const char* text : {"ch11", "ch14", "ch10", "ch13", "ch12"})
@@ -439,12 +442,20 @@ int RunSystemScreen() {
     for (const char* text : {"~", "?", "!"})
       boxes_fit = boxes_fit && TextWidth(ui.wifi_flag_label(), text) <= 7;
     result.Expect(boxes_fit, "the channel box fits ch14 and the flag box fits ~ ? !");
+    lv_area_t gear_box, bar_box;
+    lv_obj_get_coords(ui.gear(), &gear_box);
+    lv_obj_get_coords(ui.status_bar(), &bar_box);
+    result.Expect(gear_box.x2 == bar_box.x2 && lv_obj_get_width(ui.gear()) >= 24 &&
+                      lv_obj_get_height(ui.gear()) >= 20 &&
+                      lv_obj_has_flag(ui.gear(), LV_OBJ_FLAG_CLICKABLE),
+                  "the gear is a 24x20 touch target at the bar's right end");
     lv_area_t tray_box, connection_box, clock_box;
     lv_obj_get_coords(ui.radio_tray(), &tray_box);
     lv_obj_get_coords(ui.connection_label(), &connection_box);
     lv_obj_get_coords(ui.clock_label(), &clock_box);
     result.Expect(tray_box.x1 > connection_box.x2 && tray_box.x2 < clock_box.x1,
                   "the tray sits between the connection and the clock");
+    result.Expect(clock_box.x2 < gear_box.x1, "the gear sits right of the clock");
     result.Expect(
         lv_obj_get_height(ui.tray_separator()) == 12 && lv_obj_get_width(ui.tray_separator()) == 1,
         "the separator is a 1x12 hairline");
@@ -514,6 +525,19 @@ int RunSystemScreen() {
     }
     result.Expect(sweep.variants() == 44 && sweep.fits(),
                   "every RAM dial text fits (fresh, Last and unavailable)");
+    // The worst dial: 100% on 128 GB. Report how much room is left.
+    sweep.Check(220'000, {.ram = proto::RamSnapshot{proto::Availability::kAvailable, 128 * kGiB,
+                                                    128 * kGiB, 0, proto::Freshness::kFresh}});
+    const MetricCard& full = overview.Card("ram");
+    const int value_w = TextWidth(full.value_label(), lv_label_get_text(full.value_label()));
+    const int ring_w = lv_obj_get_width(full.value_label());
+    std::printf("RAM dial \"%s\" %d px in a %d px ring opening; note \"%s\" %d px in %d px\n",
+                lv_label_get_text(full.value_label()), value_w, ring_w,
+                lv_label_get_text(full.note_label()),
+                TextWidth(full.note_label(), lv_label_get_text(full.note_label())),
+                lv_obj_get_content_width(full.note_label()));
+    result.Expect(sweep.fits() && value_w <= ring_w - 8,
+                  "RAM at 100% of 128 GB sits in the dial centre with 4 px clear each side");
   }
 
   // Storage: capacity and I/O fresh, stale or unavailable in every
@@ -540,6 +564,23 @@ int RunSystemScreen() {
         }
       }
     }
+    // The worst dial: 100% full with 999 MB/s each way.
+    sweep.Check(350'000, {.storage = proto::StorageSnapshot{
+                              proto::Availability::kAvailable, 994 * kGB, 0, 0,
+                              proto::Availability::kAvailable, 999'000'000, 999'000'000, 0}});
+    const MetricCard& full = overview.Card("storage");
+    std::printf(
+        "Storage dial \"%s\" %d px in a %d px ring opening; R \"%s\" %d px, W \"%s\" %d "
+        "px in %d px boxes\n",
+        lv_label_get_text(full.value_label()),
+        TextWidth(full.value_label(), lv_label_get_text(full.value_label())),
+        lv_obj_get_width(full.value_label()), lv_label_get_text(full.rate_value(0)),
+        TextWidth(full.rate_value(0), lv_label_get_text(full.rate_value(0))),
+        lv_label_get_text(full.rate_value(1)),
+        TextWidth(full.rate_value(1), lv_label_get_text(full.rate_value(1))),
+        lv_obj_get_width(full.rate_value(0)));
+    result.Expect(sweep.fits() && TextWidth(full.value_label(), "100%") <= 40,
+                  "Storage at 100% with 999M read and write fits the dial");
     overview.Render(340'000);  // link lost: everything retained
     sweep.Measure();
     result.Expect(sweep.variants() > 400 && sweep.fits(),

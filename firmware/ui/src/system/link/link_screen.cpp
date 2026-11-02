@@ -22,7 +22,7 @@ void LinkScreen::MakeButton(const char* text, lv_align_t align, Target* target) 
   lv_obj_set_size(button, 110, 36);
   lv_obj_align(button, align, 0, 0);
   // Text-only: Confirm in cyan, Decline muted (the Quiet style).
-  theme::StyleTextButton(button, target->accepted ? theme::kCyan : theme::kMuted);
+  theme::StyleActionButton(button, target->accepted);
   lv_obj_t* label = lv_label_create(button);
   lv_label_set_text(label, text);
   lv_obj_center(label);
@@ -43,7 +43,8 @@ LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision,
                        SettingsPanel::Actions settings_actions)
     : system_(parent), settings_(initial), on_decision_(std::move(on_decision)) {
   // Host link details: a sheet over the Overview, so versions never cover the
-  // cards for long. A title and Done on top, then one row per detail.
+  // cards for long. A title and Done on top, then one row per detail. While
+  // it is open a transparent scrim under it closes it on a tap anywhere outside.
   about_panel_ = lv_obj_create(parent);
   theme::StyleSheet(about_panel_, 166);
   lv_obj_set_flex_flow(about_panel_, LV_FLEX_FLOW_COLUMN);
@@ -57,8 +58,8 @@ LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision,
   lv_label_set_text(about_title, "Host link");
   lv_obj_align(about_title, LV_ALIGN_LEFT_MID, 0, 0);
   about_done_ = lv_button_create(header);
-  lv_obj_set_size(about_done_, LV_SIZE_CONTENT, 28);
-  theme::StyleTextButton(about_done_, theme::kCyan);
+  lv_obj_set_size(about_done_, LV_SIZE_CONTENT, 26);
+  theme::StyleActionButton(about_done_, true);
   lv_obj_t* done_label = lv_label_create(about_done_);
   lv_label_set_text(done_label, "Done");
   lv_obj_center(done_label);
@@ -66,9 +67,9 @@ LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision,
   lv_obj_add_event_cb(
       about_done_,
       [](lv_event_t* event) {
-        lv_obj_add_flag(static_cast<lv_obj_t*>(lv_event_get_user_data(event)), LV_OBJ_FLAG_HIDDEN);
+        static_cast<LinkScreen*>(lv_event_get_user_data(event))->SetAboutVisible(false);
       },
-      LV_EVENT_CLICKED, about_panel_);
+      LV_EVENT_CLICKED, this);
   details_ = lv_obj_create(about_panel_);
   lv_obj_remove_style_all(details_);
   lv_obj_remove_flag(details_, LV_OBJ_FLAG_SCROLLABLE);
@@ -115,16 +116,38 @@ LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision,
   // The pairing prompt has priority: it must never be hidden behind either panel.
   system_.SetStatusBarTapCallback([this]() {
     if (!lv_obj_has_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN)) return;
-    lv_obj_add_flag(about_panel_, LV_OBJ_FLAG_HIDDEN);
+    SetAboutVisible(false);
     settings_panel_->Show(settings_);
   });
   system_.SetConnectionTapCallback([this]() {
     if (!lv_obj_has_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN)) return;
     settings_panel_->Hide();
-    lv_obj_remove_flag(about_panel_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(about_panel_);
+    SetAboutVisible(true);
     ShowDetails();
   });
+}
+
+void LinkScreen::SetAboutVisible(bool visible) {
+  if (visible) {
+    if (about_scrim_ == nullptr) {
+      about_scrim_ = theme::CreateScrim(lv_obj_get_parent(about_panel_));
+      lv_obj_add_event_cb(
+          about_scrim_,
+          [](lv_event_t* event) {
+            static_cast<LinkScreen*>(lv_event_get_user_data(event))->SetAboutVisible(false);
+          },
+          LV_EVENT_CLICKED, this);
+    }
+    lv_obj_move_foreground(about_scrim_);
+    lv_obj_remove_flag(about_panel_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(about_panel_);
+  } else {
+    if (about_scrim_ != nullptr) {
+      lv_obj_delete(about_scrim_);
+      about_scrim_ = nullptr;
+    }
+    lv_obj_add_flag(about_panel_, LV_OBJ_FLAG_HIDDEN);
+  }
 }
 
 // The rows exist only while the sheet is open: about 3.5 KB of the LVGL pool
@@ -159,6 +182,7 @@ void LinkScreen::ShowDetails() {
 LinkScreen::~LinkScreen() {
   // Delete our own objects; the SystemScreen member removes its own tree.
   if (about_panel_ != nullptr) lv_obj_delete(about_panel_);
+  if (about_scrim_ != nullptr) lv_obj_delete(about_scrim_);
   if (prompt_panel_ != nullptr) lv_obj_delete(prompt_panel_);
   settings_panel_.reset();
 }
@@ -174,7 +198,7 @@ void LinkScreen::Update(const firmware::domain::CpuView& status,
   lv_label_set_text(fault_label_, link.fault.c_str());
   if (link.prompt_visible) {
     settings_panel_->Hide();
-    lv_obj_add_flag(about_panel_, LV_OBJ_FLAG_HIDDEN);
+    SetAboutVisible(false);
     lv_label_set_text(code_label_, link.code.c_str());
     lv_obj_remove_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN);
   } else {

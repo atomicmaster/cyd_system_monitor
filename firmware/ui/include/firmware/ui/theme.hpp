@@ -56,8 +56,16 @@ void StyleHeading(lv_obj_t* label);
 // A sheet rising from the bottom edge: panel fill, rounded corners, a
 // hairline top edge and a grab handle, `height` tall.
 void StyleSheet(lv_obj_t* sheet, int32_t height);
-// A text-only button in `color` (the Quiet style has no filled buttons).
-void StyleTextButton(lv_obj_t* button, uint32_t color);
+// A header or sheet action: a rounded pill with a 1 px outline on a recessed
+// fill, so it reads as a button on the dark sheet. `accent` is the cyan
+// expected action; otherwise it is quiet (muted).
+void StyleActionButton(lv_obj_t* button, bool accent);
+// The shared pressed-state fill, for a tap target that is not a button.
+void StylePressed(lv_obj_t* object);
+// A transparent, clickable, full-screen layer on `parent`, created on top of
+// everything: a sheet puts its scrim up just before itself and deletes it on
+// close, so a closed sheet holds no pool memory for it.
+lv_obj_t* CreateScrim(lv_obj_t* parent);
 // A switch with the cyan "on" track.
 void StyleSwitch(lv_obj_t* control);
 // A hairline under a row.

@@ -47,6 +47,7 @@ class LinkScreen {
 
   lv_obj_t* prompt_panel() const { return prompt_panel_; }
   lv_obj_t* about_panel() const { return about_panel_; }
+  lv_obj_t* about_scrim() const { return about_scrim_; }
   bool about_visible() const { return !lv_obj_has_flag(about_panel_, LV_OBJ_FLAG_HIDDEN); }
   lv_obj_t* about_done_button() const { return about_done_; }
   // The Host link rows (a label and a value each), one per LinkView detail.
@@ -61,12 +62,14 @@ class LinkScreen {
   };
   void MakeButton(const char* text, lv_align_t align, Target* target);
   void ShowDetails();
+  void SetAboutVisible(bool visible);
   SystemScreen system_;
   firmware::domain::DisplaySettings settings_;
   std::unique_ptr<SettingsPanel> settings_panel_;
   DecisionCallback on_decision_;
   Target confirm_target_;
   Target decline_target_;
+  lv_obj_t* about_scrim_ = nullptr;  // tap-outside layer under the sheet
   lv_obj_t* about_panel_ = nullptr;
   lv_obj_t* about_done_ = nullptr;
   lv_obj_t* details_ = nullptr;

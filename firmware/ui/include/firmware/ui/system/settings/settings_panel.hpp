@@ -33,6 +33,7 @@ class SettingsPanel {
   const firmware::domain::DisplaySettings& settings() const { return settings_; }
 
   lv_obj_t* panel() const { return panel_; }
+  lv_obj_t* scrim() const { return scrim_; }
   lv_obj_t* use_24h_switch() const { return use_24h_switch_; }
   lv_obj_t* manual_zone_switch() const { return manual_zone_switch_; }
   lv_obj_t* offset_label() const { return offset_label_; }
@@ -51,6 +52,7 @@ class SettingsPanel {
   ChangeCallback on_change_;
   Actions actions_;
   firmware::domain::DisplaySettings settings_;
+  lv_obj_t* scrim_ = nullptr;  // full-screen tap-outside layer under the sheet
   lv_obj_t* panel_ = nullptr;
   lv_obj_t* use_24h_switch_ = nullptr;
   lv_obj_t* manual_zone_switch_ = nullptr;

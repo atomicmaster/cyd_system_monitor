@@ -101,20 +101,54 @@ int RunSettings() {
       domain::DisplaySettings{.use_24h = false});
   link.Update(domain::CpuView{.connection = "Connected", .clock = "17:13"}, {}, domain::LinkView{});
   RenderOnce();
-  result.Expect(!link.settings_panel().visible(), "settings are closed until the bar is tapped");
+  result.Expect(!link.settings_panel().visible(), "settings are closed until the gear is tapped");
   // Fixed layout: none of these may scroll, so a drag on the bar moves nothing.
   for (lv_obj_t* fixed : {link.system().status_bar(), lv_obj_get_parent(link.system().status_bar()),
                           link.settings_panel().panel()}) {
     result.Expect(!lv_obj_has_flag(fixed, LV_OBJ_FLAG_SCROLLABLE),
                   "the status bar, its container, and the settings panel are not scrollable");
   }
-  Click(link.system().status_bar());
+  Click(link.system().gear());
   result.Expect(link.settings_panel().visible() && !link.settings_panel().settings().use_24h,
-                "tapping the status bar opens settings with the current values");
+                "tapping the gear opens settings with the current values");
   Toggle(link.settings_panel().use_24h_switch());
   result.Expect(saved.has_value() && saved->use_24h && link.settings().use_24h,
                 "a change reaches the persistence callback and the screen's own settings");
   Click(link.settings_panel().done_button());
+  result.Expect(link.settings_panel().scrim() == nullptr, "Done removes the scrim with the sheet");
+  // The bar itself opens nothing; the clock is a second path to settings.
+  Click(link.system().status_bar());
+  result.Expect(!link.settings_panel().visible(), "the bar's empty space opens nothing");
+  Click(link.system().clock_label());
+  result.Expect(link.settings_panel().visible(), "tapping the clock also opens settings");
+  RenderOnce();
+  // A tap outside the sheet closes it: the scrim sits above the bar, so the
+  // bar underneath never sees that tap.
+  {
+    lv_obj_t* scrim = link.settings_panel().scrim();
+    result.Expect(scrim != nullptr &&
+                      lv_obj_get_index(scrim) >
+                          lv_obj_get_index(lv_obj_get_parent(link.system().status_bar())) &&
+                      lv_obj_get_index(link.settings_panel().panel()) > lv_obj_get_index(scrim),
+                  "the open sheet has a scrim above the Overview and below the sheet");
+    lv_area_t coords;
+    lv_obj_get_coords(scrim, &coords);
+    result.Expect(coords.x1 == 0 && coords.y1 == 0 && coords.x2 == 319 && coords.y2 == 239 &&
+                      lv_obj_has_flag(scrim, LV_OBJ_FLAG_CLICKABLE),
+                  "the scrim is a clickable full-screen layer, covering the status bar");
+    // Where a finger would land: the connection text and the gear both sit
+    // under the scrim, which takes the touch instead.
+    for (lv_obj_t* under : {link.system().connection_label(), link.system().gear()}) {
+      lv_area_t box;
+      lv_obj_get_coords(under, &box);
+      lv_point_t point{(box.x1 + box.x2) / 2, (box.y1 + box.y2) / 2};
+      result.Expect(lv_indev_search_obj(lv_screen_active(), &point) == scrim,
+                    "a touch on the bar while the sheet is open lands on the scrim");
+    }
+    Click(scrim);
+    result.Expect(!link.settings_panel().visible() && link.settings_panel().scrim() == nullptr,
+                  "tapping outside the sheet closes it and removes the scrim");
+  }
 
   // Tapping the connection text opens the Host link panel instead: versions,
   // pairing and any fault, which no longer sit over the Overview's cards.
@@ -130,6 +164,15 @@ int RunSettings() {
                 "tapping the connection text opens the Host link panel, not settings");
   Click(link.about_done_button());
   result.Expect(!link.about_visible(), "Done closes the Host link panel");
+  Click(link.system().connection_label());
+  result.Expect(link.about_visible(), "the Host link panel opens again");
+  lv_obj_t* about_scrim = link.about_scrim();
+  result.Expect(about_scrim != nullptr &&
+                    lv_obj_get_index(about_scrim) < lv_obj_get_index(link.about_panel()),
+                "the open Host link sheet has a scrim under it");
+  Click(about_scrim);
+  result.Expect(!link.about_visible() && link.about_scrim() == nullptr,
+                "tapping outside the Host link sheet closes it and removes its scrim");
 
   // A pending pairing prompt has priority over settings.
   domain::LinkView prompt;
@@ -139,11 +182,11 @@ int RunSettings() {
   result.Expect(!lv_obj_has_flag(link.prompt_panel(), LV_OBJ_FLAG_HIDDEN) &&
                     std::strcmp(lv_label_get_text(link.code_label()), "123456") == 0,
                 "a pending pairing shows its code");
-  Click(link.system().status_bar());
+  Click(link.system().gear());
   result.Expect(!link.settings_panel().visible(), "settings do not open over a pairing prompt");
   domain::LinkView none;
   link.Update(domain::CpuView{}, {}, none);
-  Click(link.system().status_bar());
+  Click(link.system().gear());
   result.Expect(link.settings_panel().visible(), "settings open again once the prompt is gone");
   link.Update(domain::CpuView{}, {}, prompt);
   result.Expect(!link.settings_panel().visible(),

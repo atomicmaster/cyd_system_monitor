@@ -31,7 +31,8 @@ constexpr int32_t kSlashHaloWidth = 5;
 constexpr int32_t kSlashWidth = 2;
 constexpr int32_t kRuneWidth = 2;
 constexpr int32_t kRuneBoxWidth = 10;  // the rune's 8 px plus its stroke
-constexpr int32_t kSlashSpan = 11;     // vertical extent: just the glyph, not the font line
+constexpr int32_t kGearWidth = 26;  // the Settings touch target: 26x20, 24 px tall with its margin
+constexpr int32_t kSlashSpan = 11;  // vertical extent: just the glyph, not the font line
 
 // A non-interactive plain object: the bar underneath owns every tap.
 lv_obj_t* PlainObject(lv_obj_t* parent) {
@@ -159,14 +160,9 @@ SystemScreen::SystemScreen(lv_obj_t* parent) {
   // A hairline under the bar instead of a panel (the Quiet style).
   theme::StyleRowRule(bar_row);
   lv_obj_remove_flag(bar_row, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_flag(bar_row, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(
-      bar_row,
-      [](lv_event_t* e) {
-        auto* self = static_cast<SystemScreen*>(lv_event_get_user_data(e));
-        if (self->on_status_tap_) self->on_status_tap_();
-      },
-      LV_EVENT_CLICKED, this);
+  // The bar itself is not a button: only the connection text, the clock and
+  // the gear are, so a stray tap on the tray or the gaps opens nothing.
+  lv_obj_remove_flag(bar_row, LV_OBJ_FLAG_CLICKABLE);
   connection_label_ = lv_label_create(bar_row);
   // Its own touch target: the bar is only 20 px tall, so reach past it.
   lv_obj_add_flag(connection_label_, LV_OBJ_FLAG_CLICKABLE);
@@ -213,6 +209,33 @@ SystemScreen::SystemScreen(lv_obj_t* parent) {
   lv_obj_set_style_bg_color(separator_, theme::Color(theme::kPanelBorder), 0);
   lv_obj_set_style_margin_right(separator_, kSeparatorMargin, 0);
   clock_label_ = lv_label_create(bar_row);
+  // The clock opens Settings too, as a second path; the gear is the obvious one.
+  lv_obj_add_flag(clock_label_, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(
+      clock_label_,
+      [](lv_event_t* e) {
+        auto* self = static_cast<SystemScreen*>(lv_event_get_user_data(e));
+        if (self->on_status_tap_) self->on_status_tap_();
+      },
+      LV_EVENT_CLICKED, this);
+  // The gear: one fixed-width label at the bar's right end, so no text
+  // change moves it.
+  gear_ = lv_label_create(bar_row);
+  lv_label_set_text_static(gear_, LV_SYMBOL_SETTINGS);
+  lv_obj_set_size(gear_, kGearWidth, kStatusHeight);
+  lv_obj_set_style_text_align(gear_, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_text_color(gear_, theme::Color(theme::kText), 0);
+  lv_obj_set_style_pad_top(gear_, 3, 0);
+  lv_obj_add_flag(gear_, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_ext_click_area(gear_, 2);
+  theme::StylePressed(gear_);
+  lv_obj_add_event_cb(
+      gear_,
+      [](lv_event_t* e) {
+        auto* self = static_cast<SystemScreen*>(lv_event_get_user_data(e));
+        if (self->on_status_tap_) self->on_status_tap_();
+      },
+      LV_EVENT_CLICKED, this);
 
   card_area_ = lv_obj_create(root_);
   lv_obj_remove_style_all(card_area_);

@@ -72,6 +72,12 @@ class Preview {
     feed_.Push(SnapshotFrame(sequence, LiveGroups(agents)));
   }
 
+  // Pushes explicit groups, for a worst-case reading.
+  void PushGroups(uint64_t ms, uint32_t sequence, const proto::SnapshotGroups& groups) {
+    clock_.Set(ms);
+    feed_.Push(SnapshotFrame(sequence, groups));
+  }
+
   // Renders at `ms`. A non-empty `clock` or `connection` replaces the domain's
   // text, to show a Host-supplied time or a worst-case width.
   void Render(uint64_t ms, const domain::CoverageStatus& coverage,
@@ -210,6 +216,12 @@ int RunPreview(const std::string& dir) {
         {"Supported", "1.0"}, {"Host", "1.0"}, {"Negotiated", "1.0"}, {"Pairing", "Paired"}};
     preview.Render(2000, Coverage(RadioState::kObserving, RadioState::kObserving, Radio::kWifi, 6),
                    "10:42 PM", {}, link);
+    // The sheet is opened by a finger, long after the cards' fade-in
+    // animations have finished.
+    for (int i = 0; i < 10; ++i) {
+      lv_tick_inc(100);
+      lv_timer_handler();
+    }
     // A tap on the connection text opens it, as on the board.
     lv_obj_send_event(preview.ui().system().connection_label(), LV_EVENT_CLICKED, nullptr);
     save("7-host-link");
@@ -244,6 +256,21 @@ int RunPreview(const std::string& dir) {
     preview.Render(2000, Coverage(RadioState::kObserving, RadioState::kObserving, Radio::kWifi, 6),
                    "10:42 PM");
     save("10-agents-gemini-opencode-running");
+  }
+  {
+    // The widest dial readings: RAM and Storage at 100% with 128 GB and
+    // 999 MB/s rates.
+    Preview preview(screen);
+    auto groups = LiveGroups({});
+    groups.ram = proto::RamSnapshot{proto::Availability::kAvailable, 128 * kGiB, 128 * kGiB, 0,
+                                    proto::Freshness::kFresh};
+    groups.storage =
+        proto::StorageSnapshot{proto::Availability::kAvailable, 994 * kGB,   0,           0,
+                               proto::Availability::kAvailable, 999'000'000, 999'000'000, 0};
+    preview.PushGroups(2000, 1, groups);
+    preview.Render(2000, Coverage(RadioState::kObserving, RadioState::kObserving, Radio::kWifi, 6),
+                   "10:42 PM");
+    save("12-full-dials");
   }
   {
     // Every agent busy: five animated badges, the Overview's peak.
