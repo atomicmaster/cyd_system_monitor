@@ -187,13 +187,20 @@ CoverageView MakeCoverageView(const ObservationConfig& given, const CoverageLedg
   view.ble = MakeRadioView(config.ble_enabled, ledger.totals(Radio::kBle),
                            ledger.fault(Radio::kBle), ble_revisit, now_ms);
   if (active) {
-    // An active window past its planned end, or one the ledger already holds a
-    // later report for, is stale news from the app loop: ignore it.
+    // A later report supersedes this window. An overdue unreported window
+    // still supplies the newest channel, but is no longer current.
     const uint64_t planned_end = active->rx_start_ms + active->planned_ms < active->rx_start_ms
                                      ? UINT64_MAX
                                      : active->rx_start_ms + active->planned_ms;
     const auto& last = ledger.totals(active->radio).last_report_ms;
-    if (now_ms > planned_end || (last && *last > active->rx_start_ms)) active.reset();
+    if (last && *last > active->rx_start_ms) {
+      active.reset();
+    } else if (now_ms > planned_end) {
+      if (active->radio == Radio::kWifi && config.wifi_enabled &&
+          view.wifi.state == RadioState::kObserving)
+        view.wifi.last_channel = active->channel;
+      active.reset();
+    }
   }
   const bool active_enabled =
       active && (active->radio == Radio::kWifi ? config.wifi_enabled : config.ble_enabled);

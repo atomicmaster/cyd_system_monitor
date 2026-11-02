@@ -302,7 +302,7 @@ int main() {
            "a report completed after `now` is not stale");
   }
 
-  // An active window is ignored once it is over or already reported.
+  // An overdue unreported window retains its channel; reported news supersedes it.
   {
     ObservationConfig config = NormalizeConfig({});
     CoverageLedger ledger;
@@ -311,11 +311,15 @@ int main() {
     Expect(MakeCoverageView(config, ledger, 300, active).wifi.last_channel == 2 &&
                MakeCoverageView(config, ledger, 410, active).wifi.last_channel == 2,
            "an active window is shown until its planned end");
-    Expect(MakeCoverageView(config, ledger, 411, active).wifi.last_channel == 1,
-           "a window past its planned end is no longer shown as active");
+    Expect(MakeCoverageStatus(MakeCoverageView(config, ledger, 412, active)).wifi.channel == 2,
+           "an overdue unreported window retains its channel");
     ledger.Record(CompletedReport({Radio::kWifi, 2, 205, 205}, 205));  // completed at 410
     Expect(MakeCoverageView(config, ledger, 420, active).wifi.last_channel == 2,
            "a window reported after it started is no longer shown as active");
+    Expect(MakeCoverageStatus(
+               MakeCoverageView(config, ledger, 420, ActiveWindow{Radio::kBle, 0, 4, 410, 205}))
+                   .wifi.channel == 2,
+           "the reported WiFi channel remains visible during BLE");
     ledger.Record(CompletedReport({Radio::kWifi, 3, 410, 205}, 205));  // completed at 615
     Expect(MakeCoverageView(config, ledger, 420, ActiveWindow{Radio::kWifi, 9, 5, 700, 205})
                    .wifi.last_channel == 9,
