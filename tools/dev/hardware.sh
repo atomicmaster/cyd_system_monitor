@@ -66,7 +66,9 @@ run() {
       esac
     done
     [[ -n "$port" && -n "$seconds" ]] || { echo "error: session requires --port and --seconds" >&2; return 1; }
-    "${python:-python}" -I "$(dev_root)/tools/hardware/serial_session.py" "$port" "$seconds" "${args[@]}"
+    # pyserial comes with ESP-IDF: its env first, then whatever `python`/`python3` is on PATH.
+    if [[ -z "$python" ]]; then python="$(command -v python || command -v python3)"; fi
+    "$python" -I "$(dev_root)/tools/hardware/serial_session.py" "$port" "$seconds" ${args[@]+"${args[@]}"}
     return
   fi
   if [[ "${1:-}" == "flash" ]]; then
