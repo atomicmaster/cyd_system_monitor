@@ -52,6 +52,9 @@ class SystemScreen {
   void SetConnectionTapCallback(std::function<void()> callback) {
     on_connection_tap_ = std::move(callback);
   }
+  // Tapping a radio slot (WiFi or BLE, anywhere in it) reports to the third
+  // callback (Settings at the Radios section).
+  void SetRadioTapCallback(std::function<void()> callback) { on_radio_tap_ = std::move(callback); }
   void SetStatusBarTapCallback(std::function<void()> callback) {
     on_status_tap_ = std::move(callback);
   }
@@ -60,6 +63,8 @@ class SystemScreen {
   lv_obj_t* connection_label() const { return connection_label_; }
   lv_obj_t* clock_label() const { return clock_label_; }
   lv_obj_t* gear() const { return gear_; }
+  lv_obj_t* wifi_group() const { return wifi_group_; }
+  lv_obj_t* ble_group() const { return ble_group_; }
   // The radio tray and its parts, for tests. A slash is visible only for an
   // operator-disabled radio.
   lv_obj_t* radio_tray() const { return tray_; }
@@ -79,6 +84,7 @@ class SystemScreen {
   lv_obj_t* root_ = nullptr;
   std::function<void()> on_connection_tap_;
   std::function<void()> on_status_tap_;
+  std::function<void()> on_radio_tap_;
   // One radio's icon (a symbol label for WiFi, a drawn rune for BLE), the
   // slash drawn across it when off, and its flag.
   struct RadioWidgets {
@@ -97,6 +103,8 @@ class SystemScreen {
   lv_obj_t* bar_row_ = nullptr;
   lv_obj_t* connection_label_ = nullptr;
   lv_obj_t* tray_ = nullptr;
+  lv_obj_t* wifi_group_ = nullptr;
+  lv_obj_t* ble_group_ = nullptr;
   RadioWidgets wifi_;
   RadioWidgets ble_;
   lv_obj_t* wifi_channel_ = nullptr;

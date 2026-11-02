@@ -31,8 +31,21 @@ constexpr int32_t kSlashHaloWidth = 5;
 constexpr int32_t kSlashWidth = 2;
 constexpr int32_t kRuneWidth = 2;
 constexpr int32_t kRuneBoxWidth = 10;  // the rune's 8 px plus its stroke
-constexpr int32_t kGearWidth = 26;  // the Settings touch target: 26x20, 24 px tall with its margin
-constexpr int32_t kSlashSpan = 11;  // vertical extent: just the glyph, not the font line
+constexpr int32_t kGearWidth = 26;   // the Settings touch target: 26x20, 24 px tall with its margin
+constexpr int32_t kTouchMargin = 4;  // extra touch area round each right-hand target
+constexpr int32_t kSlashSpan = 11;   // vertical extent: just the glyph, not the font line
+
+// LVGL searches an object's children only for touches inside the object (plus
+// its draw margin), so a parent of a target with an extended click area has to
+// report that margin (and let its children overflow it) or the extension is
+// never reached.
+void ReachChildMargin(lv_obj_t* parent) {
+  lv_obj_add_flag(parent, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+  lv_obj_add_event_cb(
+      parent, [](lv_event_t* e) { lv_event_set_ext_draw_size(e, kTouchMargin); },
+      LV_EVENT_REFR_EXT_DRAW_SIZE, nullptr);
+  lv_obj_refresh_ext_draw_size(parent);
+}
 
 // A non-interactive plain object: the bar underneath owns every tap.
 lv_obj_t* PlainObject(lv_obj_t* parent) {
@@ -170,10 +183,15 @@ SystemScreen::SystemScreen(lv_obj_t* parent) {
   // The bar itself is not a button: only the connection text, the clock and
   // the gear are, so a stray tap on the tray or the gaps opens nothing.
   lv_obj_remove_flag(bar_row, LV_OBJ_FLAG_CLICKABLE);
+  ReachChildMargin(bar_row);
   connection_label_ = lv_label_create(bar_row);
-  // Its own touch target: the bar is only 20 px tall, so reach past it.
+  // Its own touch target, the bar's full height (the text sits 3 px down, as the
+  // gear's does). The margin is 2 px so that, against the radio slots' 4 px, the
+  // two targets still do not meet when the tray is at its widest.
   lv_obj_add_flag(connection_label_, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_ext_click_area(connection_label_, 8);
+  lv_obj_set_height(connection_label_, kStatusHeight);
+  lv_obj_set_style_pad_top(connection_label_, 3, 0);
+  lv_obj_set_ext_click_area(connection_label_, 2);
   lv_obj_add_event_cb(
       connection_label_,
       [](lv_event_t* e) {
@@ -195,19 +213,34 @@ SystemScreen::SystemScreen(lv_obj_t* parent) {
   lv_obj_set_flex_flow(tray_, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(tray_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_column(tray_, kTrayGap, 0);
+  ReachChildMargin(tray_);
   const auto make_group = [&] {
     lv_obj_t* group = PlainObject(tray_);
     lv_obj_set_size(group, LV_SIZE_CONTENT, kStatusHeight);
     lv_obj_set_flex_flow(group, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(group, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(group, kSlotGap, 0);
+    // The whole slot (icon, flag, channel) opens the Radios section; the bar is
+    // only 20 px tall, so the target reaches past it, and the two slots' margins
+    // meet across the 8 px between them.
+    lv_obj_add_flag(group, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(group, kTouchMargin);
+    lv_obj_add_event_cb(
+        group,
+        [](lv_event_t* e) {
+          auto* self = static_cast<SystemScreen*>(lv_event_get_user_data(e));
+          if (self->on_radio_tap_) self->on_radio_tap_();
+        },
+        LV_EVENT_CLICKED, this);
     return group;
   };
-  lv_obj_t* wifi_group = make_group();
+  wifi_group_ = make_group();
+  lv_obj_t* wifi_group = wifi_group_;
   BuildRadioIcon(wifi_, wifi_group, LV_SYMBOL_WIFI);
   wifi_.flag = TrayLabel(wifi_group, kFlagWidth, LV_TEXT_ALIGN_CENTER);
   wifi_channel_ = TrayLabel(wifi_group, kChannelWidth, LV_TEXT_ALIGN_LEFT);
-  lv_obj_t* ble_group = make_group();
+  ble_group_ = make_group();
+  lv_obj_t* ble_group = ble_group_;
   BuildRadioIcon(ble_, ble_group, nullptr);
   ble_.flag = TrayLabel(ble_group, kFlagWidth, LV_TEXT_ALIGN_CENTER);
   separator_ = PlainObject(tray_);
@@ -216,8 +249,11 @@ SystemScreen::SystemScreen(lv_obj_t* parent) {
   lv_obj_set_style_bg_color(separator_, theme::Color(theme::kPanelBorder), 0);
   lv_obj_set_style_margin_right(separator_, kSeparatorMargin, 0);
   clock_label_ = lv_label_create(bar_row);
-  // The clock opens Settings too, as a second path; the gear is the obvious one.
+  // The clock opens the clock settings too; the gear is the obvious path.
   lv_obj_add_flag(clock_label_, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_height(clock_label_, kStatusHeight);
+  lv_obj_set_style_pad_top(clock_label_, 3, 0);
+  lv_obj_set_ext_click_area(clock_label_, kTouchMargin);
   lv_obj_add_event_cb(
       clock_label_,
       [](lv_event_t* e) {
@@ -234,7 +270,7 @@ SystemScreen::SystemScreen(lv_obj_t* parent) {
   lv_obj_set_style_text_color(gear_, theme::Color(theme::kText), 0);
   lv_obj_set_style_pad_top(gear_, 3, 0);
   lv_obj_add_flag(gear_, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_ext_click_area(gear_, 2);
+  lv_obj_set_ext_click_area(gear_, kTouchMargin);
   theme::StylePressed(gear_);
   lv_obj_add_event_cb(
       gear_,

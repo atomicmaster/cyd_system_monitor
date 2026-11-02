@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include <cstring>
 #include <optional>
+#include <vector>
 
 #include "../expect.hpp"
 #include "../lvgl_env.hpp"
@@ -43,7 +44,7 @@ void Click(lv_obj_t* object) { lv_obj_send_event(object, LV_EVENT_CLICKED, nullp
 
 }  // namespace
 
-// The clock settings panel and how it is reached: tapping the status bar.
+// The settings sheet (Clock and Radios sections) and how each is reached from the status bar.
 int RunSettings() {
   ScenarioResult result;
   lv_obj_t* screen = InitLvglHeadless();
@@ -94,6 +95,92 @@ int RunSettings() {
   Click(panel.done_button());
   result.Expect(!panel.visible(), "Done hides the panel");
 
+  // --- the Radios section on its own, against a stub radio task ---
+  {
+    using Section = ui::SettingsPanel::Section;
+    struct Request {
+      bool wifi;
+      bool on;
+    };
+    std::vector<Request> requests;
+    bool wifi_on = true, ble_on = true, queue_ok = true;
+    ui::SettingsPanel::Actions actions;
+    actions.read_radios = [&](bool& wifi, bool& ble) {
+      wifi = wifi_on;
+      ble = ble_on;
+    };
+    actions.set_radio = [&](bool wifi, bool on) {
+      requests.push_back({wifi, on});
+      return queue_ok;
+    };
+    ui::SettingsPanel radios(screen, [](const domain::DisplaySettings&) {}, actions);
+    radios.Show({}, Section::kRadios);
+    RenderOnce();
+    result.Expect(radios.section() == Section::kRadios && radios.wifi_switch() != nullptr &&
+                      radios.ble_switch() != nullptr && radios.use_24h_switch() == nullptr,
+                  "Radios builds its two switches and none of the Clock rows");
+    result.Expect(ContainsText(radios.panel(), "WiFi observation") &&
+                      ContainsText(radios.panel(), "BLE observation") &&
+                      ContainsText(radios.panel(), "Operator disabled") &&
+                      ContainsText(radios.panel(), "Not saved across restarts"),
+                  "Radios names both observations and explains Operator disabled and no saving");
+    result.Expect(Checked(radios.wifi_switch()) && Checked(radios.ble_switch()),
+                  "both switches start on when both radios observe");
+    for (lv_obj_t* kept :
+         {radios.recalibrate_button(), radios.debug_button(), radios.done_button()}) {
+      lv_area_t box;
+      lv_obj_get_coords(kept, &box);
+      result.Expect(box.y1 >= 0 && box.y2 <= 239 && box.x1 >= 0 && box.x2 <= 319 &&
+                        !lv_obj_has_flag(kept, LV_OBJ_FLAG_HIDDEN),
+                    "Recalibrate, Debug and Done stay on screen in Radios");
+    }
+    Toggle(radios.wifi_switch());
+    result.Expect(requests.size() == 1 && requests[0].wifi && !requests[0].on,
+                  "switching WiFi off sends a WiFi-disable request");
+    Toggle(radios.ble_switch());
+    result.Expect(requests.size() == 2 && !requests[1].wifi && !requests[1].on,
+                  "switching BLE off sends a BLE-disable request");
+    Toggle(radios.wifi_switch());
+    result.Expect(requests.size() == 3 && requests[2].wifi && requests[2].on,
+                  "switching WiFi back on sends a WiFi-enable request");
+    // The radio task applies them later; a sync while it has not caught up
+    // must not undo the finger, and a DEV command that changes the config must show.
+    radios.SyncRadios();
+    result.Expect(Checked(radios.wifi_switch()) && !Checked(radios.ble_switch()),
+                  "a sync before the config changes leaves the switches as touched");
+    ble_on = false;  // the radio task applies the BLE request
+    radios.SyncRadios();
+    result.Expect(Checked(radios.wifi_switch()) && !Checked(radios.ble_switch()),
+                  "a sync once the config catches up leaves them as touched");
+    wifi_on = false;
+    ble_on = true;
+    radios.SyncRadios();
+    result.Expect(!Checked(radios.wifi_switch()) && Checked(radios.ble_switch()),
+                  "a config change from elsewhere moves the switches while shown");
+    queue_ok = false;
+    Toggle(radios.wifi_switch());
+    result.Expect(!Checked(radios.wifi_switch()) && requests.size() == 4,
+                  "a request the radio task did not queue puts the switch back");
+    // Reopening reads the config afresh.
+    radios.Hide();
+    wifi_on = true;
+    ble_on = false;
+    radios.Show({}, Section::kRadios);
+    result.Expect(Checked(radios.wifi_switch()) && !Checked(radios.ble_switch()),
+                  "showing the section reads the current radio config");
+    // The selector moves between sections and builds only the shown rows.
+    Click(radios.clock_tab());
+    result.Expect(radios.section() == Section::kClock && radios.wifi_switch() == nullptr &&
+                      radios.use_24h_switch() != nullptr,
+                  "the Clock tab swaps the Radios rows for the Clock rows");
+    Click(radios.radios_tab());
+    result.Expect(radios.wifi_switch() != nullptr && radios.use_24h_switch() == nullptr,
+                  "the Radios tab swaps them back");
+    radios.Hide();
+    result.Expect(lv_obj_get_child_count(lv_obj_get_child(radios.panel(), 2)) == 0,
+                  "a closed sheet holds no rows");
+  }
+
   // --- reached through the status bar of the link screen ---
   std::optional<domain::DisplaySettings> saved;
   ui::LinkScreen link(
@@ -109,8 +196,9 @@ int RunSettings() {
                   "the status bar, its container, and the settings panel are not scrollable");
   }
   Click(link.system().gear());
-  result.Expect(link.settings_panel().visible() && !link.settings_panel().settings().use_24h,
-                "tapping the gear opens settings with the current values");
+  result.Expect(link.settings_panel().visible() && !link.settings_panel().settings().use_24h &&
+                    link.settings_panel().section() == ui::SettingsPanel::Section::kClock,
+                "tapping the gear opens the clock settings with the current values");
   Toggle(link.settings_panel().use_24h_switch());
   result.Expect(saved.has_value() && saved->use_24h && link.settings().use_24h,
                 "a change reaches the persistence callback and the screen's own settings");
@@ -120,7 +208,9 @@ int RunSettings() {
   Click(link.system().status_bar());
   result.Expect(!link.settings_panel().visible(), "the bar's empty space opens nothing");
   Click(link.system().clock_label());
-  result.Expect(link.settings_panel().visible(), "tapping the clock also opens settings");
+  result.Expect(link.settings_panel().visible() &&
+                    link.settings_panel().section() == ui::SettingsPanel::Section::kClock,
+                "tapping the clock also opens the clock settings");
   RenderOnce();
   // A tap outside the sheet closes it: the scrim sits above the bar, so the
   // bar underneath never sees that tap.
@@ -148,6 +238,73 @@ int RunSettings() {
     Click(scrim);
     result.Expect(!link.settings_panel().visible() && link.settings_panel().scrim() == nullptr,
                   "tapping outside the sheet closes it and removes the scrim");
+  }
+
+  // --- which part of the bar opens which section, by where a finger lands ---
+  {
+    using Section = ui::SettingsPanel::Section;
+    // Taps the bar at (x, y) as a finger would: whatever clickable object is
+    // there gets the click. Returns that object.
+    const auto tap = [&](int32_t x, int32_t y) {
+      lv_point_t point{x, y};
+      lv_obj_t* hit = lv_indev_search_obj(lv_screen_active(), &point);
+      if (hit != nullptr) Click(hit);
+      return hit;
+    };
+    const auto centre_of = [](lv_obj_t* object) {
+      lv_area_t box;
+      lv_obj_get_coords(object, &box);
+      return lv_point_t{(box.x1 + box.x2) / 2, (box.y1 + box.y2) / 2};
+    };
+    const auto close = [&] { link.settings_panel().Hide(); };
+    auto& sheet = link.settings_panel();
+    auto& bar = link.system();
+
+    for (lv_obj_t* slot : {bar.wifi_group(), bar.ble_group()}) {
+      lv_area_t box;
+      lv_obj_get_coords(slot, &box);
+      // Its centre, both corners of its own box, and the 4 px margin round it.
+      const lv_point_t points[] = {centre_of(slot),
+                                   {box.x1, box.y1},
+                                   {box.x2, box.y2},
+                                   {box.x1 - 3, box.y1 - 3},
+                                   {box.x2 + 3, box.y2 + 3}};
+      bool all = true;
+      for (const lv_point_t& at : points) {
+        close();
+        tap(at.x, at.y);
+        all = all && sheet.visible() && sheet.section() == Section::kRadios;
+      }
+      result.Expect(all, "a tap anywhere on a WiFi or BLE slot (margin included) opens Radios");
+    }
+    // The icon, flag and channel inside a slot are not buttons of their own.
+    for (lv_obj_t* part : {bar.wifi_icon(), bar.wifi_flag_label(), bar.wifi_channel_label(),
+                           bar.ble_icon(), bar.ble_flag_label()}) {
+      close();
+      tap(centre_of(part).x, centre_of(part).y);
+      result.Expect(sheet.visible() && sheet.section() == Section::kRadios,
+                    "a tap on a slot's icon, flag or channel opens Radios");
+    }
+    for (lv_obj_t* target : {bar.clock_label(), bar.gear()}) {
+      close();
+      tap(centre_of(target).x, centre_of(target).y);
+      result.Expect(sheet.visible() && sheet.section() == Section::kClock,
+                    "a tap on the clock or the gear opens Clock");
+    }
+    // The flexible centre, between the connection text and the tray, opens nothing.
+    close();
+    lv_area_t connection_box, tray_box;
+    lv_obj_get_coords(bar.connection_label(), &connection_box);
+    lv_obj_get_coords(bar.radio_tray(), &tray_box);
+    const int32_t middle = (connection_box.x2 + 8 + tray_box.x1 - 4) / 2;
+    tap(middle, centre_of(bar.status_bar()).y);
+    result.Expect(!sheet.visible() && !link.about_visible(),
+                  "a tap in the bar's flexible centre opens nothing");
+    // The connection text still opens the Host link sheet.
+    tap(centre_of(bar.connection_label()).x, centre_of(bar.connection_label()).y);
+    result.Expect(link.about_visible() && !sheet.visible(),
+                  "the connection text still opens the Host link sheet");
+    Click(link.about_done_button());
   }
 
   // Tapping the connection text opens the Host link panel instead: versions,

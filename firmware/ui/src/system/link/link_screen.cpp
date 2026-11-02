@@ -117,7 +117,12 @@ LinkScreen::LinkScreen(lv_obj_t* parent, DecisionCallback on_decision,
   system_.SetStatusBarTapCallback([this]() {
     if (!lv_obj_has_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN)) return;
     SetAboutVisible(false);
-    settings_panel_->Show(settings_);
+    settings_panel_->Show(settings_, SettingsPanel::Section::kClock);
+  });
+  system_.SetRadioTapCallback([this]() {
+    if (!lv_obj_has_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN)) return;
+    SetAboutVisible(false);
+    settings_panel_->Show(settings_, SettingsPanel::Section::kRadios);
   });
   system_.SetConnectionTapCallback([this]() {
     if (!lv_obj_has_flag(prompt_panel_, LV_OBJ_FLAG_HIDDEN)) return;
@@ -195,6 +200,7 @@ void LinkScreen::Update(const firmware::domain::CpuView& status,
   system_.Update(status, cards, agents, coverage, link.fault);
   latest_details_ = link.details;
   ShowDetails();
+  settings_panel_->SyncRadios();
   lv_label_set_text(fault_label_, link.fault.c_str());
   if (link.prompt_visible) {
     settings_panel_->Hide();
