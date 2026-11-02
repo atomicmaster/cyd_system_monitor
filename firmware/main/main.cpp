@@ -346,7 +346,25 @@ void ShowMonitorScreen() {
       firmware::ui::system::SettingsPanel::Actions{
           // Deferred: both tear down the screen that owns the button being clicked.
           .on_recalibrate = [] { g_pending_action = PendingAction::kRecalibrate; },
-          .on_debug = [] { g_pending_action = PendingAction::kDebug; }});
+          .on_debug = [] { g_pending_action = PendingAction::kDebug; },
+          // The config the radio task last applied (what the tray reflects).
+          .read_radios =
+              [](bool& wifi, bool& ble) {
+                wifi = g_radio.config.wifi_enabled;
+                ble = g_radio.config.ble_enabled;
+              },
+          // The same queued ControlRequest as DEV:RADIO_WIFI_OFF/ON and
+          // DEV:RADIO_BLE_OFF/ON; not persisted yet (TB16).
+          .set_radio =
+              [](bool wifi, bool on) {
+                firmware::domain::ControlRequest request;
+                if (wifi) {
+                  request.wifi_enabled = on;
+                } else {
+                  request.ble_enabled = on;
+                }
+                return radio::RequestControl(request);
+              }});
 }
 
 void PumpLinkTransport() {

@@ -57,7 +57,15 @@ proto::SnapshotGroups LiveGroups(std::array<proto::AgentState, proto::kAgentSlot
 class Preview {
  public:
   explicit Preview(lv_obj_t* screen)
-      : feed_(clock_, 1), ui_(screen, [](bool) {}, [](const domain::DisplaySettings&) {}, {}) {
+      : feed_(clock_, 1),
+        ui_(
+            screen, [](bool) {}, [](const domain::DisplaySettings&) {}, {},
+            {.read_radios =
+                 [this](bool& wifi, bool& ble) {
+                   wifi = wifi_on;
+                   ble = ble_on;
+                 },
+             .set_radio = [](bool, bool) { return true; }}) {
     std::array<uint8_t, proto::kSessionIdBytes> session{};
     for (uint8_t i = 0; i < session.size(); ++i) session[i] = i;
     feed_.StartSession(session);
@@ -94,6 +102,9 @@ class Preview {
   }
 
   firmware::ui::system::LinkScreen& ui() { return ui_; }
+  // The radio config the Radios section reads (the board's radio task, here).
+  bool wifi_on = true;
+  bool ble_on = true;
 
  private:
   ScriptedClock clock_;
@@ -207,6 +218,17 @@ int RunPreview(const std::string& dir) {
                    "10:42 PM");
     preview.ui().settings_panel().Show(domain::DisplaySettings{});
     save("6-clock-settings");
+  }
+  {
+    // A tap on the WiFi slot opens Settings at Radios; here WiFi is on and BLE off.
+    Preview preview(screen);
+    preview.Push(2000, 1);
+    preview.Render(2000,
+                   Coverage(RadioState::kObserving, RadioState::kOperatorDisabled, Radio::kWifi, 6),
+                   "10:42 PM");
+    preview.ble_on = false;
+    lv_obj_send_event(preview.ui().system().wifi_group(), LV_EVENT_CLICKED, nullptr);
+    save("6b-radio-settings");
   }
   {
     Preview preview(screen);

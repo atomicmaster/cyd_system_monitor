@@ -482,6 +482,32 @@ int RunSystemScreen() {
     result.Expect(
         lv_obj_get_height(ui.tray_separator()) == 12 && lv_obj_get_width(ui.tray_separator()) == 1,
         "the separator is a 1x12 hairline");
+    // Touch targets: the whole right-hand group opens Settings (a slot opens
+    // Radios); none overlaps the connection's (the settings scenario taps the centre).
+    lv_area_t wifi_hit, ble_hit, clock_hit, gear_hit, connection_hit, wifi_box, ble_box;
+    lv_obj_get_click_area(ui.wifi_group(), &wifi_hit);
+    lv_obj_get_click_area(ui.ble_group(), &ble_hit);
+    lv_obj_get_click_area(ui.clock_label(), &clock_hit);
+    lv_obj_get_click_area(ui.gear(), &gear_hit);
+    lv_obj_get_click_area(ui.connection_label(), &connection_hit);
+    lv_obj_get_coords(ui.wifi_group(), &wifi_box);
+    lv_obj_get_coords(ui.ble_group(), &ble_box);
+    result.Expect(lv_obj_has_flag(ui.wifi_group(), LV_OBJ_FLAG_CLICKABLE) &&
+                      lv_obj_has_flag(ui.ble_group(), LV_OBJ_FLAG_CLICKABLE) &&
+                      lv_obj_has_flag(ui.clock_label(), LV_OBJ_FLAG_CLICKABLE) &&
+                      lv_obj_has_flag(ui.gear(), LV_OBJ_FLAG_CLICKABLE),
+                  "the WiFi slot, BLE slot, clock and gear are all touch targets");
+    for (const lv_area_t* hit : {&wifi_hit, &ble_hit, &clock_hit, &gear_hit}) {
+      result.Expect(hit->y2 - hit->y1 + 1 >= 28 && hit->y1 <= bar_box.y1 && hit->y2 >= bar_box.y2,
+                    "each right-hand target covers the bar's full height with margin");
+    }
+    result.Expect(wifi_hit.x1 <= wifi_box.x1 - 4 && ble_hit.x2 >= ble_box.x2 + 4 &&
+                      wifi_hit.x2 + 1 >= ble_hit.x1,
+                  "the two slots' targets cover the slots and meet across the gap between them");
+    result.Expect(ble_hit.x2 < clock_hit.x2 && clock_hit.x2 + 1 >= gear_hit.x1,
+                  "the clock's target runs on into the gear's");
+    result.Expect(connection_hit.x2 < wifi_hit.x1,
+                  "the connection's target does not overlap the radio slots'");
   }
 
   // The fixed layout: every card and the Agents bar sit inside the 320x240
